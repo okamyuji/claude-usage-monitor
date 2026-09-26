@@ -23,7 +23,9 @@ notify = "8.2.0"
 directories = "6.0.0"
 sha2 = "0.11.0"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
-eframe = "0.36.2"
+# 描画はglow（OpenGL）にする。macOSで実測したGUIの物理フットプリントが、wgpuの253MBに対してglowは191MBだった。
+# 既定機能からwgpuとWeb専用の読み上げだけを外し、アクセシビリティ（accesskit）とLinuxのwayland、x11は残す。
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "links", "wayland", "x11"] }
 egui = "0.36.2"
 egui_plot = "0.37.0"
 egui-phosphor = "0.14.0"
