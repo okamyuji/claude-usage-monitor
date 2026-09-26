@@ -9,8 +9,15 @@ fn main() {
     println!("登録前: {}", a.is_enabled().expect("状態"));
     a.enable().expect("登録");
     println!("登録後: {}", a.is_enabled().expect("状態"));
-    let plist = directories::BaseDirs::new().expect("ホーム").home_dir().join("Library/LaunchAgents/claude-profile-switcher.plist");
+    let plist = directories::BaseDirs::new()
+        .expect("ホーム")
+        .home_dir()
+        .join("Library/LaunchAgents/claude-profile-switcher.plist");
     println!("{}", std::fs::read_to_string(&plist).expect("plist"));
     a.disable().expect("解除");
-    println!("解除後: {} / plistの有無: {}", a.is_enabled().expect("状態"), plist.exists());
+    println!(
+        "解除後: {} / plistの有無: {}",
+        a.is_enabled().expect("状態"),
+        plist.exists()
+    );
 }

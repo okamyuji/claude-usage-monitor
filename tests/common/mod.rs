@@ -105,3 +105,20 @@ pub fn fake_claude(dir: &Path) {
     .unwrap();
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+/// 使用量APIに`usage_ok.json`を返すスタブを登録する。
+pub fn stub_usage_ok(wm: &WireMock) {
+    wm.stub(serde_json::json!({"request": {"method": "GET", "url": "/api/oauth/usage"},
+                               "response": {"status": 200, "body": include_str!("../fixtures/usage_ok.json")}}));
+}
+
+/// 期限の先の認証情報を`~/.claude/.credentials.json`に置く。
+pub fn write_credentials(home: &Path) {
+    let cfg = home.join(".claude");
+    std::fs::create_dir_all(&cfg).unwrap();
+    std::fs::write(
+        cfg.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"e2e","expiresAt":4102444800000}}"#,
+    )
+    .unwrap();
+}
