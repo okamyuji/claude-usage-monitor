@@ -28,6 +28,9 @@ pub enum Projection {
     NotBeforeReset,
 }
 
+/// 増えているとみなす傾きの下限（1分あたりの%）。
+pub const MIN_SLOPE_PER_MIN: f64 = 1e-6;
+
 /// 最小二乗法で1分あたりの増加量を求め、最新の使用率から100%までの時間を出す。
 pub fn project(
     samples: &[Sample],
@@ -51,13 +54,15 @@ pub fn project(
     }
     // Σ(x-x̄)(y-ȳ) は Σ(x-x̄)y と等しいため、yの平均は求めない。
     let slope = pts.iter().map(|p| (p.0 - mx) * p.1).sum::<f64>() / sxx;
-    if slope <= 0.0 {
+    // 使用率が一定でも、浮動小数点の誤差で傾きがごく小さな正の値になる。1分あたり0.000001%未満は増えていないとみなす。
+    if slope < MIN_SLOPE_PER_MIN {
         return Projection::NotIncreasing;
     }
     let latest = pts.iter().max_by_key(|p| p.2).expect("3点以上ある").1;
     if latest >= 100.0 {
         return Projection::ReachesAt(now);
     }
+    // 傾きの下限があるので、到達までの秒数は最大でも100÷0.000001×60（約190年）に収まり、時刻の範囲を超えない。
     let at = now + Duration::seconds(((100.0 - latest) / slope * 60.0).round() as i64);
     match resets_at {
         Some(r) if at > r => Projection::NotBeforeReset,
@@ -206,6 +211,35 @@ mod tests {
         assert_eq!(
             project(&s, now(), None),
             Projection::ReachesAt(now() + Duration::minutes(30))
+        );
+    }
+
+    #[test]
+    fn near_zero_slope_from_float_noise_is_not_increasing() {
+        // 同じ使用率でも取得時刻の間隔によっては、誤差で傾きがごく小さな正の値になる。
+        assert_eq!(
+            project(&linear(13.0, 1e-12, &[0, 5, 10]), now(), None),
+            Projection::NotIncreasing
+        );
+    }
+
+    #[test]
+    fn slope_just_above_threshold_reaches_far_future_without_overflow() {
+        assert!(matches!(
+            project(&linear(13.0, 2e-6, &[0, 5, 10]), now(), None),
+            Projection::ReachesAt(t) if t > now() + Duration::days(365)
+        ));
+    }
+
+    #[test]
+    fn tiny_but_real_slope_does_not_overflow() {
+        assert_eq!(
+            project(
+                &linear(13.0, 1e-5, &[0, 5, 10]),
+                now(),
+                Some(now() + Duration::hours(5))
+            ),
+            Projection::NotBeforeReset
         );
     }
 }

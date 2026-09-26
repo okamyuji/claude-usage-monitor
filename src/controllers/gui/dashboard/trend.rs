@@ -79,6 +79,9 @@ pub struct TrendsVm {
 pub fn build(deps: &GuiDeps, range: TrendRange) -> Result<TrendsVm, RepoError> {
     let now = deps.clock.now();
     let since = now - range.duration();
+    // 表示範囲の長さより先のリセット時刻（5時間の表示での週間枠のリセットなど）は描かない。
+    // 横軸がその時刻まで伸び、範囲内の折れ線が端に潰れるため。
+    let horizon = now + range.duration();
     let profiles = deps.profiles.list()?;
     let mut panels = vec![];
     for (kind, title) in [("session", "5時間枠"), ("weekly_all", "週間枠")] {
@@ -99,6 +102,7 @@ pub fn build(deps: &GuiDeps, range: TrendRange) -> Result<TrendsVm, RepoError> {
                 deps.analytics
                     .reset_times(p.id, kind, since)?
                     .into_iter()
+                    .filter(|t| *t <= horizon)
                     .map(|t| t.timestamp() as f64),
             );
         }
@@ -191,6 +195,20 @@ mod tests {
             "横軸の右端は、どのグラフのリセット時刻も入る位置にする"
         );
         assert!(vm.x_max > (now + Duration::hours(1)).timestamp() as f64);
+        let short = build(&deps, TrendRange::Hours5).unwrap();
+        assert!(
+            short
+                .panels
+                .iter()
+                .flat_map(|p| p.resets.iter())
+                .all(|r| *r <= (now + Duration::hours(5)).timestamp() as f64),
+            "5時間の表示では5時間より先のリセット時刻を描かない"
+        );
+        assert_eq!(
+            short.panels[0].resets,
+            [(now + Duration::hours(1)).timestamp() as f64]
+        );
+        assert!(short.x_max <= (now + Duration::hours(5)).timestamp() as f64);
         assert_eq!(
             build(&deps, TrendRange::Days7).unwrap().panels[0].series[0]
                 .points

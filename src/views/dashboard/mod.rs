@@ -58,10 +58,11 @@ pub fn split(
     left: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
     right: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
 ) {
-    let avail = ui.available_width();
+    // 左、つまみ、右の間には部品の間隔が2つ入るので、その分を引いてから分ける。
+    // 間隔を0にすると中の一覧や詳細にも0が引き継がれ、文言どうしが詰まって読めなくなるため、変えない。
+    let avail = ui.available_width() - 2.0 * ui.spacing().item_spacing.x;
     let (lw, rw) = split_widths(avail, forms.split_ratio);
     ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
         filled_card(ui, vec2(lw, height), |ui| left(ui, forms, acts));
         let (rect, resp) = ui.allocate_exact_size(vec2(SPLITTER, height), Sense::drag());
         let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
