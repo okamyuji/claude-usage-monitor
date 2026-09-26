@@ -199,6 +199,8 @@ fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
     store.ensure_default()?;
     let ctl = build_gui(p, store)?;
     let options = eframe::NativeOptions {
+        // テストのビルドで開発用の依存がwgpuを有効にしても、本番は実測で省メモリだったglowで描く（spec 3章の決定表）。
+        renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
             .with_title("Claude Profile Switcher"),
