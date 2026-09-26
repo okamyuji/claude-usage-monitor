@@ -76,5 +76,8 @@ fn write_readme_images() {
     save(&mut h, &out, "dashboard.png");
     h.get_by_label("パスワード再設定").click();
     h.run();
+    // クリックした位置にポインタが残るとカーソルとホバーの強調が写り込むので、画面の外へ出す。
+    h.event(egui::Event::PointerGone);
+    h.run();
     save(&mut h, &out, "dashboard-live-log.png");
 }

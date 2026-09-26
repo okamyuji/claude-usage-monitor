@@ -12,7 +12,7 @@ pub const SPLITTER: f32 = 6.0;
 pub const TREND_COLLAPSED: f32 = 40.0;
 /// 中段の最小の高さ。
 pub const MIN_MIDDLE: f32 = 200.0;
-const TREND_RATIO: f32 = 0.25;
+const TREND_RATIO: f32 = 0.2;
 const MIN_TREND: f32 = 140.0;
 const MAX_TREND: f32 = 320.0;
 
@@ -50,7 +50,8 @@ pub fn drag_ratio(avail: f32, left: f32, dx: f32) -> f32 {
     ((left + dx) / usable).clamp(0.0, 1.0)
 }
 
-/// 推移グラフの高さ。ダッシュボードの高さの25%を140から320に収める。
+/// 推移グラフの高さ。ダッシュボードの高さの20%を140から320に収める。
+/// 25%では、既定のウィンドウの高さで詳細のライブログが3行しか見えなかった。
 pub fn trend_height(total: f32) -> f32 {
     (total * TREND_RATIO).clamp(MIN_TREND, MAX_TREND)
 }
@@ -116,7 +117,7 @@ mod tests {
     #[test]
     fn trend_height_is_clamped() {
         assert_eq!(trend_height(400.0), 140.0);
-        assert_eq!(trend_height(800.0), 200.0);
+        assert_eq!(trend_height(800.0), 160.0);
         assert_eq!(trend_height(2000.0), 320.0);
     }
 

@@ -47,6 +47,11 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
     });
 }
 
+/// グラフのⓘの説明。目印の線は凡例に出すと低いグラフで凡例がはみ出すため、名前を空にして凡例から外し、ここで意味を伝える。
+fn graph_help(base: &str) -> String {
+    format!("{base}。縦の灰色の線はリセット時刻、横の線は通知閾値です")
+}
+
 fn panel(ui: &mut Ui, t: &TrendsVm, p: &TrendPanel, height: f32) {
     let c = pal(ui);
     ui.horizontal(|ui| {
@@ -55,14 +60,15 @@ fn panel(ui: &mut Ui, t: &TrendsVm, p: &TrendPanel, height: f32) {
                 .small()
                 .color(c.weak),
         );
-        help(ui, p.help);
+        help(ui, &graph_help(p.help));
     });
     let tz =
         FixedOffset::east_opt(t.tz_offset_secs).unwrap_or(FixedOffset::east_opt(0).expect("UTC"));
     let plot_h = (height - ui.spacing().interact_size.y).max(60.0);
     Plot::new(&p.title)
         .height(plot_h)
-        .legend(Legend::default())
+        // 凡例はプロファイルごとに1行増える。本文の大きさでは、既定のウィンドウの高さで数行でもグラフの下端からはみ出す。
+        .legend(Legend::default().text_style(egui::TextStyle::Small))
         .include_y(0.0)
         .include_y(100.0)
         .include_x(t.x_min)
@@ -80,8 +86,21 @@ fn panel(ui: &mut Ui, t: &TrendsVm, p: &TrendPanel, height: f32) {
                 ));
             }
             for r in &p.resets {
-                plot.vline(VLine::new("リセット", *r).color(c.weak));
+                plot.vline(VLine::new("", *r).color(c.weak));
             }
-            plot.hline(HLine::new("通知閾値", t.threshold).color(c.warn));
+            plot.hline(HLine::new("", t.threshold).color(c.warn));
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_help_explains_marker_lines() {
+        let s = graph_help("直近5時間の割合です");
+        assert!(s.starts_with("直近5時間の割合です。"));
+        assert!(s.contains("縦の灰色の線はリセット時刻"));
+        assert!(s.contains("横の線は通知閾値"));
+    }
 }

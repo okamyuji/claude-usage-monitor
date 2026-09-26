@@ -57,26 +57,21 @@ fn card(ui: &mut Ui, c: &ProfileCard, acts: &mut Vec<Action>) {
                 }
             });
         }
-        if !c.breakdown.is_empty() {
-            ui.horizontal(|ui| {
-                trunc(
-                    ui,
+        // 用途と追加課金は補足なので1行にまとめ、中段（セッションとライブログ）に高さを回す。
+        ui.horizontal_wrapped(|ui| {
+            if !c.breakdown.is_empty() {
+                ui.label(
                     RichText::new(format!("用途 {}", c.breakdown.join(" / ")))
                         .small()
                         .color(p.weak),
                 );
                 help(ui, h::BREAKDOWN);
-            });
-        }
-        if let Some(s) = &c.spend {
-            ui.horizontal(|ui| {
-                trunc(
-                    ui,
-                    RichText::new(format!("追加課金 {s}")).small().color(p.weak),
-                );
+            }
+            if let Some(s) = &c.spend {
+                ui.label(RichText::new(format!("追加課金 {s}")).small().color(p.weak));
                 help(ui, h::SPEND);
-            });
-        }
+            }
+        });
     });
 }
 
