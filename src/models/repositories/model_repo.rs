@@ -24,6 +24,37 @@ fn insert(
 }
 
 impl ModelRepo for SqliteStore {
+    fn set_user(&self, m: &ModelInfo) -> Result<(), RepoError> {
+        let prices = [
+            m.input,
+            m.output,
+            m.cache_read,
+            m.cache_write_5m,
+            m.cache_write_1h,
+        ];
+        if m.model_prefix.trim().is_empty() || prices.iter().any(|p| !p.is_finite() || *p < 0.0) {
+            return Err(RepoError::Invalid(
+                "モデルIDは空にできず、単価は0以上の数にしてください".into(),
+            ));
+        }
+        let user = ModelInfo {
+            source: ModelSource::User,
+            ..m.clone()
+        };
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            insert(
+                &tx,
+                &user,
+                None,
+                "ON CONFLICT(model_prefix) DO UPDATE SET display_name = excluded.display_name, input = excluded.input,
+                 output = excluded.output, cache_read = excluded.cache_read, cache_write_5m = excluded.cache_write_5m,
+                 cache_write_1h = excluded.cache_write_1h, context_window = excluded.context_window, source = 'user'",
+            )?;
+            tx.commit()
+        })
+    }
+
     fn all(&self) -> Result<Vec<ModelInfo>, RepoError> {
         self.with(|c| {
             let mut st = c.prepare(
@@ -177,5 +208,63 @@ mod tests {
         m.model_prefix = "claude-new-9".into();
         assert_eq!(s.upsert_official(&[m], Utc::now()).unwrap(), 1);
         assert_eq!(s.all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn user_edit_is_kept_through_official_update() {
+        let (_d, s) = temp_store();
+        s.seed_if_empty(&seed_models()).unwrap();
+        let mut m = s
+            .all()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.model_prefix == "claude-opus-5-5")
+            .unwrap();
+        m.input = 3.5;
+        s.set_user(&m).unwrap();
+        s.upsert_official(&seed_models(), Utc::now()).unwrap();
+        let got = s
+            .all()
+            .unwrap()
+            .into_iter()
+            .find(|x| x.model_prefix == "claude-opus-5-5")
+            .unwrap();
+        assert_eq!((got.input, got.source), (3.5, ModelSource::User));
+    }
+
+    #[test]
+    fn user_can_add_unknown_model() {
+        let (_d, s) = temp_store();
+        let mut m = seed_models()[0].clone();
+        m.model_prefix = "claude-new-9".into();
+        s.set_user(&m).unwrap();
+        assert!(
+            s.all()
+                .unwrap()
+                .iter()
+                .any(|x| x.model_prefix == "claude-new-9" && x.source == ModelSource::User)
+        );
+    }
+
+    #[test]
+    fn negative_or_nan_price_is_invalid() {
+        let (_d, s) = temp_store();
+        for bad in [-1.0, f64::NAN, f64::INFINITY] {
+            let mut m = seed_models()[0].clone();
+            m.output = bad;
+            assert!(
+                matches!(
+                    s.set_user(&m),
+                    Err(crate::models::ports::RepoError::Invalid(_))
+                ),
+                "{bad}"
+            );
+        }
+        let mut m = seed_models()[0].clone();
+        m.model_prefix = " ".into();
+        assert!(matches!(
+            s.set_user(&m),
+            Err(crate::models::ports::RepoError::Invalid(_))
+        ));
     }
 }

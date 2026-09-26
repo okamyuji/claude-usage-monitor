@@ -8,6 +8,7 @@ use crate::models::domain::projection::Sample;
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
 };
+use crate::models::domain::settings::Settings;
 use crate::models::domain::usage::UsageSnapshot;
 use chrono::{DateTime, Utc};
 use std::path::Path;
@@ -174,6 +175,16 @@ pub trait ModelRepo: Send + Sync {
     fn seed_if_empty(&self, models: &[ModelInfo]) -> Result<(), RepoError>;
     /// 公式の値で追加または更新する。`source=user`の行は変えない。更新した行数を返す。
     fn upsert_official(&self, models: &[ModelInfo], at: DateTime<Utc>) -> Result<usize, RepoError>;
+    /// 利用者の編集として追加または更新する。以後の公式情報の自動取得で上書きされない。
+    fn set_user(&self, m: &ModelInfo) -> Result<(), RepoError>;
+}
+
+/// 設定の永続化。
+pub trait SettingsRepo: Send + Sync {
+    /// 保存済みの設定。未保存の項目は既定値になる。
+    fn load(&self) -> Result<Settings, RepoError>;
+    /// 検証してから保存する。範囲外なら`Invalid`で、何も保存しない。
+    fn save(&self, s: &Settings) -> Result<(), RepoError>;
 }
 
 /// JSONL取り込みの永続化。

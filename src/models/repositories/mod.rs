@@ -5,4 +5,5 @@ pub mod maintenance_repo;
 pub mod model_repo;
 pub mod profile_repo;
 pub mod session_repo;
+pub mod settings_repo;
 pub mod usage_repo;
