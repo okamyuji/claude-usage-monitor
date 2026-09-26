@@ -10,6 +10,14 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
+# 存在しないファイルが渡されると、どの検査も対象なしのまま合格してしまうため、先に止める。
+for f in "$@"; do
+  if [ ! -f "$root/$f" ]; then
+    echo "gate.sh: ファイルがありません: $f" >&2
+    exit 2
+  fi
+done
+
 # testcontainersをColimaで動かすための既定値。利用者が設定済みならそれを使う。
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
