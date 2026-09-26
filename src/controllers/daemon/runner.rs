@@ -272,39 +272,66 @@ impl Daemon {
         let mut dirty: HashSet<PathBuf> = HashSet::new();
         while !shutdown.load(Ordering::Relaxed) {
             let due = sched.take_due(Instant::now(), &self.s);
-            // 一時停止中は取得と取り込みを止める。監視イベントは`dirty`に残し、再開後の最初の周期で取り込む。
-            let paused = self.p.paused.load(Ordering::Relaxed);
-            if due.scan && !paused {
-                self.full_scan()?;
-                dirty.clear();
-            }
-            if !paused {
-                self.ingest_paths(&mut dirty)?;
-            }
-            if due.usage && !paused {
-                self.p.collector.tick()?;
-                if let Some(a) = self.p.alerter.as_mut() {
-                    a.check()?;
-                }
-                ticks += 1;
-                if self.s.max_usage_ticks.is_some_and(|m| ticks >= m) {
-                    break;
-                }
+            if self.cycle(due, &mut dirty, &mut ticks)? {
+                break;
             }
             self.maintain(due)?;
-            let wait = sched.wait(Instant::now());
-            match events.recv_timeout(wait) {
-                Ok(p) => {
-                    dirty.insert(p);
-                    dirty.extend(events.try_iter());
-                }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => std::thread::park_timeout(wait),
-            }
+            wait_events(events, sched.wait(Instant::now()), &mut dirty);
         }
         Ok(())
     }
 
+    /// 1周期ぶんの取り込みと取得を行い、`max_usage_ticks`に達したら`true`を返す。
+    /// 一時停止中は取得と取り込みを止める。監視イベントは`dirty`に残し、再開後の最初の周期で取り込む。
+    fn cycle(
+        &mut self,
+        due: Due,
+        dirty: &mut HashSet<PathBuf>,
+        ticks: &mut u64,
+    ) -> Result<bool, RepoError> {
+        if self.p.paused.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        if due.scan {
+            self.full_scan()?;
+            dirty.clear();
+        }
+        self.ingest_paths(dirty)?;
+        if !due.usage {
+            return Ok(false);
+        }
+        self.usage_tick()?;
+        *ticks += 1;
+        Ok(self.s.max_usage_ticks.is_some_and(|m| *ticks >= m))
+    }
+
+    fn usage_tick(&mut self) -> Result<(), RepoError> {
+        self.p.collector.tick()?;
+        if let Some(a) = self.p.alerter.as_mut() {
+            a.check()?;
+        }
+        Ok(())
+    }
+}
+
+/// 次の周期まで監視イベントを待ち、届いたパスを`dirty`に集める。
+/// 監視役が止まって送信側が消えた後も周期を保つため、切断時は同じ時間だけ眠る。
+fn wait_events(
+    events: &Receiver<PathBuf>,
+    wait: std::time::Duration,
+    dirty: &mut HashSet<PathBuf>,
+) {
+    match events.recv_timeout(wait) {
+        Ok(p) => {
+            dirty.insert(p);
+            dirty.extend(events.try_iter());
+        }
+        Err(RecvTimeoutError::Timeout) => {}
+        Err(RecvTimeoutError::Disconnected) => std::thread::park_timeout(wait),
+    }
+}
+
+impl Daemon {
     fn maintain(&self, due: Due) -> Result<(), RepoError> {
         if due.stats {
             self.p

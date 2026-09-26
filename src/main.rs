@@ -160,8 +160,9 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
     }
 }
 
-/// GUIの依存を本番の具象型で組み立てる。
+/// GUIの依存を本番の具象型で組み立てる。初回起動でも一覧が空にならないよう、既定のプロファイルをここで用意する。
 fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
+    store.ensure_default()?;
     let store = Arc::new(store);
     let clock: Arc<SystemClock> = Arc::new(SystemClock);
     let catalog = Arc::new(CatalogUpdater::new(
@@ -195,8 +196,8 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
 }
 
 /// GUIを開く。閉じるとプロセスごと終わり、描画のメモリをOSが回収する（spec 3章）。
+/// ウィンドウを開く部分はテストで動かせないため、組み立ては`build_gui`に寄せて単体テストで確かめる。
 fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
-    store.ensure_default()?;
     let ctl = build_gui(p, store)?;
     let options = eframe::NativeOptions {
         // テストのビルドで開発用の依存がwgpuを有効にしても、本番は実測で省メモリだったglowで描く（spec 3章の決定表）。
@@ -394,5 +395,37 @@ fn main() -> ExitCode {
             eprintln!("cps: {e}");
             ExitCode::from(e.exit_code())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_actions_map_to_commands() {
+        assert_eq!(
+            profile_command(ProfileAction::Remove { name: "sub".into() }),
+            ProfileCommand::Remove { name: "sub".into() }
+        );
+        assert_eq!(profile_command(ProfileAction::List), ProfileCommand::List);
+    }
+
+    #[test]
+    fn build_gui_prepares_default_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Paths {
+            data_dir: dir.path().to_path_buf(),
+            home: dir.path().to_path_buf(),
+        };
+        build_gui(&p, open_store(&p).unwrap()).unwrap();
+        let names: Vec<String> = open_store(&p)
+            .unwrap()
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
+        assert_eq!(names, ["default"]);
     }
 }

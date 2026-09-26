@@ -62,4 +62,46 @@ mod tests {
         assert_eq!(a.app_name(), "claude-profile-switcher");
         assert_eq!(a.args(), ["daemon"]);
     }
+
+    /// 子プロセスの中で実際に登録と解除を行う。`HOME`を差し替えた子でだけ動き、利用者の自動起動の設定には触れない。
+    #[test]
+    #[ignore = "enable_and_disable_round_trip_in_temp_home から子プロセスとして呼ぶ"]
+    fn child_enable_disable() {
+        if std::env::var_os("CPS_AUTOSTART_CHILD").is_none() {
+            return;
+        }
+        let a = SystemAutostart::new(std::path::Path::new("/usr/bin/true")).unwrap();
+        assert!(!a.is_enabled().unwrap());
+        a.enable().unwrap();
+        assert!(a.is_enabled().unwrap());
+        a.disable().unwrap();
+        assert!(!a.is_enabled().unwrap());
+    }
+
+    /// auto-launchは登録先をホームから決める。環境変数の書き換えはプロセス全体に効き並列のテストと衝突するため、子プロセスで`HOME`を差し替える。
+    #[cfg(not(windows))]
+    #[test]
+    fn enable_and_disable_round_trip_in_temp_home() {
+        let home = tempfile::tempdir().unwrap();
+        // 実際のmacOSのホームには必ずある。auto-launchは`LaunchAgents`だけを作り、親は作らない。
+        std::fs::create_dir(home.path().join("Library")).unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "models::gateways::autostart::tests::child_enable_disable",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("CPS_AUTOSTART_CHILD", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join(".config"))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
