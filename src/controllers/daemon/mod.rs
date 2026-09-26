@@ -3,3 +3,4 @@ pub mod catalog;
 pub mod collector;
 pub mod ingest;
 pub mod retention;
+pub mod runner;
