@@ -6,7 +6,8 @@ use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
 use crate::models::domain::read_models::{
-    LatestUsage, RunRow, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TurnRow,
+    DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
+    SessionModelUsage, SessionRow, SubagentRow, ToolStat, TurnRow,
 };
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
@@ -238,6 +239,35 @@ pub trait SessionQueryRepo: Send + Sync {
     fn model_usage(&self, session_ids: &[String]) -> Result<Vec<SessionModelUsage>, RepoError>;
     /// サブエージェント。
     fn subagents(&self, session_ids: &[String]) -> Result<Vec<SubagentRow>, RepoError>;
+}
+
+/// 分析画面と推移画面の読み取り。
+pub trait AnalyticsRepo: Send + Sync {
+    /// `since`以降のターンを軸とモデルで集計する。
+    fn usage_by(&self, group: GroupBy, since: DateTime<Utc>) -> Result<Vec<GroupUsage>, RepoError>;
+    /// 現地日付ごとの合計。`tz_offset_secs`はUTCからの時差（秒）。
+    fn daily_usage(
+        &self,
+        since: DateTime<Utc>,
+        tz_offset_secs: i32,
+    ) -> Result<Vec<DailyUsage>, RepoError>;
+    /// ツールごとの呼び出し回数とエラー回数を、回数の多い順に返す。
+    fn tool_stats(&self, since: DateTime<Utc>) -> Result<Vec<ToolStat>, RepoError>;
+    /// 枠のリセット時刻を分単位でまとめて返す。APIはリセット時刻をミリ秒の揺れ付きで返すため。
+    fn reset_times(
+        &self,
+        profile_id: i64,
+        kind: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<DateTime<Utc>>, RepoError>;
+}
+
+/// 診断画面の読み取り。
+pub trait DiagnosticsRepo: Send + Sync {
+    /// `since`以降のデーモン統計を時刻順に返す。
+    fn daemon_stats(&self, since: DateTime<Utc>) -> Result<Vec<DaemonStat>, RepoError>;
+    /// DBファイルとWALの合計サイズ。
+    fn db_size(&self) -> u64;
 }
 
 /// 保守処理の永続化。
