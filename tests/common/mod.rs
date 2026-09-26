@@ -4,13 +4,46 @@ use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::SyncRunner;
 use testcontainers::{Container, GenericImage};
 
+/// 1つのテストプロセスで同時に動かすWireMockのコンテナの上限。
+/// テストは並列に動くため、上限がないと数十個のコンテナ（中身はJava）が一斉に起動し、
+/// Colimaの仮想マシンのCPUを食い合って起動待ちが時間切れになる。
+const MAX_CONTAINERS: usize = 3;
+static SLOTS: (std::sync::Mutex<usize>, std::sync::Condvar) =
+    (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+/// コンテナ1つ分の枠。持っている間だけ枠を使い、捨てると次の待ち手に渡す。
+struct Slot;
+
+impl Slot {
+    fn acquire() -> Self {
+        let (count, freed) = &SLOTS;
+        let mut n = count.lock().unwrap_or_else(|e| e.into_inner());
+        while *n >= MAX_CONTAINERS {
+            n = freed.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        *n += 1;
+        Slot
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let (count, freed) = &SLOTS;
+        *count.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        freed.notify_one();
+    }
+}
+
 pub struct WireMock {
     _container: Container<GenericImage>,
     pub base_url: String,
+    // コンテナを止めてから枠を返すため、`_container`より後に置く（フィールドは宣言順に破棄される）。
+    _slot: Slot,
 }
 
 impl WireMock {
     pub fn start() -> Self {
+        let slot = Slot::acquire();
         let container = GenericImage::new("wiremock/wiremock", "3.13.2-alpine")
             .with_exposed_port(8080.tcp())
             .start()
@@ -31,6 +64,7 @@ impl WireMock {
         Self {
             _container: container,
             base_url,
+            _slot: slot,
         }
     }
 

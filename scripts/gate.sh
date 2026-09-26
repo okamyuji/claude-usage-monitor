@@ -36,7 +36,7 @@ fi
 # 終了コード3はタイムアウトだけが出た場合。ループの終了条件を壊す変異は無限ループになり、タイムアウトで検出されるので合格とする。
 # 生存（コード2）とその他の失敗は不合格のまま返す。
 status=0
-cargo mutants -d "$root" "${mutant_args[@]}" --timeout 300 --jobs 4 || status=$?
+cargo mutants -d "$root" "${mutant_args[@]}" --timeout 300 --jobs 2 || status=$?
 if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
   exit "$status"
 fi
