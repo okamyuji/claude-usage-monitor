@@ -17,10 +17,17 @@ fn main() {
             lines += 1;
             match parse_line(l) {
                 Ok(p) => {
-                    if let Event::Assistant { message_id, model, usage, .. } = p.event
+                    if let Event::Assistant {
+                        message_id,
+                        model,
+                        usage,
+                        ..
+                    } = p.event
                         && seen.insert(message_id)
                     {
-                        let e = by_model.entry(model.unwrap_or_else(|| "(none)".into())).or_default();
+                        let e = by_model
+                            .entry(model.unwrap_or_else(|| "(none)".into()))
+                            .or_default();
                         *e = e.plus(&usage);
                     }
                 }
@@ -31,9 +38,20 @@ fn main() {
     }
     let models = seed_models();
     let total: u64 = by_model.values().map(|u| u.output).sum();
-    println!("files={} lines={} malformed={} messages={} output_total={}", files.len(), lines, bad, seen.len(), total);
+    println!(
+        "files={} lines={} malformed={} messages={} output_total={}",
+        files.len(),
+        lines,
+        bad,
+        seen.len(),
+        total
+    );
     for (m, u) in &by_model {
-        let cost = cost_for(&models, m, u).map_or("単価未登録".to_string(), |c| format!("${c:.2}"));
-        println!("{m}\toutput={}\tinput={}\tcache_read={}\t{cost}", u.output, u.input, u.cache_read);
+        let cost =
+            cost_for(&models, m, u).map_or("単価未登録".to_string(), |c| format!("${c:.2}"));
+        println!(
+            "{m}\toutput={}\tinput={}\tcache_read={}\t{cost}",
+            u.output, u.input, u.cache_read
+        );
     }
 }
