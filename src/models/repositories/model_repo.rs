@@ -88,6 +88,39 @@ mod tests {
     use chrono::Utc;
 
     #[test]
+    fn corrupt_column_is_error_not_panic() {
+        for col in [
+            "model_prefix",
+            "display_name",
+            "input",
+            "output",
+            "cache_read",
+            "cache_write_5m",
+            "cache_write_1h",
+            "context_window",
+            "source",
+        ] {
+            let (_d, s) = temp_store();
+            s.seed_if_empty(&seed_models()[..1]).unwrap();
+            s.with(|c| c.execute(&format!("UPDATE models SET {col} = X'00'"), []))
+                .unwrap();
+            assert!(s.all().is_err(), "{col}");
+        }
+    }
+
+    #[test]
+    fn unknown_source_reads_as_official() {
+        let (_d, s) = temp_store();
+        s.seed_if_empty(&seed_models()[..1]).unwrap();
+        s.with(|c| c.execute("UPDATE models SET source = 'user'", []))
+            .unwrap();
+        assert_ne!(s.all().unwrap()[0].source, ModelSource::Official);
+        s.with(|c| c.execute("UPDATE models SET source = 'bogus'", []))
+            .unwrap();
+        assert_eq!(s.all().unwrap()[0].source, ModelSource::Official);
+    }
+
+    #[test]
     fn seed_only_when_empty() {
         let (_d, s) = temp_store();
         s.seed_if_empty(&seed_models()).unwrap();

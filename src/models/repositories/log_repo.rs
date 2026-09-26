@@ -48,6 +48,40 @@ mod tests {
     use crate::test_support::temp_store;
     use chrono::{Duration, TimeZone, Utc};
 
+    fn one_entry() -> (
+        tempfile::TempDir,
+        crate::models::repositories::db::SqliteStore,
+    ) {
+        let (d, s) = temp_store();
+        s.log(&FetchLogEntry {
+            target: "usage:1".into(),
+            at: Utc.with_ymd_and_hms(2026, 9, 26, 0, 0, 0).unwrap(),
+            result: FetchResult::Ok,
+            http_status: Some(200),
+            message: String::new(),
+        })
+        .unwrap();
+        (d, s)
+    }
+
+    #[test]
+    fn corrupt_column_is_error_not_panic() {
+        for col in ["at", "result", "http_status", "message"] {
+            let (_d, s) = one_entry();
+            s.with(|c| c.execute(&format!("UPDATE fetch_log SET {col} = X'00'"), []))
+                .unwrap();
+            assert!(s.recent("usage:1", 10).is_err(), "{col}");
+        }
+    }
+
+    #[test]
+    fn unparsable_timestamp_row_is_skipped() {
+        let (_d, s) = one_entry();
+        s.with(|c| c.execute("UPDATE fetch_log SET at = 'not-a-time'", []))
+            .unwrap();
+        assert!(s.recent("usage:1", 10).unwrap().is_empty());
+    }
+
     #[test]
     fn recent_returns_newest_first_for_target() {
         let (_d, s) = temp_store();

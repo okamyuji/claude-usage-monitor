@@ -3,3 +3,4 @@
 /.superpowers/
 .DS_Store
 /mutants.out*/
+__pycache__/

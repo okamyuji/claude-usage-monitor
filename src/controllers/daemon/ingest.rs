@@ -58,9 +58,35 @@ impl FileState<'_> {
         if at < self.cutoff {
             return Ok(());
         }
-        if !self.sessions.contains_key(&sid) {
+        self.track_session(&sid, pl, at)?;
+        match &pl.event {
+            Event::Assistant {
+                message_id,
+                model,
+                usage,
+                blocks,
+            } => self.apply_assistant(&sid, at, message_id, model, *usage, blocks)?,
+            Event::UserPrompt(text) => self.apply_prompt(&sid, pl, at, text)?,
+            Event::ToolResults(rs) => {
+                for r in rs.iter().filter(|r| r.is_error) {
+                    self.repo.mark_tool_error(&r.tool_use_id)?;
+                }
+            }
+            Event::Other => {}
+        }
+        Ok(())
+    }
+
+    /// セッション行を用意し、種別と期間を更新する。
+    fn track_session(
+        &mut self,
+        sid: &str,
+        pl: &ParsedLine,
+        at: DateTime<Utc>,
+    ) -> Result<(), RepoError> {
+        if !self.sessions.contains_key(sid) {
             let s = SessionUpsert {
-                session_id: sid.clone(),
+                session_id: sid.to_string(),
                 profile_id: self.profile_id,
                 kind: SessionKind::from_entrypoint(pl.meta.entrypoint.as_deref()),
                 entrypoint: pl.meta.entrypoint.clone(),
@@ -74,9 +100,9 @@ impl FileState<'_> {
             };
             // ターンの外部キーを満たすため、最初に見た時点でセッション行を作る。
             self.repo.upsert_session(&s)?;
-            self.sessions.insert(sid.clone(), s);
+            self.sessions.insert(sid.to_string(), s);
         }
-        let s = self.sessions.get_mut(&sid).expect("直前に挿入済み");
+        let s = self.sessions.get_mut(sid).expect("直前に挿入済み");
         // ファイル先頭の行（queue-operationなど）はentrypointを持たないことがあるため、後の行で種別を確定させる。
         if s.entrypoint.is_none() && pl.meta.entrypoint.is_some() {
             s.entrypoint = pl.meta.entrypoint.clone();
@@ -84,41 +110,36 @@ impl FileState<'_> {
         }
         s.last_activity_at = s.last_activity_at.max(at);
         s.started_at = s.started_at.min(at);
-        match &pl.event {
-            Event::Assistant {
-                message_id,
-                model,
-                usage,
-                blocks,
-            } => self.apply_assistant(&sid, at, message_id, model, *usage, blocks)?,
-            Event::UserPrompt(text) => {
-                if self.agent_id.is_empty() && s.first_prompt.is_none() {
-                    s.first_prompt = Some(text.clone());
-                }
-                let id = pl
-                    .meta
-                    .uuid
-                    .clone()
-                    .unwrap_or_else(|| format!("prompt-{}", at.timestamp_millis()));
-                self.repo.upsert_turn(&TurnRecord {
-                    session_id: sid,
-                    agent_id: self.agent_id.clone(),
-                    message_id: id,
-                    ts: at,
-                    model: None,
-                    kind: "prompt".into(),
-                    summary: text.clone(),
-                    usage: TokenUsage::default(),
-                })?;
-            }
-            Event::ToolResults(rs) => {
-                for r in rs.iter().filter(|r| r.is_error) {
-                    self.repo.mark_tool_error(&r.tool_use_id)?;
-                }
-            }
-            Event::Other => {}
-        }
         Ok(())
+    }
+
+    /// 利用者の入力をターンとして記録する。本体セッションの最初の入力は一覧の見出しに使うため残す。
+    fn apply_prompt(
+        &mut self,
+        sid: &str,
+        pl: &ParsedLine,
+        at: DateTime<Utc>,
+        text: &str,
+    ) -> Result<(), RepoError> {
+        let s = self.sessions.get_mut(sid).expect("track_sessionで挿入済み");
+        if self.agent_id.is_empty() && s.first_prompt.is_none() {
+            s.first_prompt = Some(text.to_string());
+        }
+        let id = pl
+            .meta
+            .uuid
+            .clone()
+            .unwrap_or_else(|| format!("prompt-{}", at.timestamp_millis()));
+        self.repo.upsert_turn(&TurnRecord {
+            session_id: sid.to_string(),
+            agent_id: self.agent_id.clone(),
+            message_id: id,
+            ts: at,
+            model: None,
+            kind: "prompt".into(),
+            summary: text.to_string(),
+            usage: TokenUsage::default(),
+        })
     }
 
     fn apply_assistant(
@@ -492,6 +513,29 @@ mod tests {
             })
             .unwrap();
         assert_eq!((kind.as_str(), ep.as_str()), ("headless", "sdk-cli"));
+    }
+
+    #[test]
+    fn storage_error_is_returned_for_each_event_kind() {
+        let prompt = r#"{"type":"user","uuid":"u9","sessionId":"s1","timestamp":"2026-09-26T00:00:00.000Z","message":{"content":"hi"}}"#;
+        let tool_error = r#"{"type":"user","uuid":"u8","sessionId":"s1","timestamp":"2026-09-26T00:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#;
+        for (line, table) in [
+            (A1, "turns"),
+            (prompt, "turns"),
+            (tool_error, "tool_calls"),
+            (prompt, "sessions"),
+        ] {
+            let e = env();
+            let cfg = e.home.path().join(".claude");
+            write(&cfg.join("projects/-w/s1.jsonl"), &[line]);
+            e.store
+                .with(|c| c.execute_batch(&format!("PRAGMA foreign_keys=OFF; DROP TABLE {table};")))
+                .unwrap();
+            assert!(
+                e.ingestor.scan_all(&e.profile, &cfg).is_err(),
+                "{table}: {line}"
+            );
+        }
     }
 
     #[test]

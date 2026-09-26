@@ -442,6 +442,23 @@ mod tests {
     }
 
     #[test]
+    fn malformed_content_blocks_are_dropped() {
+        let line = json!({"type": "assistant", "message": {"id": "m1", "content": [
+            {"text": "型なし"},
+            {"type": 1},
+            {"type": "text"},
+            {"type": "text", "text": 1},
+            {"type": "tool_use", "id": "t1"},
+            {"type": "tool_use", "name": "Bash"},
+            {"type": "image"}
+        ]}});
+        let Event::Assistant { blocks, .. } = parse_line(&line.to_string()).unwrap().event else {
+            panic!("assistant行として解析されること");
+        };
+        assert!(blocks.is_empty(), "{blocks:?}");
+    }
+
+    #[test]
     fn invalid_json_is_error() {
         assert!(parse_line("{").is_err());
     }

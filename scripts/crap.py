@@ -30,16 +30,19 @@ def line_coverage(data):
 
 
 def region_coverage_by_function(data):
-    out = {}
+    # 同じ関数がコンパイル単位（libのテスト、cpsバイナリ、各結合テスト）ごとに別の記録として出る。
+    # 足し合わせると実行されないコピーが薄めるため、同じ位置の領域は1つにまとめ、どれかで実行されたら通過とする。
+    regions = {}
     for fn in data["functions"]:
-        # 要素は [開始行, 開始列, 終了行, 終了列, 実行回数, ファイルID, 展開ファイルID, 種類]
-        regions = [r for r in fn["regions"] if r[5] == 0 and r[7] == CODE_REGION]
-        if not regions:
-            continue
-        start = min(r[0] for r in regions)
-        covered = sum(1 for r in regions if r[4] > 0)
         key = str(Path(fn["filenames"][0]).resolve())
-        out.setdefault(key, []).append((start, covered, len(regions)))
+        # 要素は [開始行, 開始列, 終了行, 終了列, 実行回数, ファイルID, 展開ファイルID, 種類]
+        for r in fn["regions"]:
+            if r[5] == 0 and r[7] == CODE_REGION:
+                span = (key, r[0], r[1], r[2], r[3])
+                regions[span] = regions.get(span, False) or r[4] > 0
+    out = {}
+    for (key, start, *_), covered in regions.items():
+        out.setdefault(key, []).append((start, int(covered), 1))
     return out
 
 
@@ -57,7 +60,11 @@ def check_line_coverage(data, targets):
     lines = line_coverage(data)
     failures = 0
     for t in sorted(targets):
-        pct = lines.get(t, 0.0)
+        # llvm-covは実行する行のないファイル（mod宣言だけのmod.rsなど）を出力に含めない。
+        if t not in lines:
+            print(f"--  行カバレッジ 対象外（実行する行なし） {t}")
+            continue
+        pct = lines[t]
         ok = pct >= LINE_COVERAGE_MIN
         print(f"{'OK ' if ok else 'NG '} 行カバレッジ {pct:.1f}% {t}")
         failures += 0 if ok else 1
