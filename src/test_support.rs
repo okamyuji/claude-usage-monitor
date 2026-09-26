@@ -59,3 +59,60 @@ impl WireMock {
             .expect("JSON")
     }
 }
+
+use crate::models::domain::profile::Profile;
+use crate::models::domain::usage::UsageSnapshot;
+use crate::models::ports::{
+    Clock, Credential, CredentialError, CredentialStore, UsageApi, UsageApiError,
+};
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+
+/// 手で進める時計。
+pub(crate) struct FixedClock(pub(crate) Mutex<DateTime<Utc>>);
+
+impl FixedClock {
+    pub(crate) fn at(t: DateTime<Utc>) -> Self {
+        Self(Mutex::new(t))
+    }
+    pub(crate) fn advance(&self, d: chrono::Duration) {
+        let mut g = self.0.lock().unwrap();
+        *g += d;
+    }
+}
+
+impl Clock for FixedClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// トークンごとに応答を決めるAPI。呼び出し回数も数える。
+pub(crate) struct FakeApi {
+    pub(crate) responses: HashMap<String, Result<UsageSnapshot, UsageApiError>>,
+    pub(crate) calls: Mutex<Vec<String>>,
+}
+
+impl UsageApi for FakeApi {
+    fn fetch(&self, token: &str) -> Result<UsageSnapshot, UsageApiError> {
+        self.calls.lock().unwrap().push(token.to_string());
+        self.responses
+            .get(token)
+            .cloned()
+            .unwrap_or(Err(UsageApiError::Http(404)))
+    }
+}
+
+/// プロファイル名ごとに認証情報を返す保存先。
+pub(crate) struct FakeCreds(pub(crate) HashMap<String, Result<Credential, CredentialError>>);
+
+impl CredentialStore for FakeCreds {
+    fn load(&self, profile: &Profile, _dir: &Path) -> Result<Credential, CredentialError> {
+        self.0
+            .get(&profile.name)
+            .cloned()
+            .unwrap_or(Err(CredentialError::Missing))
+    }
+}

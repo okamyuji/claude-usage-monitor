@@ -9,10 +9,20 @@ fn main() {
     let dir = std::path::Path::new(&std::env::var("HOME").expect("HOME")).join(".claude");
     let p = SysProcessInfo::new();
     for s in read_live_sessions(&dir).expect("sessions") {
-        println!("pid={} alive={} session={} status={:?} name={:?}", s.pid, p.is_alive(s.pid), s.session_id, s.status, s.name);
+        println!(
+            "pid={} alive={} session={} status={:?} name={:?}",
+            s.pid,
+            p.is_alive(s.pid),
+            s.session_id,
+            s.status,
+            s.name
+        );
     }
     for j in read_jobs(&dir).expect("jobs") {
-        println!("job={} state={} tasks={} detail={:?}", j.job_id, j.state, j.in_flight_tasks, j.detail);
+        println!(
+            "job={} state={} tasks={} detail={:?}",
+            j.job_id, j.state, j.in_flight_tasks, j.detail
+        );
     }
     println!("self_rss_bytes={}", p.self_rss_bytes());
 }
