@@ -51,6 +51,12 @@ impl CatalogUpdater {
     }
 }
 
+impl crate::models::ports::CatalogRefresh for CatalogUpdater {
+    fn refresh(&self) -> Result<usize, RepoError> {
+        self.run_once()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +125,23 @@ mod tests {
         );
         let log = s.recent("catalog", 1).unwrap();
         assert!(log[0].message.contains("表がありません"));
+    }
+
+    #[test]
+    fn catalog_refresh_runs_once() {
+        let mut latest = seed_models();
+        latest[0].input = 12.0;
+        let (_d, s, u) = updater(Ok(latest));
+        let r: &dyn crate::models::ports::CatalogRefresh = &u;
+        assert_eq!(r.refresh().unwrap(), seed_models().len());
+        assert_eq!(
+            s.all()
+                .unwrap()
+                .iter()
+                .find(|m| m.model_prefix == "claude-fable-5-1")
+                .unwrap()
+                .input,
+            12.0
+        );
     }
 }

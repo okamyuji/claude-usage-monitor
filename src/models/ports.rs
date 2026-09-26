@@ -270,6 +270,20 @@ pub trait DiagnosticsRepo: Send + Sync {
     fn db_size(&self) -> u64;
 }
 
+/// デーモンの稼働確認と起動。GUIの「デーモン停止中」表示と起動ボタンに使う。
+pub trait DaemonControl: Send + Sync {
+    /// 稼働中か。
+    fn is_running(&self) -> bool;
+    /// 起動する。起動を待たずに戻る。
+    fn start(&self) -> Result<(), String>;
+}
+
+/// モデル情報を今すぐ公式ページから取り直す。設定画面の「今すぐ更新」に使う。
+pub trait CatalogRefresh: Send + Sync {
+    /// 取り直し、更新した行数を返す。
+    fn refresh(&self) -> Result<usize, RepoError>;
+}
+
 /// 保守処理の永続化。
 pub trait MaintenanceRepo: Send + Sync {
     /// `cutoff`より古い時系列の行を削除し、削除行数を返す。
