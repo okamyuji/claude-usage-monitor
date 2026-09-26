@@ -6,12 +6,14 @@ pub mod live_log;
 pub mod replay;
 pub mod runs;
 pub mod sessions;
+pub mod trend;
 
 use crate::controllers::gui::app::GuiDeps;
 use crate::controllers::gui::dashboard::cards::ProfileCard;
 use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayState};
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail, SessionItem};
+use crate::controllers::gui::dashboard::trend::{TrendRange, TrendsVm};
 use crate::models::domain::transcript::SessionKind;
 use crate::models::ports::RepoError;
 use std::collections::HashSet;
@@ -45,6 +47,8 @@ pub struct DashboardState {
     pub detail_tab: DetailTab,
     /// 再生の状態。
     pub replay: ReplayState,
+    /// 推移の範囲。
+    pub trend_range: TrendRange,
 }
 
 impl Default for DashboardState {
@@ -58,6 +62,7 @@ impl Default for DashboardState {
             expanded: HashSet::new(),
             detail_tab: DetailTab::Turns,
             replay: ReplayState::default(),
+            trend_range: TrendRange::Hours5,
         }
     }
 }
@@ -83,6 +88,8 @@ pub enum DashAction {
     SetDetailTab(DetailTab),
     /// 再生の操作。
     Replay(ReplayAction),
+    /// 推移の範囲を変える。
+    SetTrendRange(TrendRange),
 }
 
 /// ダッシュボードのViewModel。
@@ -110,6 +117,10 @@ pub struct DashboardVm {
     pub profile: Option<i64>,
     /// 履歴の種別の絞り込み。
     pub kind: Option<SessionKind>,
+    /// 推移。折りたたみ中は読まない。
+    pub trend: Option<TrendsVm>,
+    /// 推移の範囲。折りたたみ中も選択を示すために持つ。
+    pub trend_range: TrendRange,
 }
 
 /// 操作を状態に反映する。
@@ -136,6 +147,7 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
         }
         DashAction::SetDetailTab(t) => st.detail_tab = t,
         DashAction::Replay(a) => replay::handle(&mut st.replay, a),
+        DashAction::SetTrendRange(r) => st.trend_range = r,
     }
 }
 
@@ -164,6 +176,12 @@ pub fn build(deps: &GuiDeps, st: &DashboardState, query: &str) -> Result<Dashboa
         selected: st.selected.clone(),
         profile: st.profile,
         kind: st.kind,
+        trend: if st.trend_open {
+            Some(trend::build(deps, st.trend_range)?)
+        } else {
+            None
+        },
+        trend_range: st.trend_range,
     })
 }
 
@@ -230,5 +248,13 @@ mod tests {
             (0, false, 16),
             "選び直すと先頭から、速度は保つ"
         );
+    }
+
+    #[test]
+    fn trend_range_is_kept() {
+        let mut st = DashboardState::default();
+        assert_eq!(st.trend_range, TrendRange::Hours5);
+        handle(&mut st, DashAction::SetTrendRange(TrendRange::Days7));
+        assert_eq!(st.trend_range, TrendRange::Days7);
     }
 }

@@ -3,6 +3,7 @@ use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogState};
 use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
+use crate::controllers::gui::tabs::analytics::{self, AnalyticsVm, Period};
 use crate::models::domain::display::fmt_clock;
 use crate::models::domain::live_log::LiveFilter;
 use crate::models::domain::settings::Theme;
@@ -104,6 +105,8 @@ pub enum Action {
     Dash(DashAction),
     /// ライブログの操作。
     Live(LiveAction),
+    /// 分析の期間を変える。
+    SetPeriod(Period),
 }
 
 /// 上部の今日と今週の集計（「1.26M $4.12」の形）。空なら表示しない。
@@ -120,6 +123,8 @@ pub struct HeaderVm {
 pub enum TabVm {
     /// ダッシュボード。区画が多く大きいため`Box`に入れる。
     Dashboard(Box<DashboardVm>),
+    /// 分析。
+    Analytics(AnalyticsVm),
     /// まだ作っていないタブ。
     Pending(Tab),
 }
@@ -176,6 +181,7 @@ pub struct GuiController {
     pub(crate) live: Option<LiveLogState>,
     pub(crate) jump_to_bottom: bool,
     pub(crate) replay_len: usize,
+    period: Period,
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -203,6 +209,7 @@ impl GuiController {
             live: None,
             jump_to_bottom: false,
             replay_len: 0,
+            period: Period::default(),
             last_refresh: None,
         };
         c.refresh();
@@ -244,6 +251,7 @@ impl GuiController {
             Action::Live(LiveAction::FilterChanged) => {}
             Action::Live(LiveAction::JumpToLatest) => self.jump_to_bottom = true,
             Action::Live(LiveAction::JumpDone) => self.jump_to_bottom = false,
+            Action::SetPeriod(p) => self.period = p,
         }
         self.refresh();
     }
@@ -317,7 +325,11 @@ impl GuiController {
                 }
                 TabVm::Dashboard(Box::new(vm))
             }
-            t @ (Tab::Analytics | Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
+            Tab::Analytics => {
+                self.live = None;
+                TabVm::Analytics(analytics::build(&self.deps, self.period)?)
+            }
+            t @ (Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
                 self.live = None;
                 TabVm::Pending(t)
             }
@@ -575,5 +587,23 @@ mod tests {
             c.dash.replay.position, 2,
             "再生を表示していないときは進めない"
         );
+    }
+
+    #[test]
+    fn period_and_trend_actions() {
+        use crate::controllers::gui::dashboard::trend::TrendRange;
+        use crate::controllers::gui::tabs::analytics::Period;
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::Dash(DashAction::SetTrendRange(TrendRange::Days7)));
+        assert!(
+            matches!(&c.vm().body, TabVm::Dashboard(d) if d.trend.as_ref().unwrap().range == TrendRange::Days7)
+        );
+        c.handle(Action::Dash(DashAction::ToggleTrend));
+        assert!(
+            matches!(&c.vm().body, TabVm::Dashboard(d) if d.trend.is_none() && d.trend_range == TrendRange::Days7)
+        );
+        c.handle(Action::SelectTab(Tab::Analytics));
+        c.handle(Action::SetPeriod(Period::Days30));
+        assert!(matches!(&c.vm().body, TabVm::Analytics(a) if a.period == Period::Days30));
     }
 }

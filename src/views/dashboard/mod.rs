@@ -2,16 +2,16 @@
 pub mod cards;
 pub mod detail;
 pub mod sessions;
+pub mod trend;
 
 use crate::controllers::gui::app::{Action, Forms};
-use crate::controllers::gui::dashboard::{DashAction, DashboardVm};
+use crate::controllers::gui::dashboard::DashboardVm;
 use crate::views::layout::{
     GAP, SPLITTER, TREND_COLLAPSED, drag_ratio, middle_height, split_widths, trend_height,
 };
 use crate::views::theme::card_frame;
-use crate::views::widgets::{pal, section};
+use crate::views::widgets::pal;
 use egui::{Align, Layout, Sense, Ui, vec2};
-use egui_phosphor::regular as icon;
 
 /// ダッシュボードを描く。
 pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
@@ -82,18 +82,5 @@ pub fn split(
 
 fn trend_area(ui: &mut Ui, vm: &DashboardVm, height: f32, acts: &mut Vec<Action>) {
     let w = ui.available_width();
-    filled_card(ui, vec2(w, height), |ui| {
-        ui.horizontal(|ui| {
-            let (caret, text) = if vm.trend_open {
-                (icon::CARET_DOWN, "折りたたむ")
-            } else {
-                (icon::CARET_RIGHT, "開く")
-            };
-            ui.label(caret);
-            section(ui, "推移");
-            if ui.small_button(text).clicked() {
-                acts.push(Action::Dash(DashAction::ToggleTrend));
-            }
-        });
-    });
+    filled_card(ui, vec2(w, height), |ui| trend::show(ui, vm, acts));
 }

@@ -476,3 +476,23 @@ fn replay_next_button_changes_displayed_turn() {
     h.get_by_label_contains("現在: Read: src/main.rs");
     h.get_by_label("推移");
 }
+
+#[test]
+fn trend_range_switches_and_analytics_tab_renders() {
+    use claude_profile_switcher::controllers::gui::app::TabVm;
+    use claude_profile_switcher::controllers::gui::dashboard::trend::TrendRange;
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.harness();
+    h.get_by_label("5時間枠のグラフ");
+    h.get_by_label("24時間").click();
+    h.run();
+    assert!(
+        matches!(&h.state().vm().body, TabVm::Dashboard(d) if d.trend.as_ref().unwrap().range == TrendRange::Hours24)
+    );
+    h.get_by_label("分析").click();
+    h.run();
+    h.get_by_label("プロジェクト別");
+    h.get_by_label("/work/app");
+}

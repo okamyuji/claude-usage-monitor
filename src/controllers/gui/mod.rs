@@ -4,3 +4,4 @@
 pub mod app;
 pub mod dashboard;
 pub mod header;
+pub mod tabs;
