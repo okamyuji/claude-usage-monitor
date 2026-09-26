@@ -180,3 +180,67 @@ pub(crate) fn tokens(input: u64, output: u64) -> TokenUsage {
         ..TokenUsage::default()
     }
 }
+
+use crate::controllers::gui::app::GuiDeps;
+use crate::models::ports::RepoError;
+use crate::models::ports::{CatalogRefresh, DaemonControl};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 稼働状態を切り替えられるデーモン制御。
+#[derive(Default)]
+pub(crate) struct FakeDaemon {
+    pub(crate) running: AtomicBool,
+    pub(crate) fail_start: bool,
+}
+
+impl DaemonControl for FakeDaemon {
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+    fn start(&self) -> Result<(), String> {
+        if self.fail_start {
+            return Err("デーモンを起動できません: テスト".into());
+        }
+        self.running.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// 呼ばれた回数を数えるモデル情報の更新。
+#[derive(Default)]
+pub(crate) struct CountingCatalog(pub(crate) std::sync::atomic::AtomicUsize);
+
+impl CatalogRefresh for CountingCatalog {
+    fn refresh(&self) -> Result<usize, RepoError> {
+        Ok(self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+/// GUIのcontrollerのテスト用の依存。DBは実SQLite、時計は固定、認証情報は`creds`で与える。
+pub(crate) fn gui_deps(
+    store: Arc<SqliteStore>,
+    clock: Arc<FixedClock>,
+    home: &std::path::Path,
+    creds: Arc<dyn CredentialStore>,
+    daemon: Arc<FakeDaemon>,
+) -> GuiDeps {
+    GuiDeps {
+        clock,
+        tz: chrono::FixedOffset::east_opt(9 * 3600).unwrap(),
+        home: home.to_path_buf(),
+        font_path: None,
+        profiles: store.clone(),
+        usage: store.clone(),
+        dashboard: store.clone(),
+        sessions: store.clone(),
+        analytics: store.clone(),
+        diagnostics: store.clone(),
+        logs: store.clone(),
+        models: store.clone(),
+        settings: store.clone(),
+        creds,
+        daemon,
+        catalog: Arc::new(CountingCatalog::default()),
+    }
+}

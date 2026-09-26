@@ -1,4 +1,5 @@
 //! 実デーモンが溜めたDBから、プロファイルごとに上限到達の予測を表示する。Task 5とTask 19の実動作確認用。
+#![forbid(unsafe_code)]
 use chrono::{Duration, Utc};
 use claude_profile_switcher::models::domain::projection::{WINDOW_MINUTES, project};
 use claude_profile_switcher::models::ports::{ProfileRepo, UsageRepo};

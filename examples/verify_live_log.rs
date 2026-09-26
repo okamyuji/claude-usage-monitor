@@ -1,4 +1,5 @@
 //! 実際のセッションのJSONLを末尾から読み、ライブログの行を表示する。Task 8の実動作確認用。
+#![forbid(unsafe_code)]
 use claude_profile_switcher::models::domain::live_log::{
     LIVE_LOG_CAPACITY, RingBuffer, lines_from_transcript,
 };

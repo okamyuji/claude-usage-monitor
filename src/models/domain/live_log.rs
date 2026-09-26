@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
 
-/// リングバッファの行数（spec 7.3節）。
+/// リングバッファの行数（spec 7.4節）。
 pub const LIVE_LOG_CAPACITY: usize = 2000;
 
 /// 行の種類。フィルタと色分けに使う。
@@ -197,7 +197,7 @@ impl<T> RingBuffer<T> {
     }
 }
 
-/// 表示の絞り込み（spec 7.3節の4種類）。
+/// 表示の絞り込み（spec 7.4節の4種類）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveFilter {
     /// ツール呼び出しとサブエージェントの起動を出す。

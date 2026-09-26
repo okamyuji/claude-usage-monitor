@@ -1,4 +1,5 @@
 //! `cps`コマンドの入口。CLIの解析と依存の組み立てだけを行う。
+#![forbid(unsafe_code)]
 use clap::{Parser, Subcommand};
 use claude_profile_switcher::controllers::cli::CliError;
 use claude_profile_switcher::controllers::cli::profile::{ProfileCommand, execute};
@@ -7,8 +8,11 @@ use claude_profile_switcher::controllers::daemon::catalog::CatalogUpdater;
 use claude_profile_switcher::controllers::daemon::collector::{CollectorDeps, UsageCollector};
 use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
 use claude_profile_switcher::controllers::daemon::runner::{Daemon, DaemonParts, DaemonSettings};
+use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
 use claude_profile_switcher::models::domain::profile::Profile;
 use claude_profile_switcher::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
+use claude_profile_switcher::models::gateways::daemon_control::LockFileDaemon;
+use claude_profile_switcher::models::gateways::fonts::load_cjk_font;
 use claude_profile_switcher::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
@@ -16,6 +20,8 @@ use claude_profile_switcher::models::gateways::process::{SysProcessInfo, SystemC
 use claude_profile_switcher::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
 use claude_profile_switcher::models::ports::ProfileRepo;
 use claude_profile_switcher::models::repositories::db::SqliteStore;
+use claude_profile_switcher::views::app::{CpsApp, apply_theme, install_fonts};
+use claude_profile_switcher::views::theme;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -50,6 +56,8 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// 画面を開く
+    Gui,
     /// プロファイルを管理する
     Profile {
         #[command(subcommand)]
@@ -130,6 +138,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         Command::Run { args } => Ok(ExitCode::from(
             run_claude(&store, &args)?.clamp(0, 255) as u8
         )),
+        Command::Gui => run_gui(&p, store),
         Command::Profile { action } => {
             execute(
                 &store,
@@ -140,6 +149,69 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// GUIの依存を本番の具象型で組み立てる。
+fn build_gui(
+    p: &Paths,
+    store: SqliteStore,
+    font_path: Option<PathBuf>,
+) -> Result<GuiController, CliError> {
+    let store = Arc::new(store);
+    let clock: Arc<SystemClock> = Arc::new(SystemClock);
+    let catalog = Arc::new(CatalogUpdater::new(
+        Arc::new(HttpModelCatalog::new(
+            &env_or("CPS_CATALOG_BASE", DEFAULT_CATALOG_BASE),
+            Duration::from_secs(30),
+        )),
+        store.clone(),
+        store.clone(),
+        clock.clone(),
+    ));
+    let exe = std::env::current_exe()?;
+    Ok(GuiController::new(GuiDeps {
+        clock,
+        tz: *chrono::Local::now().offset(),
+        home: p.home.clone(),
+        font_path,
+        profiles: store.clone(),
+        usage: store.clone(),
+        dashboard: store.clone(),
+        sessions: store.clone(),
+        analytics: store.clone(),
+        diagnostics: store.clone(),
+        logs: store.clone(),
+        models: store.clone(),
+        settings: store.clone(),
+        creds: Arc::new(SystemCredentialStore::new(Arc::new(SecurityCli::default()))),
+        daemon: Arc::new(LockFileDaemon::new(p.data_dir.join("daemon.lock"), exe)),
+        catalog,
+    }))
+}
+
+/// GUIを開く。閉じるとプロセスごと終わり、描画のメモリをOSが回収する（spec 3章）。
+fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
+    store.ensure_default()?;
+    let font = load_cjk_font();
+    let ctl = build_gui(p, store, font.as_ref().map(|(path, _)| path.clone()))?;
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1280.0, 820.0])
+            .with_title("Claude Profile Switcher"),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "claude-profile-switcher",
+        options,
+        Box::new(move |cc| {
+            install_fonts(&cc.egui_ctx, font.map(|(_, bytes)| bytes));
+            theme::apply(&cc.egui_ctx);
+            apply_theme(&cc.egui_ctx, ctl.vm().theme);
+            Ok(Box::new(CpsApp::new(ctl)))
+        }),
+    )
+    .map_err(|e| other(format!("GUIを起動できません: {e}")))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn env_or(key: &str, default: &str) -> String {

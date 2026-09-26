@@ -1,5 +1,6 @@
 //! 利用者の~/.claudeにある実際のJSONLを解析し、行数、解析失敗数、モデル別のTokenとコストを表示する。
 //! 単体テストのフィクスチャでは分からない、実データの形式の揺れを確かめるための実動作確認用。
+#![forbid(unsafe_code)]
 use claude_profile_switcher::models::domain::pricing::{TokenUsage, cost_for, seed_models};
 use claude_profile_switcher::models::domain::transcript::{Event, parse_line};
 use claude_profile_switcher::models::gateways::jsonl::{read_new_lines, transcript_files};

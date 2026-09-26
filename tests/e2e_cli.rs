@@ -1,4 +1,5 @@
 //! `cps`バイナリのE2Eテスト。利用者が打つコマンドそのものを検証するため、実バイナリを起動する。
+#![forbid(unsafe_code)]
 use assert_cmd::Command;
 use predicates::str::contains;
 

@@ -22,8 +22,17 @@ python3 "$root/scripts/crap.py" "$root/target/llvm-cov.json" "$@"
 
 mutant_args=()
 for f in "$@"; do
-  mutant_args+=(--file "$f")
+  case "$f" in
+    src/views/*|src/main.rs) ;;
+    *) mutant_args+=(--file "$f") ;;
+  esac
 done
+# viewsは描画、main.rsは依存の組み立てだけなのでmutationの対象外にする（spec 12.3節）。
+# 対象が残らないときは、cargo-mutantsが「対象なし」で返す終了コードに頼らず、ここで終える。
+if [ "${#mutant_args[@]}" -eq 0 ]; then
+  echo "mutation: 対象なし（viewsとmain.rsは対象外）"
+  exit 0
+fi
 # 終了コード3はタイムアウトだけが出た場合。ループの終了条件を壊す変異は無限ループになり、タイムアウトで検出されるので合格とする。
 # 生存（コード2）とその他の失敗は不合格のまま返す。
 status=0

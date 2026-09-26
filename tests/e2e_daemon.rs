@@ -1,4 +1,5 @@
 //! `cps daemon`のE2E。実バイナリを一時HOMEで起動し、WireMockの応答とJSONLがDBに入ることを確かめる。
+#![forbid(unsafe_code)]
 mod common;
 
 use assert_cmd::Command;

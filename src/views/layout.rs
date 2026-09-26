@@ -1,0 +1,101 @@
+//! 伸縮のレイアウト計算（spec 7.3節）。描画を持たない純粋関数にして、ユニットテストで確かめる。
+
+/// カード1枚の最小幅。
+pub const MIN_CARD: f32 = 320.0;
+/// 中段の左右の最小幅。
+pub const MIN_PANE: f32 = 360.0;
+/// 部品の間隔。
+pub const GAP: f32 = 12.0;
+/// 中段の境界のつまみの幅。
+pub const SPLITTER: f32 = 6.0;
+/// 推移を折りたたんだときの高さ（見出しの行だけ）。
+pub const TREND_COLLAPSED: f32 = 40.0;
+/// 中段の最小の高さ。
+pub const MIN_MIDDLE: f32 = 200.0;
+const TREND_RATIO: f32 = 0.25;
+const MIN_TREND: f32 = 140.0;
+const MAX_TREND: f32 = 320.0;
+
+/// カードを1行に何枚置くかと、1枚の幅。空き幅を等分し、最小幅を下回るときは次の行へ折り返す。
+pub fn card_columns(avail: f32, n: usize) -> (usize, f32) {
+    let n = n.max(1);
+    let fit = ((avail + GAP) / (MIN_CARD + GAP)).floor().max(1.0) as usize;
+    let cols = fit.min(n);
+    let width = (avail - GAP * (cols - 1) as f32) / cols as f32;
+    (cols, width.max(0.0))
+}
+
+/// 中段の左右の幅。比率を掛け、左右とも最小幅を守る。両方の最小幅が入らないときは半分ずつにする。
+pub fn split_widths(avail: f32, ratio: f32) -> (f32, f32) {
+    let usable = (avail - SPLITTER).max(0.0);
+    if usable < 2.0 * MIN_PANE {
+        let half = usable / 2.0;
+        return (half, half);
+    }
+    let left = (usable * ratio).clamp(MIN_PANE, usable - MIN_PANE);
+    (left, usable - left)
+}
+
+/// つまみを`dx`だけ動かした後の比率。
+pub fn drag_ratio(avail: f32, left: f32, dx: f32) -> f32 {
+    let usable = (avail - SPLITTER).max(1.0);
+    ((left + dx) / usable).clamp(0.0, 1.0)
+}
+
+/// 推移グラフの高さ。ダッシュボードの高さの25%を140から320に収める。
+pub fn trend_height(total: f32) -> f32 {
+    (total * TREND_RATIO).clamp(MIN_TREND, MAX_TREND)
+}
+
+/// 中段の高さ。カードを描いた後の残りから推移と間隔を引き、最小200にする。
+pub fn middle_height(remaining: f32, trend: f32) -> f32 {
+    (remaining - trend - GAP).max(MIN_MIDDLE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn card_columns_wrap_below_min_width() {
+        assert_eq!(card_columns(1000.0, 2), (2, 494.0));
+        assert_eq!(card_columns(600.0, 2), (1, 600.0));
+        let (cols, w) = card_columns(2000.0, 3);
+        assert_eq!(cols, 3);
+        assert!((w - (2000.0 - 24.0) / 3.0).abs() < 1e-3);
+        assert_eq!(card_columns(1000.0, 0), (1, 1000.0));
+        assert_eq!(card_columns(200.0, 2), (1, 200.0));
+        assert_eq!(card_columns(652.0, 5), (2, 320.0));
+    }
+
+    #[test]
+    fn split_keeps_min_pane_width() {
+        assert_eq!(split_widths(1006.0, 0.45), (450.0, 550.0));
+        assert_eq!(split_widths(1006.0, 0.1), (360.0, 640.0));
+        assert_eq!(split_widths(1006.0, 0.9), (640.0, 360.0));
+        assert_eq!(split_widths(606.0, 0.45), (300.0, 300.0));
+        assert_eq!(split_widths(726.0, 0.45), (360.0, 360.0));
+        assert_eq!(split_widths(0.0, 0.45), (0.0, 0.0));
+    }
+
+    #[test]
+    fn drag_ratio_moves_and_clamps() {
+        assert_eq!(drag_ratio(1006.0, 450.0, 50.0), 0.5);
+        assert_eq!(drag_ratio(1006.0, 450.0, -1000.0), 0.0);
+        assert_eq!(drag_ratio(1006.0, 450.0, 1000.0), 1.0);
+        assert_eq!(drag_ratio(0.0, 0.5, 0.0), 0.5);
+    }
+
+    #[test]
+    fn trend_height_is_clamped() {
+        assert_eq!(trend_height(400.0), 140.0);
+        assert_eq!(trend_height(800.0), 200.0);
+        assert_eq!(trend_height(2000.0), 320.0);
+    }
+
+    #[test]
+    fn middle_height_keeps_minimum() {
+        assert_eq!(middle_height(700.0, 200.0), 488.0);
+        assert_eq!(middle_height(300.0, 200.0), 200.0);
+    }
+}

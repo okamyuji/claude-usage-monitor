@@ -1,5 +1,6 @@
 //! 利用者の~/.claudeを一時DBへ取り込み、件数と所要時間を表示する。2回実行して冪等性も確かめる。
 //! Task 8、Task 10、Task 16の実動作確認用。
+#![forbid(unsafe_code)]
 use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
 use claude_profile_switcher::models::gateways::process::{SysProcessInfo, SystemClock};
 use claude_profile_switcher::models::ports::ProfileRepo;
