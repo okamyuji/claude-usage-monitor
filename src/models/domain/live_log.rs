@@ -332,6 +332,7 @@ mod tests {
         let mut b = RingBuffer::new(3);
         assert!(b.is_empty());
         b.extend(1..=5);
+        assert!(!b.is_empty());
         b.push(6);
         assert_eq!(b.iter().copied().collect::<Vec<_>>(), [4, 5, 6]);
         assert_eq!(b.len(), 3);

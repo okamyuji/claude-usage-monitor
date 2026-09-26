@@ -727,6 +727,27 @@ mod tests {
                 .purge
         );
         assert!(sched.take_due(t0 + PURGE_INTERVAL, &s).purge);
+        assert_eq!(
+            PURGE_INTERVAL,
+            Duration::from_secs(86_400),
+            "削除は1日に1回"
+        );
+    }
+
+    #[test]
+    fn wait_events_collects_all_pending_paths() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(PathBuf::from("/a")).unwrap();
+        tx.send(PathBuf::from("/b")).unwrap();
+        let mut dirty = HashSet::new();
+        wait_events(&rx, Duration::from_millis(10), &mut dirty);
+        assert_eq!(
+            dirty,
+            HashSet::from([PathBuf::from("/a"), PathBuf::from("/b")])
+        );
+        drop(tx);
+        wait_events(&rx, Duration::from_millis(1), &mut dirty);
+        assert_eq!(dirty.len(), 2, "送信側が消えても止まらずに戻る");
     }
 
     #[test]

@@ -668,6 +668,100 @@ mod tests {
         assert_eq!(status, "ended");
     }
 
+    fn session_col(store: &crate::models::repositories::db::SqliteStore, col: &str) -> String {
+        store
+            .with(|c| {
+                c.query_row(
+                    &format!("SELECT {col} FROM sessions WHERE session_id = 's1'"),
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn line_exactly_at_retention_cutoff_is_kept() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        // 現在時刻 2026-09-26T00:01:00Z から保持期間90日を引いた時刻ちょうど。
+        let edge = r#"{"type":"user","uuid":"ue","sessionId":"se","timestamp":"2026-06-28T00:01:00.000Z","message":{"content":"境界"}}"#;
+        write(&cfg.join("projects/-w/se.jsonl"), &[edge]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(
+            count(
+                &e.store,
+                "SELECT COUNT(*) FROM sessions WHERE session_id = 'se'"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn later_line_without_entrypoint_keeps_kind() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let plain = r#"{"type":"user","uuid":"q2","sessionId":"s1","timestamp":"2026-09-26T00:00:05.000Z","message":{"content":"続き"}}"#;
+        write(&cfg.join("projects/-w/s1.jsonl"), &[A1, plain]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "kind"), "headless");
+        assert_eq!(session_col(&e.store, "entrypoint"), "sdk-cli");
+    }
+
+    #[test]
+    fn first_prompt_is_not_overwritten_by_later_prompts() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let second = r#"{"type":"user","uuid":"u2","sessionId":"s1","timestamp":"2026-09-26T00:00:05.000Z","message":{"content":"二つ目"}}"#;
+        write(&cfg.join("projects/-w/s1.jsonl"), &[U1, second]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(
+            session_col(&e.store, "first_prompt"),
+            "コミットしてください"
+        );
+    }
+
+    #[test]
+    fn grown_file_with_same_mtime_is_reread() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let f = cfg.join("projects/-w/s1.jsonl");
+        write(&f, &[U1, A1]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
+        write(&f, &[A2]);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        let r = e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(
+            (r.files_read, r.lines),
+            (1, 1),
+            "サイズが変われば更新時刻が同じでも読む"
+        );
+    }
+
+    #[test]
+    fn malformed_lines_are_logged_only_when_present() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let ingest_logs = |e: &Env| {
+            count(
+                &e.store,
+                "SELECT COUNT(*) FROM fetch_log WHERE target = 'ingest'",
+            )
+        };
+        write(&cfg.join("projects/-w/s1.jsonl"), &[U1, A1]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(ingest_logs(&e), 0);
+        write(&cfg.join("projects/-w/s2.jsonl"), &["{broken"]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(ingest_logs(&e), 1);
+    }
+
     #[test]
     fn scan_all_reports_malformed_lines() {
         let e = env();

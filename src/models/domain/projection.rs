@@ -232,6 +232,30 @@ mod tests {
     }
 
     #[test]
+    fn slope_exactly_at_threshold_counts_as_increasing() {
+        // 窓の先頭から0、1、2分の3点。傾きは (y2 - y0) / 2 なので、下限ちょうどを誤差なく作れる。
+        let at = |m: i64| now() - Duration::minutes(WINDOW_MINUTES - m);
+        let samples = [
+            Sample {
+                at: at(0),
+                percent: 0.0,
+            },
+            Sample {
+                at: at(1),
+                percent: MIN_SLOPE_PER_MIN,
+            },
+            Sample {
+                at: at(2),
+                percent: 2.0 * MIN_SLOPE_PER_MIN,
+            },
+        ];
+        assert!(matches!(
+            project(&samples, now(), None),
+            Projection::ReachesAt(_)
+        ));
+    }
+
+    #[test]
     fn tiny_but_real_slope_does_not_overflow() {
         assert_eq!(
             project(

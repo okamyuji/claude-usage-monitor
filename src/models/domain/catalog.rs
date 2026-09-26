@@ -261,6 +261,27 @@ mod tests {
     }
 
     #[test]
+    fn pricing_table_is_found_after_similar_tables() {
+        let md = "\
+| Model | Batch input |
+|---|---|
+| Claude X | $1 / MTok |
+
+| Feature | Base input tokens |
+|---|---|
+| Claude Y | $2 / MTok |
+
+| Model | Base input tokens | 5m cache writes | 1h cache writes | Cache hits & refreshes | Output tokens |
+|---|---|---|---|---|---|
+| Claude Opus 5.5 | $4 / MTok | $5 / MTok | $8 / MTok | $0.20 / MTok | $20 / MTok |
+";
+        let rows = parse_pricing_md(md);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].display_name, "Claude Opus 5.5");
+        assert_eq!((rows[0].input, rows[0].output), (4.0, 20.0));
+    }
+
+    #[test]
     fn unrelated_markdown_yields_nothing() {
         assert!(parse_pricing_md("# 見出し\n| a | b |\n|---|---|\n| 1 | 2 |").is_empty());
         assert!(parse_overview_md("").is_empty());

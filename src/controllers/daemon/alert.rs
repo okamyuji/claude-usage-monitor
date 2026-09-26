@@ -240,6 +240,55 @@ mod tests {
         );
     }
 
+    fn window(kind: &str, scope: Option<&str>, percent: f64) -> LimitWindow {
+        LimitWindow {
+            kind: kind.into(),
+            group: String::new(),
+            percent,
+            severity: "normal".into(),
+            resets_at: Some(now() + Duration::hours(2)),
+            scope_label: scope.map(Into::into),
+        }
+    }
+
+    fn latest(limits: Vec<LimitWindow>) -> LatestUsage {
+        LatestUsage {
+            fetched_at: now(),
+            limits,
+            breakdown: vec![],
+            spend: None,
+        }
+    }
+
+    #[test]
+    fn suggests_only_same_window_with_strictly_more_room() {
+        let own = window("session", None, 90.0);
+        let all = vec![
+            ("default".to_string(), 1, latest(vec![own.clone()])),
+            (
+                "a".to_string(),
+                2,
+                latest(vec![window("weekly_all", None, 10.0)]),
+            ),
+            (
+                "b".to_string(),
+                3,
+                latest(vec![window("session", Some("Fable"), 10.0)]),
+            ),
+            (
+                "c".to_string(),
+                4,
+                latest(vec![window("session", None, 90.0)]),
+            ),
+        ];
+        let tz = FixedOffset::east_opt(9 * 3600).unwrap();
+        let (_, body) = message("default", &own, &all, now(), tz);
+        assert_eq!(
+            body, "リセットは14:00です",
+            "種類かスコープが違う枠や、同じ使用率の相手は勧めない"
+        );
+    }
+
     #[test]
     fn threshold_follows_settings() {
         let mut t = setup();

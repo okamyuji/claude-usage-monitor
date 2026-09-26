@@ -293,6 +293,33 @@ mod tests {
     }
 
     #[test]
+    fn logs_http_status_and_readable_message() {
+        let mut e = env(
+            HashMap::from([("a".into(), Err(UsageApiError::Http(503)))]),
+            HashMap::from([
+                ("default".into(), Ok(cred("a", 60))),
+                ("sub".into(), Ok(cred("b", -1))),
+            ]),
+        );
+        e.collector.tick().unwrap();
+        let ids: HashMap<String, i64> = e
+            .store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.name, p.id))
+            .collect();
+        let last =
+            |name: &str| e.store.recent(&format!("usage:{}", ids[name]), 1).unwrap()[0].clone();
+        let http = last("default");
+        assert_eq!(http.http_status, Some(503));
+        assert_eq!(http.message, UsageApiError::Http(503).to_string());
+        let expired = last("sub");
+        assert_eq!(expired.http_status, Some(401));
+        assert!(expired.message.contains("トークンの期限が切れています"));
+    }
+
+    #[test]
     fn transport_errors_back_off() {
         let mut e = env(
             HashMap::from([("a".into(), Err(UsageApiError::Transport("x".into())))]),
