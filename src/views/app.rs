@@ -114,9 +114,15 @@ impl eframe::App for CpsApp {
         let (vm, forms) = self.ctl.view_parts();
         let acts = show_app(ui, vm, forms);
         self.ctl.handle_all(acts);
-        // 5秒ごとの読み直しと経過時間の表示を進めるため、操作がなくても1秒ごとに描き直す。
+        // 5秒ごとの読み直しと経過時間の表示を進めるため、操作がなくても描き直す。再生中は間隔を短くする。
+        let playing = matches!(&self.ctl.vm().body, TabVm::Dashboard(d)
+            if d.detail.as_ref().and_then(|x| x.replay.as_ref()).is_some_and(|r| r.playing));
         ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs(1));
+            .request_repaint_after(std::time::Duration::from_millis(if playing {
+                50
+            } else {
+                1000
+            }));
     }
 }
 

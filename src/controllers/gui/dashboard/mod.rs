@@ -3,11 +3,13 @@
 //! 区画ごとのViewModelは同じディレクトリの各ファイルが作り、ここで1つにまとめる。
 pub mod cards;
 pub mod live_log;
+pub mod replay;
 pub mod runs;
 pub mod sessions;
 
 use crate::controllers::gui::app::GuiDeps;
 use crate::controllers::gui::dashboard::cards::ProfileCard;
+use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayState};
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail, SessionItem};
 use crate::models::domain::transcript::SessionKind;
@@ -41,6 +43,8 @@ pub struct DashboardState {
     pub expanded: HashSet<String>,
     /// 詳細の表示。
     pub detail_tab: DetailTab,
+    /// 再生の状態。
+    pub replay: ReplayState,
 }
 
 impl Default for DashboardState {
@@ -53,6 +57,7 @@ impl Default for DashboardState {
             kind: None,
             expanded: HashSet::new(),
             detail_tab: DetailTab::Turns,
+            replay: ReplayState::default(),
         }
     }
 }
@@ -76,6 +81,8 @@ pub enum DashAction {
     ToggleTurn(String),
     /// 詳細の表示を切り替える。
     SetDetailTab(DetailTab),
+    /// 再生の操作。
+    Replay(ReplayAction),
 }
 
 /// ダッシュボードのViewModel。
@@ -114,6 +121,10 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
             st.selected = Some(id);
             st.expanded.clear();
             st.detail_tab = tab;
+            st.replay = ReplayState {
+                speed: st.replay.speed,
+                ..ReplayState::default()
+            };
         }
         DashAction::SetProfile(p) => st.profile = p,
         DashAction::SetKind(k) => st.kind = k,
@@ -124,6 +135,7 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
             }
         }
         DashAction::SetDetailTab(t) => st.detail_tab = t,
+        DashAction::Replay(a) => replay::handle(&mut st.replay, a),
     }
 }
 
@@ -133,10 +145,13 @@ pub fn build(deps: &GuiDeps, st: &DashboardState, query: &str) -> Result<Dashboa
         ListMode::History => sessions::history(deps, query, st.profile, st.kind)?,
         ListMode::Active => (vec![], false),
     };
-    let detail = match &st.selected {
+    let mut detail = match &st.selected {
         Some(id) => sessions::detail(deps, id, &st.expanded, st.detail_tab)?,
         None => None,
     };
+    if let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::Replay) {
+        d.replay = Some(replay::build(deps, &d.session_id, &st.replay)?);
+    }
     Ok(DashboardVm {
         mode: st.mode,
         trend_open: st.trend_open,
@@ -192,6 +207,28 @@ mod tests {
         assert_eq!(
             (st.detail_tab, st.profile, st.kind),
             (DetailTab::Replay, Some(3), Some(SessionKind::Headless))
+        );
+    }
+
+    #[test]
+    fn replay_actions_and_reset_on_select() {
+        use crate::controllers::gui::dashboard::replay::ReplayAction;
+        let mut st = DashboardState::default();
+        handle(&mut st, DashAction::Select("s1".into(), DetailTab::Replay));
+        handle(&mut st, DashAction::Replay(ReplayAction::Seek(5)));
+        handle(&mut st, DashAction::Replay(ReplayAction::Step(-2)));
+        assert_eq!(st.replay.position, 3);
+        handle(&mut st, DashAction::Replay(ReplayAction::Step(-10)));
+        assert_eq!(st.replay.position, 0);
+        handle(&mut st, DashAction::Replay(ReplayAction::SetSpeed(16)));
+        handle(&mut st, DashAction::Replay(ReplayAction::TogglePlay));
+        assert!(st.replay.playing && st.replay.speed == 16);
+        handle(&mut st, DashAction::Replay(ReplayAction::Seek(7)));
+        handle(&mut st, DashAction::Select("s2".into(), DetailTab::Replay));
+        assert_eq!(
+            (st.replay.position, st.replay.playing, st.replay.speed),
+            (0, false, 16),
+            "選び直すと先頭から、速度は保つ"
         );
     }
 }

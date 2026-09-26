@@ -152,6 +152,8 @@ pub struct Forms {
     pub session_query: String,
     /// ライブログの絞り込み。
     pub live_filter: LiveFilter,
+    /// 再生位置のスライダー。
+    pub replay_position: usize,
 }
 
 impl Default for Forms {
@@ -160,6 +162,7 @@ impl Default for Forms {
             split_ratio: DEFAULT_SPLIT,
             session_query: String::new(),
             live_filter: LiveFilter::default(),
+            replay_position: 0,
         }
     }
 }
@@ -172,6 +175,7 @@ pub struct GuiController {
     pub(crate) dash: DashboardState,
     pub(crate) live: Option<LiveLogState>,
     pub(crate) jump_to_bottom: bool,
+    pub(crate) replay_len: usize,
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -198,6 +202,7 @@ impl GuiController {
             dash: DashboardState::default(),
             live: None,
             jump_to_bottom: false,
+            replay_len: 0,
             last_refresh: None,
         };
         c.refresh();
@@ -258,10 +263,21 @@ impl GuiController {
         }
     }
 
-    /// 毎フレーム呼ぶ。前回の読み込みから`REFRESH_SECS`秒たっていれば読み直す。
+    /// 毎フレーム呼ぶ。ライブログの追記を読み、再生を進め、`REFRESH_SECS`秒ごとに読み直す。
     pub fn tick(&mut self) {
         self.poll_live();
         let now = self.deps.clock.now();
+        if self.vm.tab == Tab::Dashboard
+            && self.dash.detail_tab == DetailTab::Replay
+            && self.dash.replay.playing
+        {
+            let before = (self.dash.replay.position, self.dash.replay.playing);
+            dashboard::replay::advance(&mut self.dash.replay, self.replay_len, now);
+            if (self.dash.replay.position, self.dash.replay.playing) != before {
+                self.refresh();
+                return;
+            }
+        }
         if self
             .last_refresh
             .is_none_or(|t| now - t >= Duration::seconds(REFRESH_SECS))
@@ -295,6 +311,10 @@ impl GuiController {
             Tab::Dashboard => {
                 let mut vm = dashboard::build(&self.deps, &self.dash, &self.forms.session_query)?;
                 self.sync_live(&mut vm);
+                if let Some(r) = vm.detail.as_ref().and_then(|d| d.replay.as_ref()) {
+                    self.replay_len = r.len;
+                    self.forms.replay_position = r.position;
+                }
                 TabVm::Dashboard(Box::new(vm))
             }
             t @ (Tab::Analytics | Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
@@ -530,5 +550,30 @@ mod tests {
         )));
         c.handle(Action::SelectTab(Tab::Settings));
         assert!(c.live.is_none(), "別のタブへ移ったら捨てる");
+    }
+
+    #[test]
+    fn tick_advances_replay_while_playing() {
+        use crate::controllers::gui::dashboard::replay::ReplayState;
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
+        c.dash.detail_tab = DetailTab::Replay;
+        c.dash.replay = ReplayState {
+            playing: true,
+            speed: 1,
+            last_step: Some(clock.now()),
+            ..ReplayState::default()
+        };
+        c.replay_len = 5;
+        clock.advance(chrono::Duration::seconds(2));
+        c.tick();
+        assert_eq!(c.dash.replay.position, 2);
+        c.dash.detail_tab = DetailTab::Turns;
+        clock.advance(chrono::Duration::seconds(2));
+        c.tick();
+        assert_eq!(
+            c.dash.replay.position, 2,
+            "再生を表示していないときは進めない"
+        );
     }
 }

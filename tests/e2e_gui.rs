@@ -457,3 +457,22 @@ fn job_timeline_appears_in_live_log() {
     h.run();
     h.get_by_label_contains("ジョブ: working（2/8件目）");
 }
+
+#[test]
+fn replay_next_button_changes_displayed_turn() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    h.get_by_label_contains("1 / 3");
+    h.get_by_label_contains("次のターン").click();
+    h.run();
+    h.get_by_label_contains("2 / 3");
+    h.get_by_label_contains("現在: Read: src/main.rs");
+    h.get_by_label("推移");
+}

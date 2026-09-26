@@ -2,6 +2,7 @@
 use crate::controllers::gui::app::{Action, Forms};
 use crate::controllers::gui::dashboard::DashAction;
 use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogVm};
+use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayVm};
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail};
 use crate::models::domain::display::help as h;
 use crate::models::domain::live_log::LiveKind;
@@ -44,9 +45,12 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
                 );
             }
         },
-        DetailTab::Replay => {
-            ui.label(RichText::new("再生を準備しています").color(p.weak));
-        }
+        DetailTab::Replay => match &d.replay {
+            Some(v) => replay(ui, v, forms, acts),
+            None => {
+                ui.label(RichText::new("再生できるターンがありません").color(p.weak));
+            }
+        },
     }
 }
 
@@ -188,4 +192,75 @@ fn live(ui: &mut Ui, vm: &LiveLogVm, forms: &mut Forms, acts: &mut Vec<Action>) 
     if !at_bottom && ui.button("最新へ戻る").clicked() {
         acts.push(Action::Live(LiveAction::JumpToLatest));
     }
+}
+
+fn replay(ui: &mut Ui, vm: &ReplayVm, forms: &mut Forms, acts: &mut Vec<Action>) {
+    let p = pal(ui);
+    if vm.len == 0 {
+        ui.label(RichText::new("再生できるターンがありません").color(p.weak));
+        return;
+    }
+    let act = |a| Action::Dash(DashAction::Replay(a));
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button(format!("{} 前のターン", icon::SKIP_BACK))
+            .clicked()
+        {
+            acts.push(act(ReplayAction::Step(-1)));
+        }
+        let (ic, text) = if vm.playing {
+            (icon::PAUSE, "一時停止")
+        } else {
+            (icon::PLAY, "再生する")
+        };
+        if ui.button(format!("{ic} {text}")).clicked() {
+            acts.push(act(ReplayAction::TogglePlay));
+        }
+        if ui
+            .button(format!("{} 次のターン", icon::SKIP_FORWARD))
+            .clicked()
+        {
+            acts.push(act(ReplayAction::Step(1)));
+        }
+        for s in [1, 4, 16] {
+            if ui
+                .selectable_label(vm.speed == s, format!("{s}倍"))
+                .clicked()
+            {
+                acts.push(act(ReplayAction::SetSpeed(s)));
+            }
+        }
+        ui.label(RichText::new(format!("{} / {}", vm.position + 1, vm.len)).strong());
+    });
+    let slider = egui::Slider::new(&mut forms.replay_position, 0..=vm.len - 1).show_value(false);
+    if ui.add_sized([ui.available_width(), 20.0], slider).changed() {
+        acts.push(act(ReplayAction::Seek(forms.replay_position)));
+    }
+    if let Some(c) = &vm.current {
+        trunc(ui, RichText::new(format!("現在: {}", c.summary)).strong());
+        trunc(
+            ui,
+            RichText::new(format!(
+                "{} · {}（{}） · コンテキスト {}",
+                c.time, c.kind, c.source, c.context
+            ))
+            .small()
+            .color(p.weak),
+        );
+    }
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .id_salt("replay")
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            for t in &vm.recent {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&t.time).monospace().color(p.weak));
+                    ui.add_space(12.0 * t.depth as f32);
+                    ui.label(format!("{}（{}）", t.kind, t.source));
+                    trunc(ui, &t.summary);
+                });
+            }
+        });
 }
