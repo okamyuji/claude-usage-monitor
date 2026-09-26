@@ -15,7 +15,7 @@ use crate::models::domain::live_log::LiveFilter;
 use crate::models::domain::pricing::seed_models;
 use crate::models::domain::settings::Theme;
 use crate::models::ports::{
-    AnalyticsRepo, CatalogRefresh, Clock, CredentialStore, DaemonControl, DashboardRepo,
+    AnalyticsRepo, Autostart, CatalogRefresh, Clock, CredentialStore, DaemonControl, DashboardRepo,
     DiagnosticsRepo, FetchLogRepo, ModelRepo, ProfileRepo, RepoError, SessionQueryRepo,
     SettingsRepo, UsageRepo,
 };
@@ -98,6 +98,8 @@ pub struct GuiDeps {
     pub daemon: Arc<dyn DaemonControl>,
     /// モデル情報の手動更新。
     pub catalog: Arc<dyn CatalogRefresh>,
+    /// ログイン時の自動起動。
+    pub autostart: Arc<dyn Autostart>,
 }
 
 /// 利用者の操作。
@@ -380,6 +382,18 @@ impl GuiController {
                 return;
             }
             SettingsAction::RefreshCatalog => self.start_catalog_refresh(),
+            SettingsAction::SetAutostart(on) => {
+                let r = if on {
+                    self.deps.autostart.enable()
+                } else {
+                    self.deps.autostart.disable()
+                };
+                match r {
+                    Ok(()) if on => "ログイン時にデーモンを起動するよう登録しました".into(),
+                    Ok(()) => "ログイン時の起動を解除しました".into(),
+                    Err(e) => e,
+                }
+            }
         });
     }
 
@@ -928,5 +942,18 @@ mod tests {
         );
         c.handle(Action::SelectTab(Tab::Diagnostics));
         assert!(matches!(&c.vm().body, TabVm::Diagnostics(_)));
+    }
+
+    #[test]
+    fn autostart_toggle_calls_port() {
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Settings));
+        assert!(matches!(&c.vm().body, TabVm::Settings(s) if s.autostart == Some(false)));
+        c.handle(Action::Settings(SettingsAction::SetAutostart(true)));
+        assert!(
+            matches!(&c.vm().body, TabVm::Settings(s) if s.autostart == Some(true) && s.message.as_deref().unwrap().contains("ログイン時"))
+        );
+        c.handle(Action::Settings(SettingsAction::SetAutostart(false)));
+        assert!(matches!(&c.vm().body, TabVm::Settings(s) if s.autostart == Some(false)));
     }
 }

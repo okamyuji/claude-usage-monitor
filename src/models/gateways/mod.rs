@@ -1,4 +1,5 @@
 //! 外部システム（使用量API、公式ページ、ファイル、OS）との接続。portsのtraitを実装する。
+pub mod autostart;
 pub mod credentials;
 pub mod daemon_control;
 pub mod jobs;

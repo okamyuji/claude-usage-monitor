@@ -40,6 +40,16 @@ pub fn show(ui: &mut Ui, vm: &SettingsVm, forms: &mut Forms, acts: &mut Vec<Acti
                 ui.selectable_value(&mut s.theme, t, text);
             }
         });
+        if let Some(mut on) = vm.autostart {
+            if ui
+                .checkbox(&mut on, "ログイン時にデーモンを起動する")
+                .changed()
+            {
+                acts.push(Action::Settings(SettingsAction::SetAutostart(on)));
+            }
+        } else {
+            ui.label(RichText::new("ログイン時の起動の状態を読めません").color(p.weak));
+        }
         if ui.button("保存").clicked() {
             acts.push(Action::Settings(SettingsAction::Save));
         }

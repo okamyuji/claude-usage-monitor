@@ -169,3 +169,35 @@ fn threshold_change_notifies_once_on_next_cycle() {
         "2周期取得しても同じ枠の通知は1回だけ: {lines}"
     );
 }
+
+/// トレイ付きで起動し、周期処理が終わるとイベントループも抜けて終了する（macOSだけ。デスクトップが要るため）。
+#[cfg(target_os = "macos")]
+#[test]
+fn daemon_with_tray_runs_and_exits_after_max_ticks() {
+    let wm = WireMock::start();
+    wm.stub(
+        json!({"request": {"method": "GET", "url": "/api/oauth/usage"},
+                   "response": {"status": 200, "body": include_str!("fixtures/usage_ok.json")}}),
+    );
+    let data = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    write_home(home.path(), false);
+    Command::cargo_bin("cps")
+        .unwrap()
+        .env("CPS_DATA_DIR", data.path())
+        .env("HOME", home.path())
+        .env("CPS_USAGE_API_BASE", &wm.base_url)
+        .env("CPS_CATALOG_BASE", &wm.base_url)
+        .env("CPS_NOTIFY_LOG", data.path().join("n.log"))
+        .args(["daemon", "--interval-secs", "1", "--max-ticks", "2"])
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    assert_eq!(
+        q(
+            &data.path().join("cps.db"),
+            "SELECT COUNT(*) FROM usage_samples WHERE kind = 'session'"
+        ),
+        2
+    );
+}

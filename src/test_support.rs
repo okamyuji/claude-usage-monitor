@@ -276,6 +276,7 @@ pub(crate) fn gui_deps(
         creds,
         daemon,
         catalog: Arc::new(CountingCatalog::default()),
+        autostart: Arc::new(FakeAutostart::default()),
     }
 }
 
@@ -289,6 +290,24 @@ impl crate::models::ports::Notifier for RecordingNotifier {
             .lock()
             .unwrap()
             .push((title.to_string(), body.to_string()));
+        Ok(())
+    }
+}
+
+/// 登録状態を覚えるだけの自動起動。
+#[derive(Default)]
+pub(crate) struct FakeAutostart(pub(crate) Mutex<bool>);
+
+impl crate::models::ports::Autostart for FakeAutostart {
+    fn is_enabled(&self) -> Result<bool, String> {
+        Ok(*self.0.lock().unwrap())
+    }
+    fn enable(&self) -> Result<(), String> {
+        *self.0.lock().unwrap() = true;
+        Ok(())
+    }
+    fn disable(&self) -> Result<(), String> {
+        *self.0.lock().unwrap() = false;
         Ok(())
     }
 }

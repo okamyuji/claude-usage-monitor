@@ -7,4 +7,5 @@ pub mod header;
 pub mod layout;
 pub mod tabs;
 pub mod theme;
+pub mod tray;
 pub mod widgets;

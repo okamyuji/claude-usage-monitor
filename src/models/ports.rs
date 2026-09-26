@@ -306,6 +306,16 @@ pub trait GuiLauncher: Send + Sync {
     fn open(&self) -> Result<(), String>;
 }
 
+/// ログイン時の自動起動。
+pub trait Autostart: Send + Sync {
+    /// 登録済みか。
+    fn is_enabled(&self) -> Result<bool, String>;
+    /// 登録する。
+    fn enable(&self) -> Result<(), String>;
+    /// 解除する。
+    fn disable(&self) -> Result<(), String>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

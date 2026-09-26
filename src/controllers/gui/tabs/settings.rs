@@ -153,6 +153,8 @@ pub struct SettingsVm {
     pub pricing_url: &'static str,
     /// モデル一覧。
     pub models_url: &'static str,
+    /// ログイン時の自動起動。状態を読めなければ`None`。
+    pub autostart: Option<bool>,
 }
 
 /// 設定タブの操作。
@@ -168,6 +170,8 @@ pub enum SettingsAction {
     CancelModel,
     /// 公式ページから今すぐ取り直す。
     RefreshCatalog,
+    /// 自動起動を切り替える。
+    SetAutostart(bool),
 }
 
 /// 設定タブを作る。
@@ -211,6 +215,7 @@ pub fn build(
         refreshing,
         pricing_url: PRICING_URL,
         models_url: MODELS_URL,
+        autostart: deps.autostart.is_enabled().ok(),
     })
 }
 

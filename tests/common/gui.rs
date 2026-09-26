@@ -43,6 +43,24 @@ impl CatalogRefresh for NoCatalog {
     }
 }
 
+/// 登録状態を覚えるだけの自動起動。
+#[derive(Default)]
+pub struct FakeAutostart(pub Mutex<bool>);
+
+impl claude_profile_switcher::models::ports::Autostart for FakeAutostart {
+    fn is_enabled(&self) -> Result<bool, String> {
+        Ok(*self.0.lock().unwrap())
+    }
+    fn enable(&self) -> Result<(), String> {
+        *self.0.lock().unwrap() = true;
+        Ok(())
+    }
+    fn disable(&self) -> Result<(), String> {
+        *self.0.lock().unwrap() = false;
+        Ok(())
+    }
+}
+
 pub struct NoCreds;
 impl CredentialStore for NoCreds {
     fn load(&self, _p: &Profile, _dir: &Path) -> Result<Credential, CredentialError> {
@@ -90,6 +108,7 @@ impl GuiEnv {
             creds: Arc::new(NoCreds),
             daemon: self.daemon.clone(),
             catalog: Arc::new(NoCatalog),
+            autostart: Arc::new(FakeAutostart::default()),
         }
     }
 

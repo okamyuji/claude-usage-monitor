@@ -9,10 +9,13 @@ use claude_profile_switcher::controllers::daemon::catalog::CatalogUpdater;
 use claude_profile_switcher::controllers::daemon::collector::{CollectorDeps, UsageCollector};
 use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
 use claude_profile_switcher::controllers::daemon::runner::{Daemon, DaemonParts, DaemonSettings};
+use claude_profile_switcher::controllers::daemon::tray::{TrayController, TrayDeps};
 use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
 use claude_profile_switcher::models::domain::profile::Profile;
+use claude_profile_switcher::models::gateways::autostart::SystemAutostart;
 use claude_profile_switcher::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
 use claude_profile_switcher::models::gateways::daemon_control::LockFileDaemon;
+use claude_profile_switcher::models::gateways::launcher::ExeGuiLauncher;
 use claude_profile_switcher::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
@@ -23,6 +26,7 @@ use claude_profile_switcher::models::ports::ProfileRepo;
 use claude_profile_switcher::models::repositories::db::SqliteStore;
 use claude_profile_switcher::views::app::{CpsApp, apply_theme, install_fonts};
 use claude_profile_switcher::views::theme;
+use claude_profile_switcher::views::tray::run_with_tray;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -138,9 +142,8 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         Command::Daemon {
             interval_secs,
             max_ticks,
-            // トレイはまだ作らないので、指定の有無にかかわらず周期処理だけを回す。
-            no_tray: _,
-        } => run_daemon(&p, store, interval_secs, max_ticks),
+            no_tray,
+        } => run_daemon(&p, store, interval_secs, max_ticks, no_tray),
         Command::Run { args } => Ok(ExitCode::from(
             run_claude(&store, &args)?.clamp(0, 255) as u8
         )),
@@ -185,6 +188,7 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
         models: store.clone(),
         settings: store.clone(),
         creds: Arc::new(SystemCredentialStore::new(Arc::new(SecurityCli::default()))),
+        autostart: Arc::new(SystemAutostart::new(&exe).map_err(other)?),
         daemon: Arc::new(LockFileDaemon::new(p.data_dir.join("daemon.lock"), exe)),
         catalog,
     }))
@@ -327,6 +331,7 @@ fn run_daemon(
     store: SqliteStore,
     interval_secs: Option<u64>,
     max_ticks: Option<u64>,
+    no_tray: bool,
 ) -> Result<ExitCode, CliError> {
     let Some(_lock) = acquire_lock(&p.data_dir)? else {
         eprintln!("cps: デーモンは既に起動しています");
@@ -352,7 +357,28 @@ fn run_daemon(
         max_usage_ticks: max_ticks,
         ..DaemonSettings::default()
     };
-    let result = build_daemon(p, store, settings).run(&rx, &AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut daemon = build_daemon(p, store.clone(), settings);
+    let result = if no_tray {
+        daemon.run(&rx, &shutdown)
+    } else {
+        let tray = TrayController::new(TrayDeps {
+            profiles: store.clone(),
+            dashboard: store.clone(),
+            launcher: Arc::new(ExeGuiLauncher::new(std::env::current_exe()?)),
+            paused: daemon.paused().clone(),
+            shutdown: shutdown.clone(),
+            home: p.home.clone(),
+        });
+        let (tx, done) = std::sync::mpsc::channel();
+        let stop = shutdown.clone();
+        // 周期処理は別スレッドへ出し、メインスレッドでトレイのイベントループを回す（macOSはトレイの操作をメインスレッドに限るため）。
+        run_with_tray(tray, notifier_from_env(), move || {
+            let _ = tx.send(daemon.run(&rx, &stop));
+        })
+        .map_err(other)?;
+        done.recv().unwrap_or(Ok(()))
+    };
     drop(stop_tx);
     let _ = catalog_thread.join();
     result?;
