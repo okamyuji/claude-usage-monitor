@@ -294,6 +294,12 @@ pub trait MaintenanceRepo: Send + Sync {
     fn record_daemon_stats(&self, at: DateTime<Utc>, rss_bytes: u64) -> Result<(), RepoError>;
 }
 
+/// OS通知。
+pub trait Notifier: Send + Sync {
+    /// 通知を1件出す。
+    fn notify(&self, title: &str, body: &str) -> Result<(), String>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
