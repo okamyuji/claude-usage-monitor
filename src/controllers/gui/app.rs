@@ -1,5 +1,6 @@
 //! GUI全体の状態、タブの切り替え、読み直しの周期。
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
+use crate::controllers::gui::header;
 use crate::models::domain::display::fmt_clock;
 use crate::models::domain::settings::Theme;
 use crate::models::ports::{
@@ -252,12 +253,13 @@ impl GuiController {
         }
     }
 
-    /// 表示中のタブだけを読み直す。表示していないタブのデータを持たないため。
+    /// 表示中のタブと上部の集計だけを読み直す。表示していないタブのデータを持たないため。
     pub fn refresh(&mut self) {
         let now = self.deps.clock.now();
         self.vm.daemon_running = self.deps.daemon.is_running();
-        match self.build_body() {
-            Ok(body) => {
+        match self.build_all() {
+            Ok((head, body)) => {
+                self.vm.header = head;
                 self.vm.body = body;
                 self.vm.error = None;
             }
@@ -265,6 +267,10 @@ impl GuiController {
         }
         self.vm.updated = fmt_clock(now, now, self.deps.tz);
         self.last_refresh = Some(now);
+    }
+
+    fn build_all(&mut self) -> Result<(HeaderVm, TabVm), RepoError> {
+        Ok((header::build(&self.deps)?, self.build_body()?))
     }
 
     fn build_body(&mut self) -> Result<TabVm, RepoError> {
@@ -380,5 +386,14 @@ mod tests {
         );
         assert_eq!(c.dash_mode(), ListMode::History);
         assert_eq!(c.view_parts().1.split_ratio, DEFAULT_SPLIT);
+    }
+
+    #[test]
+    fn refresh_fills_header_and_dashboard() {
+        let (_d, _h, _c, _s, c) = ctl(FakeDaemon::default());
+        assert_eq!(c.vm().header.today, "0 $0.00");
+        assert!(
+            matches!(&c.vm().body, TabVm::Dashboard(d) if d.cards.len() == 1 && d.active.is_empty())
+        );
     }
 }

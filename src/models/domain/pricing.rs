@@ -180,6 +180,22 @@ pub fn seed_models() -> Vec<ModelInfo> {
     ]
 }
 
+/// 入力、キャッシュ、出力の合計。一覧に1つの数で出すため。
+pub fn total_tokens(u: &TokenUsage) -> u64 {
+    u.context_tokens() + u.output
+}
+
+/// モデルごとの合計からコストを足し合わせる。Tokenが0の行は単価がなくても無視する。
+/// 単価のないモデルに1Tokenでも使っていれば`None`にし、一部だけの合計を全体の額と誤読させない。
+/// 空の合計は`f64`の`Sum`の初期値が`-0.0`になるため、`+ 0.0`で`0.0`に直す（`$-0.00`と表示させない）。
+pub fn sum_cost(models: &[ModelInfo], rows: &[(Option<&str>, TokenUsage)]) -> Option<f64> {
+    rows.iter()
+        .filter(|(_, u)| total_tokens(u) > 0)
+        .map(|(m, u)| m.and_then(|id| cost_for(models, id, u)))
+        .sum::<Option<f64>>()
+        .map(|v| v + 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +393,55 @@ mod tests {
         assert_eq!(
             find_model(&m, "claude-haiku-4-5").unwrap().context_window,
             Some(200_000)
+        );
+    }
+
+    #[test]
+    fn sum_cost_ignores_empty_rows_and_needs_all_prices() {
+        let m = seed_models();
+        let u = TokenUsage {
+            input: 1_000_000,
+            ..TokenUsage::default()
+        };
+        assert_eq!(
+            sum_cost(
+                &m,
+                &[(Some("claude-opus-5-5"), u), (Some("claude-haiku-4-5"), u)]
+            ),
+            Some(5.0)
+        );
+        assert_eq!(
+            sum_cost(
+                &m,
+                &[
+                    (Some("claude-opus-5-5"), u),
+                    (Some("<synthetic>"), TokenUsage::default())
+                ]
+            ),
+            Some(4.0)
+        );
+        assert_eq!(
+            sum_cost(
+                &m,
+                &[(Some("claude-opus-5-5"), u), (Some("<synthetic>"), u)]
+            ),
+            None
+        );
+        assert_eq!(sum_cost(&m, &[(None, u)]), None);
+        assert_eq!(sum_cost(&m, &[]), Some(0.0));
+        assert!(
+            sum_cost(&m, &[]).unwrap().is_sign_positive(),
+            "空の合計を-0.0にしない"
+        );
+        assert_eq!(
+            total_tokens(&TokenUsage {
+                input: 1,
+                output: 2,
+                cache_read: 3,
+                cache_write_5m: 4,
+                cache_write_1h: 5
+            }),
+            15
         );
     }
 }

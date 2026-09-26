@@ -1,7 +1,12 @@
 //! ダッシュボード。カード、セッション一覧、詳細、推移を1画面にまとめる（spec 7.2節）。
 //!
 //! 区画ごとのViewModelは同じディレクトリの各ファイルが作り、ここで1つにまとめる。
+pub mod cards;
+pub mod runs;
+
 use crate::controllers::gui::app::GuiDeps;
+use crate::controllers::gui::dashboard::cards::ProfileCard;
+use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::models::ports::RepoError;
 
 /// 一覧の種類。
@@ -48,6 +53,10 @@ pub struct DashboardVm {
     pub mode: ListMode,
     /// 推移グラフを開いているか。
     pub trend_open: bool,
+    /// 使用率カード。
+    pub cards: Vec<ProfileCard>,
+    /// 稼働中の実行。一覧が履歴のときも件数を出すために作る。
+    pub active: Vec<RunItem>,
 }
 
 /// 操作を状態に反映する。
@@ -59,10 +68,12 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
 }
 
 /// ダッシュボードのViewModelを作る。
-pub fn build(_deps: &GuiDeps, st: &DashboardState) -> Result<DashboardVm, RepoError> {
+pub fn build(deps: &GuiDeps, st: &DashboardState) -> Result<DashboardVm, RepoError> {
     Ok(DashboardVm {
         mode: st.mode,
         trend_open: st.trend_open,
+        cards: cards::cards(deps)?,
+        active: runs::runs(deps)?,
     })
 }
 

@@ -3,3 +3,4 @@
 //! eguiに依存しないため、画面なしでユニットテストできる。描画は`views`が担う。
 pub mod app;
 pub mod dashboard;
+pub mod header;

@@ -110,3 +110,155 @@ fn layout_follows_window_size() {
         assert!(h.get_by_label_contains("デーモン停止中").rect().max.x <= w);
     }
 }
+
+use claude_profile_switcher::models::domain::records::{FetchLogEntry, FetchResult};
+use claude_profile_switcher::models::domain::usage::parse_usage;
+use claude_profile_switcher::models::ports::{FetchLogRepo, ProfileRepo, UsageRepo};
+
+fn record_rising_usage(env: &common::gui::GuiEnv) {
+    let p = env.store.ensure_default().unwrap();
+    let mut snap = parse_usage(include_str!("fixtures/usage_ok.json")).unwrap();
+    for (i, pct) in [10.0, 20.0, 30.0].iter().enumerate() {
+        snap.limits[0].percent = *pct;
+        snap.limits[0].resets_at = Some(now() + chrono::Duration::hours(2));
+        env.store
+            .record_snapshot(
+                p.id,
+                now() - chrono::Duration::minutes(20 - 10 * i as i64),
+                &snap,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn cards_show_limits_remaining_and_projection() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    let h = env.harness();
+    h.get_by_label("5時間枠");
+    h.get_by_label("30%");
+    h.get_by_label_contains("残り2時間（14:00）");
+    h.get_by_label_contains("このペースだと 13:10 に上限");
+    h.get_by_label("週間枠（Fable）");
+    h.get_by_label("使用中");
+}
+
+#[test]
+fn token_expired_is_shown_on_401() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .log(&FetchLogEntry {
+            target: format!("usage:{}", p.id),
+            at: now(),
+            result: FetchResult::Failed,
+            http_status: Some(401),
+            message: String::new(),
+        })
+        .unwrap();
+    let h = env.harness();
+    h.get_by_label_contains("トークン期限切れ");
+}
+
+#[test]
+fn empty_db_shows_not_fetched_and_daemon_stopped() {
+    let env = gui_env(now());
+    env.store.ensure_default().unwrap();
+    let h = env.harness();
+    h.get_by_label_contains("まだ取得していません");
+    h.get_by_label_contains("デーモン停止中");
+    h.get_by_label("稼働中の実行はありません");
+}
+
+use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
+use claude_profile_switcher::models::gateways::process::SysProcessInfo;
+use std::sync::Arc;
+
+fn ingest(env: &common::gui::GuiEnv) {
+    let p = env.store.ensure_default().unwrap();
+    let ing = Ingestor::new(
+        env.store.clone(),
+        env.store.clone(),
+        Arc::new(SysProcessInfo::new()),
+        env.clock.clone(),
+        chrono::Duration::days(90),
+    );
+    let cfg = env.home.path().join(".claude");
+    ing.scan_all(&p, &cfg).unwrap();
+    ing.ingest_live_state(&p, &cfg).unwrap();
+}
+
+fn append(path: &std::path::Path, line: &str) {
+    use std::io::Write;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    writeln!(f, "{line}").unwrap();
+}
+
+fn headless_line(ts: chrono::DateTime<Utc>) -> String {
+    format!(
+        r#"{{"type":"assistant","entrypoint":"sdk-cli","sessionId":"hl1","cwd":"/work/app","timestamp":"{}","message":{{"id":"m1","model":"claude-opus-5-5","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"cargo test"}}}}],"usage":{{"input_tokens":1000,"output_tokens":10}}}}}}"#,
+        claude_profile_switcher::models::repositories::db::ts(ts)
+    )
+}
+
+#[test]
+fn headless_run_appears_then_leaves_after_threshold() {
+    let env = gui_env(now());
+    append(
+        &env.home.path().join(".claude/projects/-work-app/hl1.jsonl"),
+        &headless_line(now() - chrono::Duration::seconds(5)),
+    );
+    ingest(&env);
+    let mut h = env.harness();
+    h.get_by_label("ヘッドレス");
+    h.get_by_label("ツール実行中");
+    h.get_by_label("稼働中 1");
+    env.advance(chrono::Duration::seconds(130));
+    h.state_mut().refresh();
+    h.run();
+    assert!(h.query_by_label("ヘッドレス").is_none());
+    h.get_by_label("稼働中 0");
+}
+
+#[test]
+fn job_shows_badge_and_progress() {
+    let env = gui_env(now());
+    let job = env.home.path().join(".claude/jobs/j1/state.json");
+    std::fs::create_dir_all(job.parent().unwrap()).unwrap();
+    std::fs::write(
+        &job,
+        format!(
+            r#"{{"state":"working","detail":"3/8件目","sessionId":"js1","name":"夜間ジョブ","cwd":"/work/app","inFlight":{{"tasks":2}},"createdAt":"{0}","updatedAt":"{0}"}}"#,
+            claude_profile_switcher::models::repositories::db::ts(now() - chrono::Duration::minutes(1))
+        ),
+    )
+    .unwrap();
+    ingest(&env);
+    let h = env.harness();
+    h.get_by_label("ジョブ");
+    h.get_by_label_contains("3/8件目 / 実行中タスク 2");
+}
+
+#[test]
+fn header_shows_today_and_week_totals() {
+    use claude_profile_switcher::models::domain::pricing::seed_models;
+    use claude_profile_switcher::models::ports::ModelRepo;
+    let env = gui_env(now());
+    env.store.seed_if_empty(&seed_models()).unwrap();
+    append(
+        &env.home.path().join(".claude/projects/-work-app/hl1.jsonl"),
+        &headless_line(now() - chrono::Duration::hours(1)),
+    );
+    ingest(&env);
+    let h = env.harness();
+    h.get_by_label("今日");
+    h.get_by_label("今週");
+    assert_eq!(h.get_all_by_label("1.01k <$0.01").count(), 2);
+}

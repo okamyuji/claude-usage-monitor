@@ -17,7 +17,8 @@ impl WireMock {
             .expect("WireMockの起動");
         let port = container.get_host_port_ipv4(8080.tcp()).unwrap();
         let base_url = format!("http://127.0.0.1:{port}");
-        let ready = (0..60).any(|_| {
+        // 品質ゲートのmutation testingと並行して動くと起動が遅れるため、最大120秒待つ。
+        let ready = (0..240).any(|_| {
             let ok = ureq::get(&format!("{base_url}/__admin/health"))
                 .call()
                 .is_ok();

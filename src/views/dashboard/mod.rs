@@ -1,6 +1,9 @@
 //! ダッシュボードの配置（spec 7.2節の3段）。区画の中身は同じディレクトリの各ファイルが描く。
+pub mod cards;
+pub mod sessions;
+
 use crate::controllers::gui::app::{Action, Forms};
-use crate::controllers::gui::dashboard::{DashAction, DashboardVm, ListMode};
+use crate::controllers::gui::dashboard::{DashAction, DashboardVm};
 use crate::views::layout::{
     GAP, SPLITTER, TREND_COLLAPSED, drag_ratio, middle_height, split_widths, trend_height,
 };
@@ -12,7 +15,7 @@ use egui_phosphor::regular as icon;
 /// ダッシュボードを描く。
 pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     let total = ui.available_height();
-    cards_area(ui);
+    cards::show(ui, &vm.cards);
     ui.add_space(GAP);
     let trend_h = if vm.trend_open {
         trend_height(total)
@@ -25,16 +28,11 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
         forms,
         mid_h,
         acts,
-        |ui, _forms, acts| list(ui, vm, acts),
+        |ui, _forms, acts| sessions::show(ui, vm, acts),
         |ui, _forms, _acts| detail(ui),
     );
     ui.add_space(GAP);
     trend_area(ui, vm, trend_h, acts);
-}
-
-fn cards_area(ui: &mut Ui) {
-    section(ui, "レート制限");
-    ui.label(RichText::new("読み込み中です").color(pal(ui).weak));
 }
 
 /// 大きさを決めた領域にカードの枠を描き、中身で領域を埋める。
@@ -78,17 +76,6 @@ pub fn split(
             forms.split_ratio = drag_ratio(avail, lw, resp.drag_delta().x);
         }
         filled_card(ui, vec2(rw, height), |ui| right(ui, forms, acts));
-    });
-}
-
-fn list(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        section(ui, "セッション");
-        for (m, text) in [(ListMode::Active, "稼働中"), (ListMode::History, "履歴")] {
-            if ui.selectable_label(vm.mode == m, text).clicked() {
-                acts.push(Action::Dash(DashAction::SetListMode(m)));
-            }
-        }
     });
 }
 
