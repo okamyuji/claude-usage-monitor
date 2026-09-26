@@ -228,6 +228,36 @@ mod tests {
     }
 
     #[test]
+    fn successful_last_fetch_shows_no_problem() {
+        let (_d, _h, s, _c, deps) = setup();
+        rising_usage(&s);
+        let id = s.ensure_default().unwrap().id;
+        s.log(&FetchLogEntry {
+            target: format!("usage:{id}"),
+            at: now(),
+            result: FetchResult::Ok,
+            http_status: Some(200),
+            message: "ok".into(),
+        })
+        .unwrap();
+        assert_eq!(cards(&deps).unwrap()[0].problem, None);
+    }
+
+    #[test]
+    fn value_is_marked_stale_only_after_twice_the_interval() {
+        let (_d, _h, s, c, deps) = setup();
+        rising_usage(&s);
+        // 最新の取得は now()。既定の取得間隔は60秒なので、境界は120秒。
+        let mut elapsed = 0;
+        for (secs, stale) in [(100, false), (120, false), (121, true)] {
+            c.advance(Duration::seconds(secs - elapsed));
+            elapsed = secs;
+            let fetched = cards(&deps).unwrap()[0].fetched.clone();
+            assert_eq!(fetched.ends_with("前の値"), stale, "{secs}秒後: {fetched}");
+        }
+    }
+
+    #[test]
     fn empty_db_shows_not_fetched() {
         let (_d, _h, s, _c, deps) = setup();
         s.ensure_default().unwrap();

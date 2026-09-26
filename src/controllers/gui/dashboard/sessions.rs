@@ -4,7 +4,7 @@ use crate::controllers::gui::dashboard::live_log::LiveLogVm;
 use crate::controllers::gui::dashboard::replay::ReplayVm;
 use crate::models::domain::activity::{RunKind, is_active};
 use crate::models::domain::display::{
-    context_ratio, fmt_clock, fmt_duration, fmt_ratio, fmt_tokens, fmt_usd,
+    context_ratio, fmt_clock, fmt_duration, fmt_ratio, fmt_tokens, fmt_usd, ratio,
 };
 use crate::models::domain::pricing::{
     ModelInfo, TokenUsage, cache_hit_rate, cost_for, find_model, sum_cost, total_tokens,
@@ -315,7 +315,7 @@ pub fn detail(
         .filter(|u| !u.agent_id.is_empty())
         .map(|u| total_tokens(&u.usage))
         .sum();
-    let share = (total_tokens(&total) > 0).then(|| sub as f64 / total_tokens(&total) as f64);
+    let share = ratio(sub, total_tokens(&total));
     let turns = match tab {
         DetailTab::Turns => turn_items(
             &deps.sessions.turns(id, TURN_LIMIT)?,
@@ -558,6 +558,42 @@ mod tests {
                 .unwrap()
                 .ends_with("コスト 単価未登録")
         );
+    }
+
+    #[test]
+    fn cache_write_total_adds_both_lifetimes() {
+        let (_d, s) = temp_store();
+        let s = Arc::new(s);
+        s.seed_if_empty(&seed_models()).unwrap();
+        s.ensure_default().unwrap();
+        seed_session(&s, "c1", SessionKind::Headless, None, now());
+        let u = TokenUsage {
+            cache_write_5m: 2_000,
+            cache_write_1h: 1_000,
+            ..tokens(0, 0)
+        };
+        seed_turn(
+            &s,
+            "c1",
+            "",
+            "m1",
+            now(),
+            Some("claude-opus-5-5"),
+            "text",
+            u,
+        );
+        let home = tempfile::tempdir().unwrap();
+        let deps = gui_deps(
+            s,
+            Arc::new(FixedClock::at(now())),
+            home.path(),
+            Arc::new(FakeCreds(std::collections::HashMap::new())),
+            Arc::new(FakeDaemon::default()),
+        );
+        let d = detail(&deps, "c1", &HashSet::new(), DetailTab::Turns)
+            .unwrap()
+            .unwrap();
+        assert_eq!(d.totals.cache_write, fmt_tokens(3_000));
     }
 
     #[test]

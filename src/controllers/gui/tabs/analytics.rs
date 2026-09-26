@@ -1,6 +1,6 @@
 //! 分析タブ。プロジェクト別、モデル別、ブランチ別の集計、本体とサブエージェントの割合、キャッシュヒット率、ツール統計。
 use crate::controllers::gui::app::GuiDeps;
-use crate::models::domain::display::{fmt_percent, fmt_ratio, fmt_tokens, fmt_usd};
+use crate::models::domain::display::{fmt_percent, fmt_ratio, fmt_tokens, fmt_usd, ratio};
 use crate::models::domain::pricing::{
     ModelInfo, TokenUsage, cache_hit_rate, sum_cost, total_tokens,
 };
@@ -153,7 +153,7 @@ pub fn build(deps: &GuiDeps, period: Period) -> Result<AnalyticsVm, RepoError> {
             .into_iter()
             .take(TOP)
             .map(|t| ToolRow {
-                error_rate: fmt_ratio((t.calls > 0).then(|| t.errors as f64 / t.calls as f64)),
+                error_rate: fmt_ratio(ratio(t.errors as u64, t.calls as u64)),
                 name: t.tool_name,
                 calls: t.calls.to_string(),
                 errors: t.errors.to_string(),
@@ -225,6 +225,14 @@ mod tests {
         })
         .unwrap();
         s.mark_tool_error("t1").unwrap();
+        s.upsert_tool_call(&ToolCallRecord {
+            tool_use_id: "t2".into(),
+            session_id: "s1".into(),
+            agent_id: String::new(),
+            ts: now(),
+            tool_name: "Bash".into(),
+        })
+        .unwrap();
         let home = tempfile::tempdir().unwrap();
         let deps = gui_deps(
             Arc::new(s),
@@ -258,7 +266,7 @@ mod tests {
                 vm.tools[0].calls.as_str(),
                 vm.tools[0].error_rate.as_str()
             ),
-            ("Bash", "1", "100%")
+            ("Bash", "2", "50%")
         );
         assert_eq!(build(&deps, Period::Days30).unwrap().by_project.len(), 2);
         assert_eq!((Period::Days7.label(), Period::Days30.days()), ("7日", 30));

@@ -62,7 +62,10 @@ mod tests {
         let p = SysProcessInfo::new();
         assert!(p.is_alive(std::process::id()));
         assert!(!p.is_alive(u32::MAX - 1));
-        assert!(p.self_rss_bytes() > 0);
+        assert!(
+            p.self_rss_bytes() > 1024 * 1024,
+            "テストの実行中のプロセスは1MB以上使う"
+        );
     }
 
     #[test]

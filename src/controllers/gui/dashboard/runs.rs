@@ -300,6 +300,109 @@ mod tests {
         assert_eq!(rs[2].detail.as_deref(), Some("3/8件目 / 実行中タスク 2"));
     }
 
+    fn deps_for(
+        s: Arc<crate::models::repositories::db::SqliteStore>,
+        home: &std::path::Path,
+    ) -> GuiDeps {
+        gui_deps(
+            s,
+            Arc::new(FixedClock::at(now())),
+            home,
+            Arc::new(FakeCreds(HashMap::new())),
+            Arc::new(FakeDaemon::default()),
+        )
+    }
+
+    #[test]
+    fn job_updated_near_its_active_limit_is_listed() {
+        let (_d, s) = temp_store();
+        let s = Arc::new(s);
+        // ジョブの稼働判定は既定で10分。9分30秒前の更新はまだ稼働中。
+        seed_session(
+            &s,
+            "job",
+            SessionKind::BackgroundJob,
+            Some("working"),
+            now() - Duration::seconds(570),
+        );
+        let home = tempfile::tempdir().unwrap();
+        let rs = runs(&deps_for(s, home.path())).unwrap();
+        assert_eq!(rs.len(), 1);
+    }
+
+    #[test]
+    fn subagent_tokens_count_only_its_own_turns() {
+        let (_d, s) = temp_store();
+        let s = Arc::new(s);
+        s.seed_if_empty(&seed_models()).unwrap();
+        for sid in ["h1", "h2"] {
+            seed_session(
+                &s,
+                sid,
+                SessionKind::Headless,
+                None,
+                now() - Duration::seconds(30),
+            );
+        }
+        let t = now() - Duration::seconds(10);
+        seed_turn(
+            &s,
+            "h1",
+            "",
+            "m1",
+            t,
+            Some("claude-opus-5-5"),
+            "text",
+            tokens(100_000, 0),
+        );
+        seed_turn(
+            &s,
+            "h1",
+            "a1",
+            "m2",
+            t,
+            Some("claude-opus-5-5"),
+            "text",
+            tokens(1_000, 0),
+        );
+        seed_turn(
+            &s,
+            "h1",
+            "a2",
+            "m3",
+            t,
+            Some("claude-opus-5-5"),
+            "text",
+            tokens(20_000, 0),
+        );
+        seed_turn(
+            &s,
+            "h2",
+            "a1",
+            "m4",
+            t,
+            Some("claude-opus-5-5"),
+            "text",
+            tokens(300_000, 0),
+        );
+        s.upsert_subagent(&SubagentRecord {
+            agent_id: "a1".into(),
+            session_id: "h1".into(),
+            agent_type: Some("go-reviewer".into()),
+            description: None,
+            parent_tool_use_id: None,
+            spawn_depth: Some(1),
+        })
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let rs = runs(&deps_for(s, home.path())).unwrap();
+        let sub = rs.iter().find(|r| r.kind == RunKind::Subagent).unwrap();
+        assert_eq!(
+            sub.tokens,
+            crate::models::domain::display::fmt_tokens(1_000)
+        );
+    }
+
     #[test]
     fn project_name_is_last_path_part() {
         assert_eq!(project_name(Some("/work/app")), "app");

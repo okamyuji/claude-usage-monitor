@@ -198,6 +198,7 @@ mod tests {
             "読み飛ばした行 2件（直近の全体走査: ファイル3件、40行）"
         );
         assert_eq!((vm.rss_points.len(), vm.rss_latest.as_str()), (1, "14.0MB"));
+        assert_eq!(vm.rss_points[0][1], 14.0, "グラフの縦軸はMB");
     }
 
     #[test]

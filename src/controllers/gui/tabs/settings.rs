@@ -225,6 +225,46 @@ mod tests {
     use crate::models::domain::pricing::{ModelSource, seed_models};
 
     #[test]
+    fn catalog_status_tells_success_from_failure() {
+        use crate::models::domain::records::FetchLogEntry;
+        use crate::models::ports::FetchLogRepo;
+        use crate::test_support::{FakeCreds, FakeDaemon, FixedClock, gui_deps, temp_store};
+        use chrono::{Duration, TimeZone, Utc};
+        use std::sync::Arc;
+        let now = Utc.with_ymd_and_hms(2026, 9, 26, 3, 0, 0).unwrap();
+        let (_d, s) = temp_store();
+        let s = Arc::new(s);
+        let home = tempfile::tempdir().unwrap();
+        let deps = gui_deps(
+            s.clone(),
+            Arc::new(FixedClock::at(now)),
+            home.path(),
+            Arc::new(FakeCreds(std::collections::HashMap::new())),
+            Arc::new(FakeDaemon::default()),
+        );
+        let log = |at, result, message: &str| {
+            s.log(&FetchLogEntry {
+                target: "catalog".into(),
+                at,
+                result,
+                http_status: None,
+                message: message.into(),
+            })
+            .unwrap()
+        };
+        log(now - Duration::minutes(2), FetchResult::Ok, "12件を更新");
+        let ok = build(&deps, None, false).unwrap().catalog;
+        assert!(ok.ends_with("に更新"), "{ok}");
+        log(
+            now - Duration::minutes(1),
+            FetchResult::Failed,
+            "接続できません",
+        );
+        let ng = build(&deps, None, false).unwrap().catalog;
+        assert!(ng.ends_with("に失敗: 接続できません"), "{ng}");
+    }
+
+    #[test]
     fn settings_draft_round_trip_and_errors() {
         let s = Settings {
             usage_interval_secs: 120,

@@ -247,6 +247,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_price_is_valid() {
+        let (_d, s) = temp_store();
+        let mut m = seed_models()[0].clone();
+        m.cache_read = 0.0;
+        s.set_user(&m).unwrap();
+    }
+
+    #[test]
     fn negative_or_nan_price_is_invalid() {
         let (_d, s) = temp_store();
         for bad in [-1.0, f64::NAN, f64::INFINITY] {

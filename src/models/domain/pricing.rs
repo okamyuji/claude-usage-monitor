@@ -118,8 +118,7 @@ pub fn cost_for(models: &[ModelInfo], model_id: &str, u: &TokenUsage) -> Option<
 
 /// キャッシュヒット率。入力が0のときは割合に意味がないため`None`を返す。
 pub fn cache_hit_rate(u: &TokenUsage) -> Option<f64> {
-    let denom = u.context_tokens();
-    (denom > 0).then(|| u.cache_read as f64 / denom as f64)
+    crate::models::domain::display::ratio(u.cache_read, u.context_tokens())
 }
 
 fn official(prefix: &str, name: &str, p: [f64; 5], ctx: u64) -> ModelInfo {

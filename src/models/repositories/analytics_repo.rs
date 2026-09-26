@@ -289,7 +289,10 @@ mod tests {
         assert_eq!(st.len(), 1);
         assert_eq!(st[0].rss_bytes, 14 * 1024 * 1024);
         assert!(st[0].db_bytes > 0);
-        assert!(s.db_size() > 0);
+        assert!(
+            s.db_size() >= 4096,
+            "SQLiteは1ページ（4096バイト）以上のファイルを作る"
+        );
     }
 
     #[test]

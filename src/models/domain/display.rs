@@ -88,6 +88,11 @@ pub fn fmt_percent(p: f64) -> String {
     format!("{p:.0}%")
 }
 
+/// 割合。分母が0なら割合を決められないので`None`を返し、画面は「不明」と表示する。
+pub fn ratio(num: u64, den: u64) -> Option<f64> {
+    (den > 0).then(|| num as f64 / den as f64)
+}
+
 /// 割合（0〜1）を%で表す。求められないときは「不明」とし、0%と区別する。
 pub fn fmt_ratio(r: Option<f64>) -> String {
     r.map(|x| fmt_percent(x * 100.0))
@@ -172,6 +177,13 @@ pub fn projection_text(p: &Projection, now: DateTime<Utc>, tz: FixedOffset) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ratio_is_none_only_for_zero_denominator() {
+        assert_eq!(ratio(1, 4), Some(0.25));
+        assert_eq!(ratio(0, 1), Some(0.0));
+        assert_eq!(ratio(3, 0), None);
+    }
     use crate::models::domain::projection::Projection;
     use chrono::{Duration, FixedOffset, TimeZone, Utc};
 
