@@ -5,7 +5,9 @@
 use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
-use crate::models::domain::read_models::{LatestUsage, RunRow};
+use crate::models::domain::read_models::{
+    LatestUsage, RunRow, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TurnRow,
+};
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
 };
@@ -222,6 +224,20 @@ pub trait DashboardRepo: Send + Sync {
     /// 稼働中の候補。`since`以降に動いたセッションと、状態が終了でない対話セッションを、新しい順に最大200件返す。
     /// 稼働中の最終判定は設定の時間を使うcontrollerで行う。
     fn recent_runs(&self, since: DateTime<Utc>) -> Result<Vec<RunRow>, RepoError>;
+}
+
+/// セッション画面とログ再生の読み取り。
+pub trait SessionQueryRepo: Send + Sync {
+    /// 絞り込んだセッションを新しい順に返す。
+    fn list_sessions(&self, f: &SessionFilter) -> Result<Vec<SessionRow>, RepoError>;
+    /// 1件。
+    fn session(&self, session_id: &str) -> Result<Option<SessionRow>, RepoError>;
+    /// ターンを時刻順に返す。長いセッションでは新しい方から`limit`件だけを返す。
+    fn turns(&self, session_id: &str, limit: usize) -> Result<Vec<TurnRow>, RepoError>;
+    /// セッション、エージェント、モデルごとの合計。
+    fn model_usage(&self, session_ids: &[String]) -> Result<Vec<SessionModelUsage>, RepoError>;
+    /// サブエージェント。
+    fn subagents(&self, session_ids: &[String]) -> Result<Vec<SubagentRow>, RepoError>;
 }
 
 /// 保守処理の永続化。

@@ -1,6 +1,7 @@
 //! SQLiteの接続、PRAGMA、スキーマ。
 //!
 //! デーモン（書き込み）とGUI（読み取り）が同じファイルを同時に使うため、WALモードにする。
+use crate::models::domain::pricing::TokenUsage;
 use crate::models::ports::RepoError;
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Connection;
@@ -114,6 +115,17 @@ where
 {
     let mut st = c.prepare(sql)?;
     st.query_map(p, |r| T::try_from(r))?.collect()
+}
+
+/// Token数の5列から作る。
+pub(crate) fn usage_of(input: i64, output: i64, cache_read: i64, w5: i64, w1: i64) -> TokenUsage {
+    TokenUsage {
+        input: input as u64,
+        output: output as u64,
+        cache_read: cache_read as u64,
+        cache_write_5m: w5 as u64,
+        cache_write_1h: w1 as u64,
+    }
 }
 
 #[cfg(test)]
