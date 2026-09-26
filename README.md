@@ -92,10 +92,11 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ```
 
-変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。
+変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。
 
 ```bash
 scripts/gate.sh src/controllers/gui/app.rs
+GATE_BASE=origin/main scripts/gate.sh src/controllers/gui/app.rs
 ```
 
 長時間の稼働でメモリが増え続けないことは、デーモンを1,000周期回すリーク検査で確かめます。100周期目と1,000周期目のRSSを比べ、5MBを超えて増えていれば失敗にします。macOSで測った値は、トレイなしで12.0MBから11.6MB、トレイありで73.4MBから29.0MBでした。所要時間は約17分なので、通常のテストとは分けて実行します。
