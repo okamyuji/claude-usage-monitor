@@ -751,12 +751,19 @@ mod tests {
         use crate::controllers::gui::dashboard::sessions::DetailTab;
         let (_d, home, _c, s, mut c) = ctl(FakeDaemon::default());
         let f = with_live_session(&s, home.path());
-        c.handle(Action::Dash(DashAction::Select("s1".into(), DetailTab::LiveLog)));
+        c.handle(Action::Dash(DashAction::Select(
+            "s1".into(),
+            DetailTab::LiveLog,
+        )));
         assert_eq!(live_total(&c), 1);
         // 開き直していれば、ファイルが消えた後の読み直しで行が0件になる。
         std::fs::remove_file(&f).unwrap();
         c.refresh();
-        assert_eq!(live_total(&c), 1, "同じセッションは開き直さず、読み込み済みの行を保つ");
+        assert_eq!(
+            live_total(&c),
+            1,
+            "同じセッションは開き直さず、読み込み済みの行を保つ"
+        );
     }
 
     #[test]
