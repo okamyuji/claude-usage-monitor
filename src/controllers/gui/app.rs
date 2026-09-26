@@ -646,10 +646,15 @@ mod tests {
     fn tick_refreshes_only_after_interval() {
         let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
         assert_eq!(c.vm().updated, "12:00");
+        let first = c.last_refresh;
         clock.advance(chrono::Duration::seconds(REFRESH_SECS - 1));
         c.tick();
+        assert_eq!(c.last_refresh, first, "間隔に満たなければ読み直さない");
+        clock.advance(chrono::Duration::seconds(1));
+        c.tick();
+        assert_eq!(c.last_refresh, Some(clock.now()), "ちょうど間隔で読み直す");
         assert_eq!(c.vm().updated, "12:00");
-        clock.advance(chrono::Duration::seconds(61));
+        clock.advance(chrono::Duration::seconds(60));
         c.tick();
         assert_eq!(c.vm().updated, "12:01");
     }
@@ -666,6 +671,32 @@ mod tests {
         });
         ng.handle(Action::StartDaemon);
         assert!(ng.vm().error.as_deref().unwrap().contains("起動できません"));
+    }
+
+    #[test]
+    fn settings_draft_reloads_only_when_entering_settings() {
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.forms_mut().settings.interval = "999".into();
+        assert_eq!(c.forms_mut().settings.interval, "999");
+        c.handle(Action::SelectTab(Tab::Analytics));
+        assert_eq!(
+            c.forms_mut().settings.interval,
+            "999",
+            "設定以外のタブでは読み直さない"
+        );
+        c.handle(Action::SelectTab(Tab::Settings));
+        assert_ne!(
+            c.forms_mut().settings.interval,
+            "999",
+            "設定に入るときに保存値へ戻す"
+        );
+        c.forms_mut().settings.interval = "777".into();
+        c.handle(Action::SelectTab(Tab::Settings));
+        assert_eq!(
+            c.forms_mut().settings.interval,
+            "777",
+            "設定のままなら入力中の値を保つ"
+        );
     }
 
     #[test]
@@ -820,6 +851,11 @@ mod tests {
         clock.advance(chrono::Duration::seconds(2));
         c.tick();
         assert_eq!(c.dash.replay.position, 2);
+        assert_eq!(
+            c.last_refresh,
+            Some(clock.now()),
+            "再生が進んだら間隔を待たずに読み直す"
+        );
         c.dash.detail_tab = DetailTab::Turns;
         clock.advance(chrono::Duration::seconds(2));
         c.tick();
