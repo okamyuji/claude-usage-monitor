@@ -6,6 +6,7 @@ pub mod display;
 pub mod pricing;
 pub mod profile;
 pub mod projection;
+pub mod read_models;
 pub mod records;
 pub mod settings;
 pub mod transcript;

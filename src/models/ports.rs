@@ -5,6 +5,7 @@
 use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
+use crate::models::domain::read_models::{LatestUsage, RunRow};
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
 };
@@ -212,6 +213,15 @@ pub trait IngestRepo: Send + Sync {
         profile_id: i64,
         alive_session_ids: &[String],
     ) -> Result<usize, RepoError>;
+}
+
+/// 概要画面の読み取り。
+pub trait DashboardRepo: Send + Sync {
+    /// プロファイルの最新の取得結果。まだ取得していなければ`None`。
+    fn latest_usage(&self, profile_id: i64) -> Result<Option<LatestUsage>, RepoError>;
+    /// 稼働中の候補。`since`以降に動いたセッションと、状態が終了でない対話セッションを、新しい順に最大200件返す。
+    /// 稼働中の最終判定は設定の時間を使うcontrollerで行う。
+    fn recent_runs(&self, since: DateTime<Utc>) -> Result<Vec<RunRow>, RepoError>;
 }
 
 /// 保守処理の永続化。

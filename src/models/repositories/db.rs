@@ -100,6 +100,22 @@ impl SqliteStore {
     }
 }
 
+/// SQLの結果を、1行ずつタプルへ変換して返す。
+///
+/// 列ごとに`r.get(i)?`を書くと、分岐が増えてCRAP値が上がり、壊れた行のテストも列の数だけ要る。
+/// rusqliteのタプル変換を使うと、型の不一致は1か所で`Err`になる。
+pub(crate) fn query_rows<T>(
+    c: &Connection,
+    sql: &str,
+    p: impl rusqlite::Params,
+) -> rusqlite::Result<Vec<T>>
+where
+    T: for<'r> TryFrom<&'r rusqlite::Row<'r>, Error = rusqlite::Error>,
+{
+    let mut st = c.prepare(sql)?;
+    st.query_map(p, |r| T::try_from(r))?.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

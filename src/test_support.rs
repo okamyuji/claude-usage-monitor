@@ -116,3 +116,67 @@ impl CredentialStore for FakeCreds {
             .unwrap_or(Err(CredentialError::Missing))
     }
 }
+
+use crate::models::domain::pricing::TokenUsage;
+use crate::models::domain::records::{SessionUpsert, TurnRecord};
+use crate::models::domain::transcript::SessionKind;
+use crate::models::ports::{IngestRepo, ProfileRepo};
+
+/// セッション行を1つ作る。既定プロファイルに属させる。
+pub(crate) fn seed_session(
+    s: &SqliteStore,
+    id: &str,
+    kind: SessionKind,
+    status: Option<&str>,
+    last: DateTime<Utc>,
+) {
+    let p = s.ensure_default().unwrap();
+    s.upsert_session(&SessionUpsert {
+        session_id: id.into(),
+        profile_id: p.id,
+        kind,
+        entrypoint: None,
+        cwd: Some(format!("/work/{id}")),
+        git_branch: Some("main".into()),
+        name: Some(format!("name-{id}")),
+        first_prompt: Some(format!("prompt-{id}")),
+        started_at: last - chrono::Duration::minutes(5),
+        last_activity_at: last,
+        status: status.map(str::to_string),
+    })
+    .unwrap();
+}
+
+/// ターン行を1つ作る。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn seed_turn(
+    s: &SqliteStore,
+    session: &str,
+    agent: &str,
+    message: &str,
+    ts: DateTime<Utc>,
+    model: Option<&str>,
+    kind: &str,
+    usage: TokenUsage,
+) {
+    s.upsert_turn(&TurnRecord {
+        session_id: session.into(),
+        agent_id: agent.into(),
+        message_id: message.into(),
+        ts,
+        model: model.map(str::to_string),
+        kind: kind.into(),
+        summary: format!("summary-{message}"),
+        usage,
+    })
+    .unwrap();
+}
+
+/// 入力と出力だけを持つToken数。
+pub(crate) fn tokens(input: u64, output: u64) -> TokenUsage {
+    TokenUsage {
+        input,
+        output,
+        ..TokenUsage::default()
+    }
+}
