@@ -9,6 +9,9 @@ permissions:
 
 jobs:
   ci:
-    uses: okamyuji/reusable-workflows/.github/workflows/rust-ci.yml@v1
+    uses: okamyuji/reusable-workflows/.github/workflows/rust-ci.yml@feat/rust-ci-apt-packages
+    with:
+      # トレイ（tray-icon）とメニュー（muda）がLinuxでGTK、libxdo、AppIndicatorを使う。
+      apt-packages: libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
   security:
     uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
