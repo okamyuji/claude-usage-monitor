@@ -52,29 +52,33 @@ fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     }
 }
 
-/// フォント定義。アイコン（Phosphor）を必ず足し、日本語フォントがあれば英字フォントとアイコンの直後に置く。
+/// 同梱の日本語フォント（Noto Sans JP Regular、SIL Open Font License 1.1）。
+/// OSのフォントに頼ると、日本語フォントのない環境で漢字が豆腐になるため同梱する。
+/// バイナリに埋め込んで`from_static`で渡し、ヒープへ複製しない。
+const CJK_FONT: &[u8] = include_bytes!("../../assets/fonts/NotoSansJP-Regular.otf");
+
+/// フォント定義。アイコン（Phosphor）と同梱の日本語フォントを、英字フォントの直後に置く。
 /// 絵文字フォントより前に置くのは、全角の括弧などを絵文字フォントの字形で描かせないため。
-pub fn font_definitions(cjk: Option<Vec<u8>>) -> egui::FontDefinitions {
+pub fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    if let Some(bytes) = cjk {
-        fonts
-            .font_data
-            .insert("cjk".into(), Arc::new(egui::FontData::from_owned(bytes)));
-        for (family, at) in [
-            (egui::FontFamily::Proportional, 2),
-            (egui::FontFamily::Monospace, 1),
-        ] {
-            let list = fonts.families.entry(family).or_default();
-            list.insert(at.min(list.len()), "cjk".into());
-        }
+    fonts.font_data.insert(
+        "cjk".into(),
+        Arc::new(egui::FontData::from_static(CJK_FONT)),
+    );
+    for (family, at) in [
+        (egui::FontFamily::Proportional, 2),
+        (egui::FontFamily::Monospace, 1),
+    ] {
+        let list = fonts.families.entry(family).or_default();
+        list.insert(at.min(list.len()), "cjk".into());
     }
     fonts
 }
 
 /// フォントを登録する。
-pub fn install_fonts(ctx: &egui::Context, cjk: Option<Vec<u8>>) {
-    ctx.set_fonts(font_definitions(cjk));
+pub fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
 }
 
 /// テーマの選択を反映する。
@@ -141,8 +145,8 @@ mod tests {
     }
 
     #[test]
-    fn cjk_font_goes_before_emoji_fonts() {
-        let f = font_definitions(Some(vec![1, 2, 3]));
+    fn bundled_font_goes_before_emoji_fonts() {
+        let f = font_definitions();
         let prop = &f.families[&egui::FontFamily::Proportional];
         let at = |list: &[String], name: &str| list.iter().position(|n| n == name).unwrap();
         assert_eq!((at(prop, "phosphor"), at(prop, "cjk")), (1, 2));
@@ -150,8 +154,21 @@ mod tests {
         let mono = &f.families[&egui::FontFamily::Monospace];
         assert_eq!(at(mono, "cjk"), 1);
         assert!(at(mono, "cjk") < at(mono, "NotoEmoji-Regular"));
-        let none = font_definitions(None);
-        assert!(none.font_data.contains_key("phosphor") && !none.font_data.contains_key("cjk"));
+    }
+
+    #[test]
+    fn bundled_font_covers_kanji_and_fullwidth_symbols() {
+        let text = "漢字豆腐（）稼働中ー「」";
+        let has = |ctx: &egui::Context| {
+            // テクスチャの差分は描画側が受け取る前提なので、使わないことをeguiに伝えてから捨てる。
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(13.0), text))
+        };
+        let plain = egui::Context::default();
+        assert!(!has(&plain), "既定フォントだけでは漢字が豆腐になる");
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        assert!(has(&ctx));
     }
 
     #[test]
@@ -165,7 +182,6 @@ mod tests {
             apply_theme(&ctx, t);
             assert_eq!(ctx.options(|o| o.theme_preference), p);
         }
-        install_fonts(&ctx, None);
     }
 
     #[test]

@@ -78,7 +78,6 @@ impl GuiEnv {
             clock: self.clock.clone(),
             tz: chrono::FixedOffset::east_opt(9 * 3600).unwrap(),
             home: self.home.path().to_path_buf(),
-            font_path: None,
             profiles: s.clone(),
             usage: s.clone(),
             dashboard: s.clone(),

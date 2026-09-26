@@ -62,8 +62,6 @@ pub struct GuiDeps {
     pub tz: FixedOffset,
     /// ホームディレクトリ。既定プロファイルの`~/.claude`の解決に使う。
     pub home: PathBuf,
-    /// 読み込んだ日本語フォント。診断タブに出す。
-    pub font_path: Option<PathBuf>,
     /// プロファイル。
     pub profiles: Arc<dyn ProfileRepo>,
     /// 使用率の時系列。

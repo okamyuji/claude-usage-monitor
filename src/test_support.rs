@@ -28,7 +28,8 @@ impl WireMock {
         let port = container.get_host_port_ipv4(8080.tcp()).expect("ポート");
         let base_url = format!("http://127.0.0.1:{port}");
         let health = format!("{base_url}/__admin/health");
-        let ready = (0..60).any(|_| {
+        // 品質ゲートのmutation testingと並行して動くと起動が遅れるため、最大120秒待つ。
+        let ready = (0..240).any(|_| {
             let ok = ureq::get(&health).call().is_ok();
             if !ok {
                 std::thread::park_timeout(std::time::Duration::from_millis(500));
@@ -229,7 +230,6 @@ pub(crate) fn gui_deps(
         clock,
         tz: chrono::FixedOffset::east_opt(9 * 3600).unwrap(),
         home: home.to_path_buf(),
-        font_path: None,
         profiles: store.clone(),
         usage: store.clone(),
         dashboard: store.clone(),

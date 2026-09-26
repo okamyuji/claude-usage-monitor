@@ -12,7 +12,6 @@ use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
 use claude_profile_switcher::models::domain::profile::Profile;
 use claude_profile_switcher::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
 use claude_profile_switcher::models::gateways::daemon_control::LockFileDaemon;
-use claude_profile_switcher::models::gateways::fonts::load_cjk_font;
 use claude_profile_switcher::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
@@ -152,11 +151,7 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
 }
 
 /// GUIの依存を本番の具象型で組み立てる。
-fn build_gui(
-    p: &Paths,
-    store: SqliteStore,
-    font_path: Option<PathBuf>,
-) -> Result<GuiController, CliError> {
+fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
     let store = Arc::new(store);
     let clock: Arc<SystemClock> = Arc::new(SystemClock);
     let catalog = Arc::new(CatalogUpdater::new(
@@ -173,7 +168,6 @@ fn build_gui(
         clock,
         tz: *chrono::Local::now().offset(),
         home: p.home.clone(),
-        font_path,
         profiles: store.clone(),
         usage: store.clone(),
         dashboard: store.clone(),
@@ -192,8 +186,7 @@ fn build_gui(
 /// GUIを開く。閉じるとプロセスごと終わり、描画のメモリをOSが回収する（spec 3章）。
 fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
     store.ensure_default()?;
-    let font = load_cjk_font();
-    let ctl = build_gui(p, store, font.as_ref().map(|(path, _)| path.clone()))?;
+    let ctl = build_gui(p, store)?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
@@ -204,7 +197,7 @@ fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
         "claude-profile-switcher",
         options,
         Box::new(move |cc| {
-            install_fonts(&cc.egui_ctx, font.map(|(_, bytes)| bytes));
+            install_fonts(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             apply_theme(&cc.egui_ctx, ctl.vm().theme);
             Ok(Box::new(CpsApp::new(ctl)))
