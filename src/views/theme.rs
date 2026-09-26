@@ -118,12 +118,13 @@ pub fn apply(ctx: &egui::Context) {
         ctx.style_mut_of(theme, |s| {
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(10.0, 4.0);
+            // 等倍（1倍）の外部ディスプレイでは、11px以下の画数の多い漢字（間、週）は線がつぶれて読めない。補足でも12pxを下限にする。
             for (style, size, family) in [
-                (TextStyle::Heading, 15.0, FontFamily::Proportional),
-                (TextStyle::Body, 13.0, FontFamily::Proportional),
-                (TextStyle::Button, 13.0, FontFamily::Proportional),
-                (TextStyle::Small, 11.0, FontFamily::Proportional),
-                (TextStyle::Monospace, 12.0, FontFamily::Monospace),
+                (TextStyle::Heading, 16.0, FontFamily::Proportional),
+                (TextStyle::Body, 14.0, FontFamily::Proportional),
+                (TextStyle::Button, 14.0, FontFamily::Proportional),
+                (TextStyle::Small, 12.0, FontFamily::Proportional),
+                (TextStyle::Monospace, 13.0, FontFamily::Monospace),
             ] {
                 s.text_styles.insert(style, FontId::new(size, family));
             }
@@ -167,11 +168,11 @@ mod tests {
         );
         assert_eq!(
             ctx.style_of(Theme::Light).text_styles[&TextStyle::Body].size,
-            13.0
+            14.0
         );
         assert_eq!(
             ctx.style_of(Theme::Dark).text_styles[&TextStyle::Small].size,
-            11.0
+            12.0
         );
         assert!(ctx.style_of(Theme::Dark).visuals.dark_mode);
     }
