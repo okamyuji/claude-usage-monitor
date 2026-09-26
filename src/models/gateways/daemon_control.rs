@@ -59,9 +59,28 @@ mod tests {
     /// 並行して走るとロックを外した直後でも保持中に見える。
     static SERIAL: Mutex<()> = Mutex::new(());
 
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 同じテストバイナリの別のテストが子プロセスを起動すると、その子がexecするまで
+    /// ロックのディスクリプタを共有する。外した直後の判定は一時的に保持中に見えるので、少し待つ。
+    fn released_within(c: &LockFileDaemon, limit: std::time::Duration) -> bool {
+        let end = std::time::Instant::now() + limit;
+        loop {
+            if !c.is_running() {
+                return true;
+            }
+            if std::time::Instant::now() >= end {
+                return false;
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn running_only_while_another_handle_holds_the_lock() {
-        let _g = SERIAL.lock().unwrap();
+        let _g = serial();
         let d = tempfile::tempdir().unwrap();
         let lock = d.path().join("daemon.lock");
         let c = LockFileDaemon::new(lock.clone(), PathBuf::from("/nonexistent/cps"));
@@ -70,7 +89,7 @@ mod tests {
         held.try_lock().unwrap();
         assert!(c.is_running());
         drop(held);
-        assert!(!c.is_running());
+        assert!(released_within(&c, std::time::Duration::from_secs(1)));
     }
 
     #[test]
@@ -84,7 +103,7 @@ mod tests {
 
     #[test]
     fn start_reports_spawn_failure() {
-        let _g = SERIAL.lock().unwrap();
+        let _g = serial();
         let d = tempfile::tempdir().unwrap();
         let c = LockFileDaemon::new(
             d.path().join("daemon.lock"),
