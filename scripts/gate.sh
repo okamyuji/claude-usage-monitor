@@ -44,6 +44,11 @@ if [ "${#mutant_files[@]}" -eq 0 ]; then
   exit 0
 fi
 base="${GATE_BASE:-HEAD}"
+# `--output=...`のような値をgit diffのオプションとして読ませないため、コミットとして解釈できる値だけを受け付ける。
+if ! git -C "$root" rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+  echo "gate.sh: GATE_BASEがコミットではありません: $base" >&2
+  exit 2
+fi
 diff_file="$root/target/gate.diff"
 git -C "$root" diff "$base" -- "${mutant_files[@]}" > "$diff_file"
 if [ ! -s "$diff_file" ]; then

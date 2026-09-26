@@ -103,6 +103,16 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn safe_ids_allow_letters_digits_hyphen_and_underscore() {
+        assert!(is_safe_id("0f3c9a2e-7b41-4d8e-9c55-2a6e1b7d4f90"));
+        assert!(is_safe_id("job_01ABC"));
+        assert!(is_safe_id("a-b_c"));
+        assert!(!is_safe_id(""));
+        assert!(!is_safe_id("a/b"));
+        assert!(!is_safe_id(".."));
+    }
+
+    #[test]
     fn ids_that_escape_the_config_dir_are_ignored() {
         let d = tempfile::tempdir().unwrap();
         let cfg = d.path().join("cfg");

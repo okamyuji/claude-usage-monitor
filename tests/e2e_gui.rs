@@ -47,6 +47,30 @@ fn dashboard_shows_three_areas_at_once() {
 }
 
 #[test]
+fn help_icons_on_dashboard_show_their_text_on_hover() {
+    let env = gui_env(now());
+    let mut h = env.harness();
+    let n = h.get_all_by_label("ⓘ").count();
+    assert!(n > 0);
+    let labels = |h: &egui_kittest::Harness<'_, _>| {
+        h.query_all_by_role(egui::accesskit::Role::Label).count()
+    };
+    let mut missing = Vec::new();
+    for i in 0..n {
+        h.get_all_by_label("ⓘ").nth(i).unwrap().hover();
+        h.step();
+        let before = labels(&h);
+        for _ in 0..60 {
+            h.step();
+        }
+        if labels(&h) <= before {
+            missing.push(i);
+        }
+    }
+    assert!(missing.is_empty(), "説明が出ないⓘ: {missing:?} / {n}");
+}
+
+#[test]
 fn list_mode_and_trend_collapse() {
     let env = gui_env(now());
     let mut h = env.harness();
