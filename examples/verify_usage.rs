@@ -19,15 +19,26 @@ fn main() {
     let cred = SystemCredentialStore::new(Arc::new(SecurityCli::default()))
         .load(&profile, &profile.resolved_config_dir(&home))
         .expect("認証情報");
-    println!("subscription={:?} expires_at={:?}", cred.subscription_type, cred.expires_at);
-    let snap = HttpUsageApi::new(DEFAULT_USAGE_BASE, Duration::from_secs(15)).fetch(&cred.access_token).expect("使用量API");
+    println!(
+        "subscription={:?} expires_at={:?}",
+        cred.subscription_type, cred.expires_at
+    );
+    let snap = HttpUsageApi::new(DEFAULT_USAGE_BASE, Duration::from_secs(15))
+        .fetch(&cred.access_token)
+        .expect("使用量API");
     for l in &snap.limits {
-        println!("{}\t{:?}\t{}%\t{}\t{:?}", l.kind, l.scope_label, l.percent, l.severity, l.resets_at);
+        println!(
+            "{}\t{:?}\t{}%\t{}\t{:?}",
+            l.kind, l.scope_label, l.percent, l.severity, l.resets_at
+        );
     }
     for b in &snap.breakdown {
         println!("breakdown\t{}\t{}%", b.display_name, b.percent);
     }
     if let Some(s) = &snap.spend {
-        println!("spend\t{}/{:?}\t10^-{}\t{}", s.used_minor, s.limit_minor, s.exponent, s.currency);
+        println!(
+            "spend\t{}/{:?}\t10^-{}\t{}",
+            s.used_minor, s.limit_minor, s.exponent, s.currency
+        );
     }
 }

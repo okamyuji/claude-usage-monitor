@@ -71,7 +71,7 @@ impl ModelRepo for SqliteStore {
                     Some(at.clone()),
                     "ON CONFLICT(model_prefix) DO UPDATE SET display_name = excluded.display_name, input = excluded.input,
                      output = excluded.output, cache_read = excluded.cache_read, cache_write_5m = excluded.cache_write_5m,
-                     cache_write_1h = excluded.cache_write_1h, context_window = excluded.context_window, fetched_at = excluded.fetched_at
+                     cache_write_1h = excluded.cache_write_1h, context_window = COALESCE(excluded.context_window, models.context_window), fetched_at = excluded.fetched_at
                      WHERE models.source = 'official'",
                 )?;
             }
@@ -118,6 +118,23 @@ mod tests {
                 .filter(|m| m.source == ModelSource::Official)
                 .all(|m| m.input == 1.5)
         );
+    }
+
+    #[test]
+    fn official_update_without_context_window_keeps_known_value() {
+        let (_d, s) = temp_store();
+        s.seed_if_empty(&seed_models()).unwrap();
+        let mut update = seed_models()[3].clone();
+        assert_eq!(update.model_prefix, "claude-opus-5");
+        update.context_window = None;
+        s.upsert_official(&[update], Utc::now()).unwrap();
+        let opus = s
+            .all()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.model_prefix == "claude-opus-5")
+            .unwrap();
+        assert_eq!(opus.context_window, Some(1_000_000));
     }
 
     #[test]
