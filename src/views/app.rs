@@ -63,8 +63,19 @@ fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
                     crate::views::tabs::profiles::show(ui, v, forms, acts);
                 });
         }
-        TabVm::Pending(t) => {
-            ui.label(format!("{}は準備中です", t.label()));
+        TabVm::Diagnostics(v) => {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    crate::views::tabs::diagnostics::show(ui, v);
+                });
+        }
+        TabVm::Settings(v) => {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    crate::views::tabs::settings::show(ui, v, forms, acts);
+                });
         }
     }
 }
@@ -228,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_tab_and_error_are_shown() {
+    fn diagnostics_tab_is_shown() {
         let home = tempfile::tempdir().unwrap();
         let (_d, mut ctl) = controller(home.path());
         ctl.handle(Action::SelectTab(
@@ -243,6 +254,6 @@ mod tests {
             ctl,
         );
         h.run();
-        h.get_by_label("診断は準備中です");
+        h.get_by_label("取得の状況");
     }
 }

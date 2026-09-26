@@ -5,9 +5,14 @@ use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
 use crate::controllers::gui::tabs::analytics::{self, AnalyticsVm, Period};
+use crate::controllers::gui::tabs::diagnostics::{self, DiagnosticsVm};
 use crate::controllers::gui::tabs::profiles::{self, ProfilesAction, ProfilesVm};
+use crate::controllers::gui::tabs::settings::{
+    self, ModelDraft, SettingsAction, SettingsDraft, SettingsVm,
+};
 use crate::models::domain::display::fmt_clock;
 use crate::models::domain::live_log::LiveFilter;
+use crate::models::domain::pricing::seed_models;
 use crate::models::domain::settings::Theme;
 use crate::models::ports::{
     AnalyticsRepo, CatalogRefresh, Clock, CredentialStore, DaemonControl, DashboardRepo,
@@ -17,6 +22,7 @@ use crate::models::ports::{
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// 表示中のタブを読み直す間隔（秒）。
 pub const REFRESH_SECS: i64 = 5;
@@ -111,6 +117,8 @@ pub enum Action {
     SetPeriod(Period),
     /// プロファイルの操作。
     Profiles(ProfilesAction),
+    /// 設定タブの操作。
+    Settings(SettingsAction),
 }
 
 /// 上部の今日と今週の集計（「1.26M $4.12」の形）。空なら表示しない。
@@ -131,8 +139,10 @@ pub enum TabVm {
     Analytics(AnalyticsVm),
     /// プロファイル。
     Profiles(ProfilesVm),
-    /// まだ作っていないタブ。
-    Pending(Tab),
+    /// 診断。
+    Diagnostics(DiagnosticsVm),
+    /// 設定。
+    Settings(SettingsVm),
 }
 
 /// 画面全体のViewModel。
@@ -171,6 +181,10 @@ pub struct Forms {
     pub new_profile_name: String,
     /// 追加するプロファイルの設定ディレクトリ。空なら`~/.claude-<名前>`。
     pub new_profile_dir: String,
+    /// 設定の入力欄。
+    pub settings: SettingsDraft,
+    /// 編集中のモデル情報。
+    pub model: Option<ModelDraft>,
 }
 
 impl Default for Forms {
@@ -182,6 +196,8 @@ impl Default for Forms {
             replay_position: 0,
             new_profile_name: String::new(),
             new_profile_dir: String::new(),
+            settings: SettingsDraft::default(),
+            model: None,
         }
     }
 }
@@ -198,6 +214,8 @@ pub struct GuiController {
     period: Period,
     profile_message: Option<String>,
     pending_remove: Option<String>,
+    settings_message: Option<String>,
+    catalog_job: Option<Receiver<Result<usize, RepoError>>>,
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -209,6 +227,7 @@ impl GuiController {
             .load()
             .map(|s| s.theme)
             .unwrap_or(Theme::System);
+        let _ = deps.models.seed_if_empty(&seed_models());
         let mut c = Self {
             deps,
             vm: AppVm {
@@ -229,6 +248,8 @@ impl GuiController {
             period: Period::default(),
             profile_message: None,
             pending_remove: None,
+            settings_message: None,
+            catalog_job: None,
             last_refresh: None,
         };
         c.refresh();
@@ -253,7 +274,14 @@ impl GuiController {
     /// 操作を1つ処理し、画面を読み直す。
     pub fn handle(&mut self, a: Action) {
         match a {
-            Action::SelectTab(t) => self.vm.tab = t,
+            Action::SelectTab(t) => {
+                if t == Tab::Settings && self.vm.tab != Tab::Settings {
+                    self.forms.settings = SettingsDraft::from_settings(
+                        &self.deps.settings.load().unwrap_or_default(),
+                    );
+                }
+                self.vm.tab = t;
+            }
             Action::StartDaemon => {
                 if let Err(e) = self.deps.daemon.start() {
                     self.vm.error = Some(e);
@@ -265,6 +293,7 @@ impl GuiController {
                     self.vm.error = Some(format!("テーマを保存できません: {e}"));
                     return;
                 }
+                self.forms.settings.theme = t;
             }
             Action::Dash(d) => dashboard::handle(&mut self.dash, d),
             Action::Live(LiveAction::FilterChanged) => {}
@@ -272,6 +301,7 @@ impl GuiController {
             Action::Live(LiveAction::JumpDone) => self.jump_to_bottom = false,
             Action::SetPeriod(p) => self.period = p,
             Action::Profiles(a) => self.handle_profiles(a),
+            Action::Settings(a) => self.handle_settings(a),
         }
         self.refresh();
     }
@@ -320,6 +350,97 @@ impl GuiController {
         m
     }
 
+    fn handle_settings(&mut self, a: SettingsAction) {
+        self.settings_message = Some(match a {
+            SettingsAction::Save => self.save_settings(),
+            SettingsAction::EditModel(prefix) => {
+                self.forms.model = self.deps.models.all().ok().and_then(|ms| {
+                    ms.iter()
+                        .find(|m| m.model_prefix == prefix)
+                        .map(ModelDraft::from_model)
+                });
+                return;
+            }
+            SettingsAction::SaveModel => match self.forms.model.as_ref().map(ModelDraft::parse) {
+                Some(Ok(m)) => match self.deps.models.set_user(&m) {
+                    Ok(()) => {
+                        self.forms.model = None;
+                        format!(
+                            "{} の単価を保存しました。以後の自動取得では上書きしません",
+                            m.model_prefix
+                        )
+                    }
+                    Err(e) => e.to_string(),
+                },
+                Some(Err(e)) => e,
+                None => return,
+            },
+            SettingsAction::CancelModel => {
+                self.forms.model = None;
+                return;
+            }
+            SettingsAction::RefreshCatalog => self.start_catalog_refresh(),
+        });
+    }
+
+    fn save_settings(&mut self) -> String {
+        match self.forms.settings.parse() {
+            Ok(s) => match self.deps.settings.save(&s) {
+                Ok(()) => {
+                    self.vm.theme = s.theme;
+                    "保存しました。デーモンは5分以内に新しい設定で動きます".into()
+                }
+                Err(e) => e.to_string(),
+            },
+            Err(e) => e,
+        }
+    }
+
+    fn start_catalog_refresh(&mut self) -> String {
+        if self.catalog_job.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let catalog = self.deps.catalog.clone();
+            // 公式ページの取得は数秒かかるため、描画を止めないよう別スレッドで行う。
+            std::thread::spawn(move || {
+                let _ = tx.send(catalog.refresh());
+            });
+            self.catalog_job = Some(rx);
+        }
+        "公式ページからモデル情報を取得しています".into()
+    }
+
+    /// 手動更新の結果を受け取る。
+    fn poll_catalog(&mut self) {
+        let Some(rx) = &self.catalog_job else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(r) => {
+                self.settings_message = Some(match r {
+                    Ok(n) => format!("モデル情報を{n}件更新しました"),
+                    Err(e) => format!("モデル情報を更新できません: {e}"),
+                });
+                self.catalog_job = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.settings_message = Some("モデル情報の更新が中断しました".into());
+                self.catalog_job = None;
+            }
+        }
+    }
+
+    /// 手動更新の完了を待つ。テストで別スレッドの終了を待つため。
+    #[cfg(test)]
+    pub(crate) fn wait_catalog_for_test(&mut self) {
+        if let Some(rx) = self.catalog_job.take() {
+            let r = rx.recv().expect("結果");
+            let (tx, rx2) = std::sync::mpsc::channel();
+            tx.send(r).expect("送信");
+            self.catalog_job = Some(rx2);
+        }
+    }
+
     fn save_theme(&mut self, t: Theme) -> Result<(), RepoError> {
         let mut s = self.deps.settings.load()?;
         s.theme = t;
@@ -360,6 +481,7 @@ impl GuiController {
 
     /// 表示中のタブと上部の集計だけを読み直す。表示していないタブのデータを持たないため。
     pub fn refresh(&mut self) {
+        self.poll_catalog();
         let now = self.deps.clock.now();
         self.vm.daemon_running = self.deps.daemon.is_running();
         match self.build_all() {
@@ -401,9 +523,17 @@ impl GuiController {
                     self.pending_remove.clone(),
                 )?)
             }
-            t @ (Tab::Settings | Tab::Diagnostics) => {
+            Tab::Diagnostics => {
                 self.live = None;
-                TabVm::Pending(t)
+                TabVm::Diagnostics(diagnostics::build(&self.deps)?)
+            }
+            Tab::Settings => {
+                self.live = None;
+                TabVm::Settings(settings::build(
+                    &self.deps,
+                    self.settings_message.clone(),
+                    self.catalog_job.is_some(),
+                )?)
             }
         })
     }
@@ -523,10 +653,8 @@ mod tests {
         let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
         assert!(matches!(c.vm().body, TabVm::Dashboard(_)));
         c.handle_all(vec![Action::SelectTab(Tab::Settings)]);
-        assert_eq!(
-            (c.vm().tab, &c.vm().body),
-            (Tab::Settings, &TabVm::Pending(Tab::Settings))
-        );
+        assert_eq!(c.vm().tab, Tab::Settings);
+        assert!(matches!(c.vm().body, TabVm::Settings(_)));
         c.handle(Action::SelectTab(Tab::Dashboard));
         assert!(matches!(c.vm().body, TabVm::Dashboard(_)));
     }
@@ -725,5 +853,74 @@ mod tests {
             "bad name",
             "失敗したときは入力を残す"
         );
+    }
+
+    #[test]
+    fn settings_save_model_edit_and_catalog_refresh() {
+        use crate::controllers::gui::tabs::settings::SettingsAction;
+        let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Settings));
+        assert_eq!(c.forms_mut().settings.threshold, "80");
+        c.forms_mut().settings.threshold = "90".into();
+        c.handle(Action::Settings(SettingsAction::Save));
+        assert_eq!(
+            c.deps.settings.load().unwrap().notify_threshold_percent,
+            90.0
+        );
+        assert!(
+            matches!(&c.vm().body, TabVm::Settings(s) if s.message.as_deref().unwrap().contains("5分以内"))
+        );
+        c.forms_mut().settings.interval = "5".into();
+        c.handle(Action::Settings(SettingsAction::Save));
+        assert!(
+            matches!(&c.vm().body, TabVm::Settings(s) if s.message.as_deref().unwrap().contains("取得間隔"))
+        );
+        c.handle(Action::Settings(SettingsAction::RefreshCatalog));
+        assert!(matches!(&c.vm().body, TabVm::Settings(s) if s.refreshing));
+        c.wait_catalog_for_test();
+        clock.advance(chrono::Duration::seconds(REFRESH_SECS));
+        c.tick();
+        assert!(
+            matches!(&c.vm().body, TabVm::Settings(s) if !s.refreshing && s.message.as_deref() == Some("モデル情報を1件更新しました"))
+        );
+        let prefix = c.deps.models.all().unwrap()[0].model_prefix.clone();
+        c.handle(Action::Settings(SettingsAction::EditModel(prefix.clone())));
+        c.forms_mut().model.as_mut().unwrap().input = "0.5".into();
+        c.handle(Action::Settings(SettingsAction::SaveModel));
+        assert!(c.forms_mut().model.is_none());
+        let saved = c
+            .deps
+            .models
+            .all()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.model_prefix == prefix)
+            .unwrap();
+        assert_eq!(
+            (saved.input, saved.source),
+            (0.5, crate::models::domain::pricing::ModelSource::User)
+        );
+        c.handle(Action::Settings(SettingsAction::EditModel(prefix)));
+        c.handle(Action::Settings(SettingsAction::CancelModel));
+        assert!(c.forms_mut().model.is_none());
+        c.handle(Action::Settings(SettingsAction::SaveModel));
+    }
+
+    #[test]
+    fn theme_from_settings_or_header_stays_in_sync() {
+        use crate::controllers::gui::tabs::settings::SettingsAction;
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Settings));
+        c.forms_mut().settings.theme = Theme::Dark;
+        c.handle(Action::Settings(SettingsAction::Save));
+        assert_eq!(c.vm().theme, Theme::Dark);
+        c.handle(Action::SetTheme(Theme::Light));
+        assert_eq!(
+            c.forms_mut().settings.theme,
+            Theme::Light,
+            "上部のボタンで変えたテーマを入力欄にも反映する"
+        );
+        c.handle(Action::SelectTab(Tab::Diagnostics));
+        assert!(matches!(&c.vm().body, TabVm::Diagnostics(_)));
     }
 }

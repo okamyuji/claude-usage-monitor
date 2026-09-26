@@ -536,3 +536,24 @@ fn profile_added_in_tab_and_activated_from_card_is_used_by_cps_run() {
             dir.display()
         )));
 }
+
+#[test]
+fn settings_threshold_is_saved_for_daemon() {
+    use claude_profile_switcher::models::ports::SettingsRepo;
+    use egui::accesskit::Role;
+    let env = gui_env(now());
+    let mut h = env.harness();
+    h.get_by_label("設定").click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "通知閾値（%）")
+        .click();
+    h.state_mut().forms_mut().settings.threshold = "95".into();
+    h.run();
+    h.get_by_label("保存").click();
+    h.run();
+    assert_eq!(env.store.load().unwrap().notify_threshold_percent, 95.0);
+    h.get_by_label_contains("5分以内");
+    h.get_by_label("診断").click();
+    h.run();
+    h.get_by_label("JSONLの取り込み");
+}
