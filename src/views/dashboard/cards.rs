@@ -3,7 +3,7 @@ use crate::controllers::gui::app::Action;
 use crate::controllers::gui::dashboard::cards::{LimitView, ProfileCard};
 use crate::controllers::gui::tabs::profiles::ProfilesAction;
 use crate::models::domain::display::help as h;
-use crate::views::layout::{GAP, card_columns};
+use crate::views::layout::{GAP, MIN_LIMIT, card_columns, columns};
 use crate::views::theme::card_frame;
 use crate::views::widgets::{badge, help, pal, section, severity_color, trunc, usage_bar};
 use egui::{Align, Layout, RichText, Ui};
@@ -44,8 +44,18 @@ fn card(ui: &mut Ui, c: &ProfileCard, acts: &mut Vec<Action>) {
         if let Some(problem) = &c.problem {
             trunc(ui, RichText::new(problem).color(p.err));
         }
-        for l in &c.limits {
-            limit(ui, l);
+        // 幅の広いカードではバーを横に並べ、カードの高さを抑えて中段のセッション一覧に高さを回す。
+        let (cols, width) = columns(ui.available_width(), c.limits.len(), MIN_LIMIT);
+        for row in c.limits.chunks(cols) {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = GAP;
+                for l in row {
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        limit(ui, l);
+                    });
+                }
+            });
         }
         if !c.breakdown.is_empty() {
             ui.horizontal(|ui| {

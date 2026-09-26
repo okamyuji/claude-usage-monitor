@@ -33,7 +33,9 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
         |ui, forms, acts| detail::show(ui, vm.detail.as_ref(), forms, acts),
     );
     ui.add_space(GAP);
-    trend_area(ui, vm, trend_h, acts);
+    // 丸めや部品の間隔で中段が見込みより高くなっても、推移がウィンドウの外へはみ出さないよう残りの高さに収める。
+    let rest = ui.available_height();
+    trend_area(ui, vm, trend_h.min(rest), acts);
 }
 
 /// 大きさを決めた領域にカードの枠を描き、中身で領域を埋める。

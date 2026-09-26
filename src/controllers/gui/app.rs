@@ -409,10 +409,11 @@ impl GuiController {
         "公式ページからモデル情報を取得しています".into()
     }
 
-    /// 手動更新の結果を受け取る。
-    fn poll_catalog(&mut self) {
+    /// 手動更新の結果を受け取る。受け取ったら`true`を返し、呼び出し側に読み直しを任せる。
+    /// `refresh`の中では受け取らない。押した直後の読み直しで結果を消費すると、「取得中」を一度も表示しないことがあるため。
+    fn poll_catalog(&mut self) -> bool {
         let Some(rx) = &self.catalog_job else {
-            return;
+            return false;
         };
         match rx.try_recv() {
             Ok(r) => {
@@ -421,11 +422,13 @@ impl GuiController {
                     Err(e) => format!("モデル情報を更新できません: {e}"),
                 });
                 self.catalog_job = None;
+                true
             }
-            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Empty) => false,
             Err(TryRecvError::Disconnected) => {
                 self.settings_message = Some("モデル情報の更新が中断しました".into());
                 self.catalog_job = None;
+                true
             }
         }
     }
@@ -459,6 +462,10 @@ impl GuiController {
     /// 毎フレーム呼ぶ。ライブログの追記を読み、再生を進め、`REFRESH_SECS`秒ごとに読み直す。
     pub fn tick(&mut self) {
         self.poll_live();
+        if self.poll_catalog() {
+            self.refresh();
+            return;
+        }
         let now = self.deps.clock.now();
         if self.vm.tab == Tab::Dashboard
             && self.dash.detail_tab == DetailTab::Replay
@@ -481,7 +488,6 @@ impl GuiController {
 
     /// 表示中のタブと上部の集計だけを読み直す。表示していないタブのデータを持たないため。
     pub fn refresh(&mut self) {
-        self.poll_catalog();
         let now = self.deps.clock.now();
         self.vm.daemon_running = self.deps.daemon.is_running();
         match self.build_all() {

@@ -16,13 +16,21 @@ const TREND_RATIO: f32 = 0.25;
 const MIN_TREND: f32 = 140.0;
 const MAX_TREND: f32 = 320.0;
 
-/// カードを1行に何枚置くかと、1枚の幅。空き幅を等分し、最小幅を下回るときは次の行へ折り返す。
-pub fn card_columns(avail: f32, n: usize) -> (usize, f32) {
+/// カードの中の使用率の1本の最小幅。
+pub const MIN_LIMIT: f32 = 240.0;
+
+/// 1行に何個置くかと、1個の幅。空き幅を等分し、最小幅を下回るときは次の行へ折り返す。
+pub fn columns(avail: f32, n: usize, min: f32) -> (usize, f32) {
     let n = n.max(1);
-    let fit = ((avail + GAP) / (MIN_CARD + GAP)).floor().max(1.0) as usize;
+    let fit = ((avail + GAP) / (min + GAP)).floor().max(1.0) as usize;
     let cols = fit.min(n);
     let width = (avail - GAP * (cols - 1) as f32) / cols as f32;
     (cols, width.max(0.0))
+}
+
+/// カードを1行に何枚置くかと、1枚の幅。
+pub fn card_columns(avail: f32, n: usize) -> (usize, f32) {
+    columns(avail, n, MIN_CARD)
 }
 
 /// 中段の左右の幅。比率を掛け、左右とも最小幅を守る。両方の最小幅が入らないときは半分ずつにする。
@@ -47,9 +55,9 @@ pub fn trend_height(total: f32) -> f32 {
     (total * TREND_RATIO).clamp(MIN_TREND, MAX_TREND)
 }
 
-/// 中段の高さ。カードを描いた後の残りから推移と間隔を引き、最小200にする。
+/// 中段の高さ。カードを描いた後の残りから、推移と、中段の前後の間隔2つを引き、最小200にする。
 pub fn middle_height(remaining: f32, trend: f32) -> f32 {
-    (remaining - trend - GAP).max(MIN_MIDDLE)
+    (remaining - trend - 2.0 * GAP).max(MIN_MIDDLE)
 }
 
 /// 伸びる列の最小幅。
@@ -80,6 +88,14 @@ mod tests {
     }
 
     #[test]
+    fn limits_sit_side_by_side_in_wide_cards() {
+        assert_eq!(columns(1232.0, 3, MIN_LIMIT), (3, (1232.0 - 24.0) / 3.0));
+        assert_eq!(columns(500.0, 3, MIN_LIMIT), (2, 244.0));
+        assert_eq!(columns(300.0, 3, MIN_LIMIT), (1, 300.0));
+        assert_eq!(columns(1000.0, 0, MIN_LIMIT), (1, 1000.0));
+    }
+
+    #[test]
     fn split_keeps_min_pane_width() {
         assert_eq!(split_widths(1006.0, 0.45), (450.0, 550.0));
         assert_eq!(split_widths(1006.0, 0.1), (360.0, 640.0));
@@ -106,7 +122,7 @@ mod tests {
 
     #[test]
     fn middle_height_keeps_minimum() {
-        assert_eq!(middle_height(700.0, 200.0), 488.0);
+        assert_eq!(middle_height(700.0, 200.0), 476.0);
         assert_eq!(middle_height(300.0, 200.0), 200.0);
     }
 
