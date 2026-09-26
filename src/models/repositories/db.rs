@@ -63,6 +63,14 @@ impl SqliteStore {
             std::fs::create_dir_all(parent).map_err(storage)?;
         }
         let mut conn = Connection::open(path).map_err(storage)?;
+        // DBにはプロンプトや作業ディレクトリが入るため、本人だけが読めるようにする。
+        // SQLiteはWALと共有メモリのファイルをDB本体と同じ権限で作るので、WALを有効にする前に絞る。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(storage)?;
+        }
         // auto_vacuumは表を作る前にしか効かないため、マイグレーションより先に設定する。
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
             .map_err(storage)?;
@@ -132,6 +140,19 @@ pub(crate) fn usage_of(input: i64, output: i64, cache_read: i64, w5: i64, w1: i6
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[cfg(unix)]
+    #[test]
+    fn database_files_are_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("cumon.db");
+        let _store = SqliteStore::open(&path).unwrap();
+        for f in [path.clone(), d.path().join("cumon.db-wal")] {
+            let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", f.display());
+        }
+    }
 
     #[test]
     fn timestamps_round_trip_and_sort_lexically() {

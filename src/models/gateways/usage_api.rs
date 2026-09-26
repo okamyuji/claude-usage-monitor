@@ -9,6 +9,16 @@ use ureq::Agent;
 /// 本番の接続先。テストではWireMockのURLに差し替える。
 pub const DEFAULT_USAGE_BASE: &str = "https://api.anthropic.com";
 
+/// 接続先の上書きを許してよいか。上書き先にはOAuthトークンが送られるため、公式のホストと、テスト用のローカルのポートだけを許す。
+pub fn is_allowed_usage_base(base: &str) -> bool {
+    let b = base.trim_end_matches('/');
+    b == DEFAULT_USAGE_BASE
+        || ["http://127.0.0.1:", "http://localhost:"].iter().any(|p| {
+            b.strip_prefix(p)
+                .is_some_and(|port| !port.is_empty() && port.bytes().all(|c| c.is_ascii_digit()))
+        })
+}
+
 /// 使用量APIのクライアント。`Agent`を使い回すのは、周期取得のたびに接続を作り直さないため。
 pub struct HttpUsageApi {
     agent: Agent,
@@ -67,6 +77,30 @@ fn error_kind(e: &ureq::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_official_or_local_bases_may_receive_the_token() {
+        for ok in [
+            "https://api.anthropic.com",
+            "https://api.anthropic.com/",
+            "http://127.0.0.1:8080",
+            "http://localhost:32768/",
+        ] {
+            assert!(is_allowed_usage_base(ok), "{ok}");
+        }
+        for ng in [
+            "http://api.anthropic.com",
+            "https://api.anthropic.com.evil.example",
+            "https://evil.example",
+            "http://127.0.0.1",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:80@evil.example",
+            "http://localhost:80/x",
+            "",
+        ] {
+            assert!(!is_allowed_usage_base(ng), "{ng}");
+        }
+    }
     use crate::test_support::WireMock;
     use serde_json::json;
 

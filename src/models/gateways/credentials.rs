@@ -33,8 +33,9 @@ impl SecurityCli {
 }
 
 impl Default for SecurityCli {
+    /// PATHを探すと、先に置かれた同名のプログラムがKeychainの読み出しを横取りできるため、OS標準の場所を直接指す。
     fn default() -> Self {
-        Self::with_program("security")
+        Self::with_program("/usr/bin/security")
     }
 }
 
@@ -128,6 +129,11 @@ impl CredentialStore for SystemCredentialStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_security_cli_uses_absolute_path() {
+        assert_eq!(SecurityCli::default().program, "/usr/bin/security");
+    }
     use std::sync::Mutex;
 
     struct FakeKeychain(Mutex<Vec<String>>, Option<String>);

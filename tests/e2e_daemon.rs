@@ -132,6 +132,19 @@ fn second_daemon_refuses_to_start() {
 }
 
 #[test]
+fn foreign_usage_api_base_is_refused_before_reading_token() {
+    let wm = WireMock::start();
+    let data = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    write_home(home.path(), false);
+    daemon(data.path(), home.path(), &wm)
+        .env("CUMON_USAGE_API_BASE", "https://evil.example")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("CUMON_USAGE_API_BASE"));
+}
+
+#[test]
 fn threshold_change_notifies_once_on_next_cycle() {
     let wm = WireMock::start();
     wm.stub(json!({"request": {"method": "GET", "url": "/api/oauth/usage", "headers": {"Authorization": {"equalTo": "Bearer e2e"}}},

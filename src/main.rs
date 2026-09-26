@@ -21,7 +21,9 @@ use claude_usage_monitor::models::gateways::model_catalog::{
 };
 use claude_usage_monitor::models::gateways::notifier::notifier_from_env;
 use claude_usage_monitor::models::gateways::process::{SysProcessInfo, SystemClock};
-use claude_usage_monitor::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
+use claude_usage_monitor::models::gateways::usage_api::{
+    DEFAULT_USAGE_BASE, HttpUsageApi, is_allowed_usage_base,
+};
 use claude_usage_monitor::models::ports::ProfileRepo;
 use claude_usage_monitor::models::repositories::db::SqliteStore;
 use claude_usage_monitor::views::app::{CumonApp, apply_theme, install_fonts};
@@ -278,13 +280,20 @@ fn start_watcher(
 }
 
 /// 本番の具象型でデーモンの部品を組み立てる。
-fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) -> Daemon {
+fn build_daemon(
+    p: &Paths,
+    store: Arc<SqliteStore>,
+    settings: DaemonSettings,
+) -> Result<Daemon, CliError> {
     let clock = Arc::new(SystemClock);
     let process = Arc::new(SysProcessInfo::new());
-    let api = Arc::new(HttpUsageApi::new(
-        &env_or("CUMON_USAGE_API_BASE", DEFAULT_USAGE_BASE),
-        Duration::from_secs(15),
-    ));
+    let usage_base = env_or("CUMON_USAGE_API_BASE", DEFAULT_USAGE_BASE);
+    if !is_allowed_usage_base(&usage_base) {
+        return Err(other(format!(
+            "CUMON_USAGE_API_BASE に指定できるのは {DEFAULT_USAGE_BASE} か http://127.0.0.1:<ポート> だけです: {usage_base}"
+        )));
+    }
+    let api = Arc::new(HttpUsageApi::new(&usage_base, Duration::from_secs(15)));
     let creds = Arc::new(SystemCredentialStore::new(Arc::new(SecurityCli::default())));
     let collector = UsageCollector::new(
         CollectorDeps {
@@ -304,7 +313,7 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
         clock.clone(),
         chrono::Duration::days(90),
     );
-    Daemon::new(
+    Ok(Daemon::new(
         DaemonParts {
             collector,
             ingestor,
@@ -326,7 +335,7 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
             paused: Arc::new(AtomicBool::new(false)),
         },
         settings,
-    )
+    ))
 }
 
 /// 依存を組み立ててデーモンを回す。具象型を知っているのは`main.rs`だけにする。
@@ -362,7 +371,7 @@ fn run_daemon(
         ..DaemonSettings::default()
     };
     let shutdown = Arc::new(AtomicBool::new(false));
-    let mut daemon = build_daemon(p, store.clone(), settings);
+    let mut daemon = build_daemon(p, store.clone(), settings)?;
     let result = if no_tray {
         daemon.run(&rx, &shutdown)
     } else {

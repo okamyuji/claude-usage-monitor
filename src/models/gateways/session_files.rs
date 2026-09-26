@@ -41,6 +41,14 @@ fn subagent_files(dir: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
+/// パスに連結してよいIDか。IDはJSONLやジョブの状態ファイルから来るため、`../`や絶対パスで設定ディレクトリの外を指させない。
+fn is_safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+}
+
 /// セッションIDからJSONLを探す。プロジェクトのディレクトリ名はcwdの変換規則に依存するため、全プロジェクトを見て探す。
 pub fn find_session_files(
     config_dir: &Path,
@@ -48,7 +56,12 @@ pub fn find_session_files(
     job_id: Option<&str>,
 ) -> SessionFiles {
     let mut f = SessionFiles::default();
-    for proj in dirs_in(&config_dir.join("projects")) {
+    let projects = if is_safe_id(session_id) {
+        dirs_in(&config_dir.join("projects"))
+    } else {
+        Vec::new()
+    };
+    for proj in projects {
         let main = proj.join(format!("{session_id}.jsonl"));
         if main.is_file() {
             f.main = Some(main);
@@ -57,6 +70,7 @@ pub fn find_session_files(
         }
     }
     f.timeline = job_id
+        .filter(|j| is_safe_id(j))
         .map(|j| config_dir.join("jobs").join(j).join("timeline.jsonl"))
         .filter(|p| p.is_file());
     f
@@ -87,6 +101,25 @@ pub fn tail_offset(path: &Path, max_lines: usize) -> io::Result<u64> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn ids_that_escape_the_config_dir_are_ignored() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cfg");
+        std::fs::create_dir_all(cfg.join("projects/-w")).unwrap();
+        std::fs::write(d.path().join("secret.jsonl"), "").unwrap();
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("timeline.jsonl"), "").unwrap();
+        let f = find_session_files(&cfg, "../../../secret", Some(outside.to_str().unwrap()));
+        assert_eq!(f.main, None);
+        assert_eq!(
+            f.timeline, None,
+            "絶対パスのジョブIDで外のファイルを読まない"
+        );
+        let f = find_session_files(&cfg, "s1", Some("../../outside"));
+        assert_eq!(f.timeline, None);
+    }
 
     #[test]
     fn finds_main_subagents_and_timeline() {
