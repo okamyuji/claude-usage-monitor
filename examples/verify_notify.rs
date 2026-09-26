@@ -5,7 +5,10 @@ use claude_profile_switcher::models::ports::Notifier;
 
 fn main() {
     SystemNotifier
-        .notify("defaultの5時間枠が85%です", "リセットは14:00です（動作確認の通知）")
+        .notify(
+            "defaultの5時間枠が85%です",
+            "リセットは14:00です（動作確認の通知）",
+        )
         .expect("通知");
     println!("通知を出しました");
 }

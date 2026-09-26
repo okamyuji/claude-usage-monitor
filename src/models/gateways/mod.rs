@@ -3,6 +3,7 @@ pub mod credentials;
 pub mod daemon_control;
 pub mod jobs;
 pub mod jsonl;
+pub mod launcher;
 pub mod live_sessions;
 pub mod model_catalog;
 pub mod notifier;

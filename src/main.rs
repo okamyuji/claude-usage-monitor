@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use claude_profile_switcher::controllers::cli::CliError;
 use claude_profile_switcher::controllers::cli::profile::{ProfileCommand, execute};
 use claude_profile_switcher::controllers::cli::run::run_claude;
+use claude_profile_switcher::controllers::daemon::alert::{AlertDeps, Alerter};
 use claude_profile_switcher::controllers::daemon::catalog::CatalogUpdater;
 use claude_profile_switcher::controllers::daemon::collector::{CollectorDeps, UsageCollector};
 use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
@@ -15,6 +16,7 @@ use claude_profile_switcher::models::gateways::daemon_control::LockFileDaemon;
 use claude_profile_switcher::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
+use claude_profile_switcher::models::gateways::notifier::notifier_from_env;
 use claude_profile_switcher::models::gateways::process::{SysProcessInfo, SystemClock};
 use claude_profile_switcher::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
 use claude_profile_switcher::models::ports::ProfileRepo;
@@ -48,6 +50,9 @@ enum Command {
         /// 使用量の取得をこの回数行ったら終了する
         #[arg(long, hide = true)]
         max_ticks: Option<u64>,
+        /// メニューバーのトレイを作らない。デスクトップのない環境とE2Eで使う
+        #[arg(long)]
+        no_tray: bool,
     },
     /// 使用中プロファイルの設定ディレクトリでclaudeを起動する
     Run {
@@ -133,6 +138,8 @@ fn run(cli: Cli) -> Result<ExitCode, CliError> {
         Command::Daemon {
             interval_secs,
             max_ticks,
+            // トレイはまだ作らないので、指定の有無にかかわらず周期処理だけを回す。
+            no_tray: _,
         } => run_daemon(&p, store, interval_secs, max_ticks),
         Command::Run { args } => Ok(ExitCode::from(
             run_claude(&store, &args)?.clamp(0, 255) as u8
@@ -296,10 +303,19 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
             profiles: store.clone(),
             settings: store.clone(),
             log: store.clone(),
-            maintenance: store,
+            maintenance: store.clone(),
             process,
-            clock,
+            clock: clock.clone(),
             home: p.home.clone(),
+            alerter: Some(Alerter::new(AlertDeps {
+                profiles: store.clone(),
+                dashboard: store.clone(),
+                settings: store,
+                notifier: notifier_from_env(),
+                clock,
+                tz: *chrono::Local::now().offset(),
+            })),
+            paused: Arc::new(AtomicBool::new(false)),
         },
         settings,
     )

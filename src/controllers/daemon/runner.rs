@@ -2,6 +2,7 @@
 //! RSSの記録、保持期間の削除を1本のループで回す。
 //!
 //! 待機は監視チャネルの`recv_timeout`で行う。イベントが来たらすぐ取り込み、来なければ周期で進むため。
+use crate::controllers::daemon::alert::Alerter;
 use crate::controllers::daemon::collector::UsageCollector;
 use crate::controllers::daemon::ingest::{IngestReport, Ingestor};
 use crate::controllers::daemon::retention::purge_expired;
@@ -69,6 +70,10 @@ pub struct DaemonParts {
     pub clock: Arc<dyn Clock>,
     /// ホームディレクトリ。
     pub home: PathBuf,
+    /// 閾値の通知。`None`なら通知しない（テストと、通知を使わない環境）。
+    pub alerter: Option<Alerter>,
+    /// 一時停止の旗。トレイと共有する。
+    pub paused: Arc<AtomicBool>,
 }
 
 /// 常駐デーモン。
@@ -245,6 +250,16 @@ impl Daemon {
         }
     }
 
+    /// 一時停止の旗。トレイに渡すため公開する。
+    pub fn paused(&self) -> &Arc<AtomicBool> {
+        &self.p.paused
+    }
+
+    /// 通知役を差し替える。
+    pub fn set_alerter(&mut self, a: Alerter) {
+        self.p.alerter = Some(a);
+    }
+
     /// `shutdown`が立つか、`max_usage_ticks`に達するまで回す。DBの失敗だけを返して止まる。
     pub fn run(
         &mut self,
@@ -257,13 +272,20 @@ impl Daemon {
         let mut dirty: HashSet<PathBuf> = HashSet::new();
         while !shutdown.load(Ordering::Relaxed) {
             let due = sched.take_due(Instant::now(), &self.s);
-            if due.scan {
+            // 一時停止中は取得と取り込みを止める。監視イベントは`dirty`に残し、再開後の最初の周期で取り込む。
+            let paused = self.p.paused.load(Ordering::Relaxed);
+            if due.scan && !paused {
                 self.full_scan()?;
                 dirty.clear();
             }
-            self.ingest_paths(&mut dirty)?;
-            if due.usage {
+            if !paused {
+                self.ingest_paths(&mut dirty)?;
+            }
+            if due.usage && !paused {
                 self.p.collector.tick()?;
+                if let Some(a) = self.p.alerter.as_mut() {
+                    a.check()?;
+                }
                 ticks += 1;
                 if self.s.max_usage_ticks.is_some_and(|m| ticks >= m) {
                     break;
@@ -368,6 +390,8 @@ mod tests {
                 process,
                 clock,
                 home: home.path().to_path_buf(),
+                alerter: None,
+                paused: Arc::new(AtomicBool::new(false)),
             },
             DaemonSettings {
                 usage_interval: Duration::from_millis(10),
@@ -395,16 +419,54 @@ mod tests {
         home: &std::path::Path,
         settings: DaemonSettings,
     ) -> Daemon {
-        let clock = Arc::new(FixedClock::at(Utc::now()));
-        let process = Arc::new(crate::models::gateways::process::SysProcessInfo::new());
         let api = Arc::new(FakeApi {
             responses: HashMap::new(),
             calls: Mutex::new(vec![]),
         });
+        daemon_with(
+            store,
+            home,
+            settings,
+            api,
+            Arc::new(FakeCreds(HashMap::new())),
+        )
+    }
+
+    /// 使用量APIが`usage_ok.json`を返すデーモン。APIの呼び出し回数を数えるため、フェイクも返す。
+    fn usage_daemon(
+        store: &Arc<crate::models::repositories::db::SqliteStore>,
+        home: &std::path::Path,
+        settings: DaemonSettings,
+    ) -> (Daemon, Arc<FakeApi>) {
+        let snap = parse_usage(include_str!("../../../tests/fixtures/usage_ok.json")).unwrap();
+        let api = Arc::new(FakeApi {
+            responses: HashMap::from([("t".to_string(), Ok(snap))]),
+            calls: Mutex::new(vec![]),
+        });
+        let creds = Arc::new(FakeCreds(HashMap::from([(
+            "default".to_string(),
+            Ok(Credential {
+                access_token: "t".into(),
+                expires_at: None,
+                subscription_type: None,
+            }),
+        )])));
+        (daemon_with(store, home, settings, api.clone(), creds), api)
+    }
+
+    fn daemon_with(
+        store: &Arc<crate::models::repositories::db::SqliteStore>,
+        home: &std::path::Path,
+        settings: DaemonSettings,
+        api: Arc<FakeApi>,
+        creds: Arc<FakeCreds>,
+    ) -> Daemon {
+        let clock = Arc::new(FixedClock::at(Utc::now()));
+        let process = Arc::new(crate::models::gateways::process::SysProcessInfo::new());
         let collector = UsageCollector::new(
             CollectorDeps {
                 profiles: store.clone(),
-                creds: Arc::new(FakeCreds(HashMap::new())),
+                creds,
                 api,
                 usage: store.clone(),
                 log: store.clone(),
@@ -430,9 +492,79 @@ mod tests {
                 process,
                 clock,
                 home: home.to_path_buf(),
+                alerter: None,
+                paused: Arc::new(AtomicBool::new(false)),
             },
             settings,
         )
+    }
+
+    fn quick(ticks: u64) -> DaemonSettings {
+        DaemonSettings {
+            usage_interval: Duration::from_millis(10),
+            max_usage_ticks: Some(ticks),
+            ..DaemonSettings::default()
+        }
+    }
+
+    #[test]
+    fn paused_daemon_skips_collection() {
+        let (_d, store) = temp_store();
+        let store = Arc::new(store);
+        store.ensure_default().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let (mut daemon, api) = usage_daemon(&store, home.path(), quick(1));
+        daemon.paused().store(true, Ordering::SeqCst);
+        let paused = daemon.paused().clone();
+        let while_paused = Arc::new(Mutex::new(None));
+        let (seen, api2) = (while_paused.clone(), api.clone());
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            *seen.lock().unwrap() = Some(api2.calls.lock().unwrap().len());
+            paused.store(false, Ordering::SeqCst);
+        });
+        let (_tx, rx) = sync_channel(8);
+        daemon.run(&rx, &AtomicBool::new(false)).unwrap();
+        h.join().unwrap();
+        assert_eq!(
+            *while_paused.lock().unwrap(),
+            Some(0),
+            "一時停止中はAPIを呼ばない"
+        );
+        assert_eq!(
+            api.calls.lock().unwrap().len(),
+            1,
+            "再開すると次の周期で取得する"
+        );
+    }
+
+    #[test]
+    fn alerter_runs_after_usage_tick() {
+        use crate::controllers::daemon::alert::{AlertDeps, Alerter};
+        use crate::test_support::RecordingNotifier;
+        let (_d, store) = temp_store();
+        let store = Arc::new(store);
+        store.ensure_default().unwrap();
+        store
+            .save(&Settings {
+                notify_threshold_percent: 10.0,
+                ..Settings::default()
+            })
+            .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let (mut daemon, _api) = usage_daemon(&store, home.path(), quick(1));
+        let notes = Arc::new(RecordingNotifier::default());
+        daemon.set_alerter(Alerter::new(AlertDeps {
+            profiles: store.clone(),
+            dashboard: store.clone(),
+            settings: store.clone(),
+            notifier: notes.clone(),
+            clock: Arc::new(FixedClock::at(Utc::now())),
+            tz: chrono::FixedOffset::east_opt(0).unwrap(),
+        }));
+        let (_tx, rx) = sync_channel(8);
+        daemon.run(&rx, &AtomicBool::new(false)).unwrap();
+        assert!(!notes.0.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -628,6 +760,8 @@ mod tests {
                 process,
                 clock,
                 home: "/h".into(),
+                alerter: None,
+                paused: Arc::new(AtomicBool::new(false)),
             },
             DaemonSettings::default(),
         );

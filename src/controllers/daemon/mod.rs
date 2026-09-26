@@ -5,3 +5,4 @@ pub mod collector;
 pub mod ingest;
 pub mod retention;
 pub mod runner;
+pub mod tray;

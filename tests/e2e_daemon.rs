@@ -45,7 +45,14 @@ fn daemon(data: &Path, home: &Path, wm: &WireMock) -> Command {
         .env("HOME", home)
         .env("CPS_USAGE_API_BASE", &wm.base_url)
         .env("CPS_CATALOG_BASE", &wm.base_url)
-        .args(["daemon", "--interval-secs", "1", "--max-ticks", "2"])
+        .args([
+            "daemon",
+            "--no-tray",
+            "--interval-secs",
+            "1",
+            "--max-ticks",
+            "2",
+        ])
         .timeout(std::time::Duration::from_secs(60));
     c
 }
@@ -122,4 +129,43 @@ fn second_daemon_refuses_to_start() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("既に起動"));
+}
+
+#[test]
+fn threshold_change_notifies_once_on_next_cycle() {
+    let wm = WireMock::start();
+    wm.stub(json!({"request": {"method": "GET", "url": "/api/oauth/usage", "headers": {"Authorization": {"equalTo": "Bearer e2e"}}},
+                   "response": {"status": 200, "body": include_str!("fixtures/usage_ok.json")}}));
+    let data = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    write_home(home.path(), false);
+    let log = data.path().join("notify.log");
+    // DBを作ってから閾値を10%に下げ、デーモンの最初の周期で5時間枠（13%）を通知させる。
+    Command::cargo_bin("cps")
+        .unwrap()
+        .env("CPS_DATA_DIR", data.path())
+        .env("HOME", home.path())
+        .args(["profile", "list"])
+        .assert()
+        .success();
+    Connection::open(data.path().join("cps.db"))
+        .unwrap()
+        .execute(
+            "INSERT INTO settings(key, value) VALUES('notify_threshold_percent', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )
+        .unwrap();
+    daemon(data.path(), home.path(), &wm)
+        .env("CPS_NOTIFY_LOG", &log)
+        .assert()
+        .success();
+    let lines = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        lines
+            .lines()
+            .filter(|l| l.starts_with("defaultの5時間枠が13%です"))
+            .count(),
+        1,
+        "2周期取得しても同じ枠の通知は1回だけ: {lines}"
+    );
 }
