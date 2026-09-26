@@ -1,5 +1,7 @@
 //! 使用率カード（spec 7.2節の上段）。空き幅をプロファイル数で等分し、狭いときは次の行へ折り返す。
+use crate::controllers::gui::app::Action;
 use crate::controllers::gui::dashboard::cards::{LimitView, ProfileCard};
+use crate::controllers::gui::tabs::profiles::ProfilesAction;
 use crate::models::domain::display::help as h;
 use crate::views::layout::{GAP, card_columns};
 use crate::views::theme::card_frame;
@@ -7,7 +9,7 @@ use crate::views::widgets::{badge, help, pal, section, severity_color, trunc, us
 use egui::{Align, Layout, RichText, Ui};
 
 /// カードを並べる。
-pub fn show(ui: &mut Ui, cards: &[ProfileCard]) {
+pub fn show(ui: &mut Ui, cards: &[ProfileCard], acts: &mut Vec<Action>) {
     section(ui, "レート制限");
     let (cols, width) = card_columns(ui.available_width(), cards.len());
     for row in cards.chunks(cols) {
@@ -16,7 +18,7 @@ pub fn show(ui: &mut Ui, cards: &[ProfileCard]) {
             for c in row {
                 ui.vertical(|ui| {
                     ui.set_width(width);
-                    card(ui, c);
+                    card(ui, c, acts);
                 });
             }
         });
@@ -24,7 +26,7 @@ pub fn show(ui: &mut Ui, cards: &[ProfileCard]) {
     }
 }
 
-fn card(ui: &mut Ui, c: &ProfileCard) {
+fn card(ui: &mut Ui, c: &ProfileCard, acts: &mut Vec<Action>) {
     let p = pal(ui);
     card_frame(p, c.is_active).show(ui, |ui| {
         ui.set_min_width(ui.available_width());
@@ -32,6 +34,8 @@ fn card(ui: &mut Ui, c: &ProfileCard) {
             ui.label(RichText::new(&c.name).strong());
             if c.is_active {
                 badge(ui, "使用中", p.accent, p.accent_soft);
+            } else if ui.small_button("使用中にする").clicked() {
+                acts.push(Action::Profiles(ProfilesAction::Use(c.name.clone())));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(RichText::new(&c.fetched).small().color(p.weak));

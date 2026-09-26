@@ -1,9 +1,11 @@
 //! GUI全体の状態、タブの切り替え、読み直しの周期。
+use crate::controllers::cli::profile::ProfileCommand;
 use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogState};
 use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
 use crate::controllers::gui::tabs::analytics::{self, AnalyticsVm, Period};
+use crate::controllers::gui::tabs::profiles::{self, ProfilesAction, ProfilesVm};
 use crate::models::domain::display::fmt_clock;
 use crate::models::domain::live_log::LiveFilter;
 use crate::models::domain::settings::Theme;
@@ -107,6 +109,8 @@ pub enum Action {
     Live(LiveAction),
     /// 分析の期間を変える。
     SetPeriod(Period),
+    /// プロファイルの操作。
+    Profiles(ProfilesAction),
 }
 
 /// 上部の今日と今週の集計（「1.26M $4.12」の形）。空なら表示しない。
@@ -125,6 +129,8 @@ pub enum TabVm {
     Dashboard(Box<DashboardVm>),
     /// 分析。
     Analytics(AnalyticsVm),
+    /// プロファイル。
+    Profiles(ProfilesVm),
     /// まだ作っていないタブ。
     Pending(Tab),
 }
@@ -146,6 +152,8 @@ pub struct AppVm {
     pub error: Option<String>,
     /// テーマ。
     pub theme: Theme,
+    /// 直前の操作の結果。どのタブでも見えるよう画面下部に出す。
+    pub notice: Option<String>,
 }
 
 /// 入力欄と描画側で動かす値の状態。eguiの入力欄は`&mut`で値を書き換えるため、ViewModelと分けて可変で渡す。
@@ -159,6 +167,10 @@ pub struct Forms {
     pub live_filter: LiveFilter,
     /// 再生位置のスライダー。
     pub replay_position: usize,
+    /// 追加するプロファイルの名前。
+    pub new_profile_name: String,
+    /// 追加するプロファイルの設定ディレクトリ。空なら`~/.claude-<名前>`。
+    pub new_profile_dir: String,
 }
 
 impl Default for Forms {
@@ -168,6 +180,8 @@ impl Default for Forms {
             session_query: String::new(),
             live_filter: LiveFilter::default(),
             replay_position: 0,
+            new_profile_name: String::new(),
+            new_profile_dir: String::new(),
         }
     }
 }
@@ -182,6 +196,8 @@ pub struct GuiController {
     pub(crate) jump_to_bottom: bool,
     pub(crate) replay_len: usize,
     period: Period,
+    profile_message: Option<String>,
+    pending_remove: Option<String>,
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -203,6 +219,7 @@ impl GuiController {
                 updated: String::new(),
                 error: None,
                 theme,
+                notice: None,
             },
             forms: Forms::default(),
             dash: DashboardState::default(),
@@ -210,6 +227,8 @@ impl GuiController {
             jump_to_bottom: false,
             replay_len: 0,
             period: Period::default(),
+            profile_message: None,
+            pending_remove: None,
             last_refresh: None,
         };
         c.refresh();
@@ -252,8 +271,53 @@ impl GuiController {
             Action::Live(LiveAction::JumpToLatest) => self.jump_to_bottom = true,
             Action::Live(LiveAction::JumpDone) => self.jump_to_bottom = false,
             Action::SetPeriod(p) => self.period = p,
+            Action::Profiles(a) => self.handle_profiles(a),
         }
         self.refresh();
+    }
+
+    /// 入力欄の状態。テストで入力済みの状態を作るため公開する。
+    pub fn forms_mut(&mut self) -> &mut Forms {
+        &mut self.forms
+    }
+
+    fn handle_profiles(&mut self, a: ProfilesAction) {
+        let msg = match a {
+            ProfilesAction::Add => self.add_profile(),
+            ProfilesAction::Use(name) => {
+                profiles::run_command(&self.deps, ProfileCommand::Use { name })
+            }
+            ProfilesAction::Remove(name) => {
+                self.pending_remove = Some(name);
+                return;
+            }
+            ProfilesAction::ConfirmRemove => match self.pending_remove.take() {
+                Some(name) => profiles::run_command(&self.deps, ProfileCommand::Remove { name }),
+                None => return,
+            },
+            ProfilesAction::CancelRemove => {
+                self.pending_remove = None;
+                return;
+            }
+        };
+        self.vm.notice = Some(msg.clone());
+        self.profile_message = Some(msg);
+    }
+
+    /// 入力欄の内容で追加する。成功したときだけ入力欄を空にし、失敗したときは直せるよう残す。
+    fn add_profile(&mut self) -> String {
+        let dir = self.forms.new_profile_dir.trim();
+        let cmd = ProfileCommand::Add {
+            name: self.forms.new_profile_name.trim().to_string(),
+            config_dir: (!dir.is_empty()).then(|| PathBuf::from(dir)),
+        };
+        let before = self.deps.profiles.list().map(|l| l.len()).unwrap_or(0);
+        let m = profiles::run_command(&self.deps, cmd);
+        if self.deps.profiles.list().map(|l| l.len()).unwrap_or(0) > before {
+            self.forms.new_profile_name.clear();
+            self.forms.new_profile_dir.clear();
+        }
+        m
     }
 
     fn save_theme(&mut self, t: Theme) -> Result<(), RepoError> {
@@ -329,7 +393,15 @@ impl GuiController {
                 self.live = None;
                 TabVm::Analytics(analytics::build(&self.deps, self.period)?)
             }
-            t @ (Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
+            Tab::Profiles => {
+                self.live = None;
+                TabVm::Profiles(profiles::build(
+                    &self.deps,
+                    self.profile_message.clone(),
+                    self.pending_remove.clone(),
+                )?)
+            }
+            t @ (Tab::Settings | Tab::Diagnostics) => {
                 self.live = None;
                 TabVm::Pending(t)
             }
@@ -605,5 +677,53 @@ mod tests {
         c.handle(Action::SelectTab(Tab::Analytics));
         c.handle(Action::SetPeriod(Period::Days30));
         assert!(matches!(&c.vm().body, TabVm::Analytics(a) if a.period == Period::Days30));
+    }
+
+    #[test]
+    fn profile_add_use_from_card_and_confirmed_remove() {
+        use crate::controllers::gui::tabs::profiles::ProfilesAction;
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Profiles));
+        c.forms_mut().new_profile_name = "work".into();
+        c.handle(Action::Profiles(ProfilesAction::Add));
+        assert!(c.forms_mut().new_profile_name.is_empty());
+        assert!(matches!(&c.vm().body, TabVm::Profiles(p) if p.rows.len() == 2));
+        c.handle(Action::SelectTab(Tab::Dashboard));
+        c.handle(Action::Profiles(ProfilesAction::Use("work".into())));
+        assert!(
+            c.vm()
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("work に切り替えました")
+        );
+        assert!(
+            matches!(&c.vm().body, TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active))
+        );
+        c.handle(Action::Profiles(ProfilesAction::Use("default".into())));
+        c.handle(Action::SelectTab(Tab::Profiles));
+        c.handle(Action::Profiles(ProfilesAction::Remove("work".into())));
+        assert!(
+            matches!(&c.vm().body, TabVm::Profiles(p) if p.pending_remove.as_deref() == Some("work"))
+        );
+        c.handle(Action::Profiles(ProfilesAction::CancelRemove));
+        assert!(
+            matches!(&c.vm().body, TabVm::Profiles(p) if p.pending_remove.is_none() && p.rows.len() == 2)
+        );
+        c.handle(Action::Profiles(ProfilesAction::ConfirmRemove));
+        assert!(
+            matches!(&c.vm().body, TabVm::Profiles(p) if p.rows.len() == 2),
+            "確認中でなければ何もしない"
+        );
+        c.handle(Action::Profiles(ProfilesAction::Remove("work".into())));
+        c.handle(Action::Profiles(ProfilesAction::ConfirmRemove));
+        assert!(matches!(&c.vm().body, TabVm::Profiles(p) if p.rows.len() == 1));
+        c.forms_mut().new_profile_name = "bad name".into();
+        c.handle(Action::Profiles(ProfilesAction::Add));
+        assert_eq!(
+            c.forms_mut().new_profile_name,
+            "bad name",
+            "失敗したときは入力を残す"
+        );
     }
 }

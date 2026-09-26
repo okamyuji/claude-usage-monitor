@@ -30,6 +30,9 @@ pub fn show_app(ui: &mut Ui, vm: &AppVm, forms: &mut Forms) -> Vec<Action> {
                     .small()
                     .color(p.weak),
                 );
+                if let Some(n) = &vm.notice {
+                    ui.label(RichText::new(n).color(p.ok));
+                }
                 if let Some(e) = &vm.error {
                     ui.label(RichText::new(e).color(p.err));
                 }
@@ -51,6 +54,13 @@ fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::views::tabs::analytics::show(ui, v, acts);
+                });
+        }
+        TabVm::Profiles(v) => {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    crate::views::tabs::profiles::show(ui, v, forms, acts);
                 });
         }
         TabVm::Pending(t) => {

@@ -15,33 +15,10 @@ fn help_lists_all_subcommands() {
         .stdout(contains("profile"));
 }
 
-use std::path::Path;
-
-fn cps(data: &Path, home: &Path, path_prepend: Option<&Path>) -> Command {
-    let mut c = Command::cargo_bin("cps").unwrap();
-    c.env("CPS_DATA_DIR", data)
-        .env("HOME", home)
-        .env_remove("CLAUDE_CONFIG_DIR");
-    if let Some(p) = path_prepend {
-        c.env(
-            "PATH",
-            format!("{}:{}", p.display(), std::env::var("PATH").unwrap()),
-        );
-    }
-    c
-}
-
+mod common;
+use common::cps;
 #[cfg(unix)]
-fn fake_claude(dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let p = dir.join("claude");
-    std::fs::write(
-        &p,
-        "#!/bin/sh\necho \"CONFIG=${CLAUDE_CONFIG_DIR:-none} ARGS=$*\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
+use common::fake_claude;
 
 #[cfg(unix)]
 #[test]

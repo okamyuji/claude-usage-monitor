@@ -1,4 +1,5 @@
 //! E2E用のWireMock起動。ライブラリの`test_support`は`cfg(test)`で外から使えないため、E2E側に同じ役割を置く。
+#![allow(dead_code)]
 pub mod gui;
 use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::SyncRunner;
@@ -73,4 +74,34 @@ impl WireMock {
             .send_json(mapping)
             .unwrap();
     }
+}
+
+use std::path::Path;
+
+/// 一時ディレクトリをデータとホームにして`cps`を起動する。
+pub fn cps(data: &Path, home: &Path, path_prepend: Option<&Path>) -> assert_cmd::Command {
+    let mut c = assert_cmd::Command::cargo_bin("cps").unwrap();
+    c.env("CPS_DATA_DIR", data)
+        .env("HOME", home)
+        .env_remove("CLAUDE_CONFIG_DIR");
+    if let Some(p) = path_prepend {
+        c.env(
+            "PATH",
+            format!("{}:{}", p.display(), std::env::var("PATH").unwrap()),
+        );
+    }
+    c
+}
+
+/// 受け取った`CLAUDE_CONFIG_DIR`と引数を表示するだけの偽の`claude`。
+#[cfg(unix)]
+pub fn fake_claude(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = dir.join("claude");
+    std::fs::write(
+        &p,
+        "#!/bin/sh\necho \"CONFIG=${CLAUDE_CONFIG_DIR:-none} ARGS=$*\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
 }

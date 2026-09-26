@@ -1,6 +1,5 @@
 //! GUIの主要導線（spec 12.2節）。一時ディレクトリの実SQLiteを使い、egui_kittestで操作する。
 #![forbid(unsafe_code)]
-#[allow(dead_code)]
 mod common;
 
 use chrono::{TimeZone, Utc};
@@ -495,4 +494,45 @@ fn trend_range_switches_and_analytics_tab_renders() {
     h.run();
     h.get_by_label("プロジェクト別");
     h.get_by_label("/work/app");
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_added_in_tab_and_activated_from_card_is_used_by_cps_run() {
+    use egui::accesskit::Role;
+    let env = gui_env(now());
+    env.store.ensure_default().unwrap();
+    let dir = env.home.path().join("work-config");
+    let mut h = env.harness();
+    h.get_by_label("プロファイル").click();
+    h.run();
+    for (name, text) in [
+        ("プロファイル名", "work"),
+        ("設定ディレクトリ", dir.to_str().unwrap()),
+    ] {
+        h.get_by_role_and_label(Role::TextInput, name).click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, name)
+            .type_text(text);
+        h.run();
+    }
+    h.get_by_label("追加").click();
+    h.run();
+    h.get_by_label("ダッシュボード").click();
+    h.run();
+    h.get_by_label("使用中にする").click();
+    h.run();
+    h.get_by_label_contains("work に切り替えました");
+    assert!(matches!(&h.state().vm().body,
+        claude_profile_switcher::controllers::gui::app::TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active)));
+    let bin = tempfile::tempdir().unwrap();
+    common::fake_claude(bin.path());
+    common::cps(env.data.path(), env.home.path(), Some(bin.path()))
+        .args(["run", "-p", "hi"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(format!(
+            "CONFIG={} ARGS=-p hi",
+            dir.display()
+        )));
 }

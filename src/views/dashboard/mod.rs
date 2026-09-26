@@ -16,7 +16,7 @@ use egui::{Align, Layout, Sense, Ui, vec2};
 /// ダッシュボードを描く。
 pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     let total = ui.available_height();
-    cards::show(ui, &vm.cards);
+    cards::show(ui, &vm.cards, acts);
     ui.add_space(GAP);
     let trend_h = if vm.trend_open {
         trend_height(total)
