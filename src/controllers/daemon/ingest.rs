@@ -709,6 +709,19 @@ mod tests {
     }
 
     #[test]
+    fn first_seen_entrypoint_is_not_overwritten() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        // DBは種別を上位にだけ更新するため、対話→ヘッドレスの順で後の行が種別を変えないことを確かめる。
+        let first = r#"{"type":"user","uuid":"q4","sessionId":"s1","timestamp":"2026-09-26T00:00:00.000Z","entrypoint":"cli","message":{"content":"はじめ"}}"#;
+        let later = r#"{"type":"user","uuid":"q5","sessionId":"s1","timestamp":"2026-09-26T00:00:05.000Z","entrypoint":"sdk-cli","message":{"content":"続き"}}"#;
+        write(&cfg.join("projects/-w/s1.jsonl"), &[first, later]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "entrypoint"), "cli");
+        assert_eq!(session_col(&e.store, "kind"), "interactive");
+    }
+
+    #[test]
     fn first_prompt_is_not_overwritten_by_later_prompts() {
         let e = env();
         let cfg = e.home.path().join(".claude");
