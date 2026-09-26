@@ -1,4 +1,4 @@
-//! `cps run`と`cps profile`の処理。
+//! `cumon run`と`cumon profile`の処理。
 pub mod profile;
 pub mod run;
 

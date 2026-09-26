@@ -1,10 +1,10 @@
 //! 実際のセッションのJSONLを末尾から読み、ライブログの行を表示する。Task 8の実動作確認用。
 #![forbid(unsafe_code)]
-use claude_profile_switcher::models::domain::live_log::{
+use claude_usage_monitor::models::domain::live_log::{
     LIVE_LOG_CAPACITY, RingBuffer, lines_from_transcript,
 };
-use claude_profile_switcher::models::gateways::jsonl::read_new_lines;
-use claude_profile_switcher::models::gateways::session_files::{find_session_files, tail_offset};
+use claude_usage_monitor::models::gateways::jsonl::read_new_lines;
+use claude_usage_monitor::models::gateways::session_files::{find_session_files, tail_offset};
 use std::collections::HashMap;
 
 fn main() {

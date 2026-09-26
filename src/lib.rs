@@ -1,6 +1,6 @@
-//! claude-profile-switcher のライブラリ部。
+//! claude-usage-monitor のライブラリ部。
 //!
-//! バイナリ`cps`と結合テストの両方から同じロジックを使うため、処理はすべてここに置く。
+//! バイナリ`cumon`と結合テストの両方から同じロジックを使うため、処理はすべてここに置く。
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 

@@ -83,7 +83,7 @@ mod tests {
         let _g = serial();
         let d = tempfile::tempdir().unwrap();
         let lock = d.path().join("daemon.lock");
-        let c = LockFileDaemon::new(lock.clone(), PathBuf::from("/nonexistent/cps"));
+        let c = LockFileDaemon::new(lock.clone(), PathBuf::from("/nonexistent/cumon"));
         assert!(!c.is_running());
         let held = std::fs::File::create(&lock).unwrap();
         held.try_lock().unwrap();
@@ -107,7 +107,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let c = LockFileDaemon::new(
             d.path().join("daemon.lock"),
-            PathBuf::from("/nonexistent/cps"),
+            PathBuf::from("/nonexistent/cumon"),
         );
         assert!(c.start().unwrap_err().contains("デーモンを起動できません"));
         let ok = LockFileDaemon::new(d.path().join("daemon.lock"), PathBuf::from("/usr/bin/true"));

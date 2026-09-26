@@ -118,7 +118,7 @@ fn message(
         .min_by(|a, b| a.1.total_cmp(&b.1));
     if let Some((n, p)) = other {
         body.push_str(&format!(
-            "。{n}の{}は{}です。cps profile use {n} で切り替えられます",
+            "。{n}の{}は{}です。cumon profile use {n} で切り替えられます",
             limit_title(&l.kind, l.scope_label.as_deref()),
             fmt_percent(p)
         ));
@@ -236,7 +236,7 @@ mod tests {
         let body = t.notes.0.lock().unwrap()[0].1.clone();
         assert_eq!(
             body,
-            "リセットは14:00です。subの5時間枠は20%です。cps profile use sub で切り替えられます"
+            "リセットは14:00です。subの5時間枠は20%です。cumon profile use sub で切り替えられます"
         );
     }
 

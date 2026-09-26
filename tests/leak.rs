@@ -59,18 +59,18 @@ fn rss_growth(extra: &[&str]) -> u64 {
     let jsonl = home.path().join(".claude/projects/-leak/leak.jsonl");
     std::fs::create_dir_all(jsonl.parent().unwrap()).unwrap();
     std::fs::write(&jsonl, "").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cps"))
-        .env("CPS_DATA_DIR", data.path())
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cumon"))
+        .env("CUMON_DATA_DIR", data.path())
         .env("HOME", home.path())
-        .env("CPS_USAGE_API_BASE", &wm.base_url)
-        .env("CPS_CATALOG_BASE", &wm.base_url)
-        .env("CPS_NOTIFY_LOG", data.path().join("n.log"))
+        .env("CUMON_USAGE_API_BASE", &wm.base_url)
+        .env("CUMON_CATALOG_BASE", &wm.base_url)
+        .env("CUMON_NOTIFY_LOG", data.path().join("n.log"))
         .args(["daemon", "--interval-secs", "1", "--max-ticks", "1000"])
         .args(extra)
         .stdout(Stdio::null())
         .spawn()
         .unwrap();
-    let db = data.path().join("cps.db");
+    let db = data.path().join("cumon.db");
     let mut sys = System::new();
     wait_ticks(&db, &jsonl, 100, &mut child);
     let at100 = rss(&mut sys, child.id());

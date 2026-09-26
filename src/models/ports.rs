@@ -300,7 +300,7 @@ pub trait Notifier: Send + Sync {
     fn notify(&self, title: &str, body: &str) -> Result<(), String>;
 }
 
-/// `cps gui`の起動。トレイの「画面を開く」に使う。
+/// `cumon gui`の起動。トレイの「画面を開く」に使う。
 pub trait GuiLauncher: Send + Sync {
     /// GUIを起動する。起動を待たずに戻る。
     fn open(&self) -> Result<(), String>;

@@ -1,10 +1,10 @@
 //! 既定プロファイル（またはCLAUDE_CONFIG_DIR）の認証情報で実際の使用量APIを呼び、枠ごとの使用率を表示する。
 //! トークンは表示しない。Task 3、Task 11、Task 12の実動作確認用。
 #![forbid(unsafe_code)]
-use claude_profile_switcher::models::domain::profile::Profile;
-use claude_profile_switcher::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
-use claude_profile_switcher::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
-use claude_profile_switcher::models::ports::{CredentialStore, UsageApi};
+use claude_usage_monitor::models::domain::profile::Profile;
+use claude_usage_monitor::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
+use claude_usage_monitor::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
+use claude_usage_monitor::models::ports::{CredentialStore, UsageApi};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

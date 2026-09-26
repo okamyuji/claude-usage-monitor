@@ -3,8 +3,8 @@
 mod common;
 
 use chrono::{TimeZone, Utc};
-use claude_profile_switcher::controllers::gui::app::Tab;
-use claude_profile_switcher::controllers::gui::dashboard::ListMode;
+use claude_usage_monitor::controllers::gui::app::Tab;
+use claude_usage_monitor::controllers::gui::dashboard::ListMode;
 use common::gui::gui_env;
 use egui_kittest::kittest::Queryable;
 use std::sync::atomic::Ordering;
@@ -69,7 +69,7 @@ fn dashboard_renders_in_light_and_dark() {
     let env = gui_env(now());
     for pref in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
         let mut h = env.harness();
-        claude_profile_switcher::views::theme::apply(&h.ctx);
+        claude_usage_monitor::views::theme::apply(&h.ctx);
         h.ctx.set_theme(pref);
         h.run();
         assert_eq!(
@@ -110,9 +110,9 @@ fn layout_follows_window_size() {
     }
 }
 
-use claude_profile_switcher::models::domain::records::{FetchLogEntry, FetchResult};
-use claude_profile_switcher::models::domain::usage::parse_usage;
-use claude_profile_switcher::models::ports::{FetchLogRepo, ProfileRepo, UsageRepo};
+use claude_usage_monitor::models::domain::records::{FetchLogEntry, FetchResult};
+use claude_usage_monitor::models::domain::usage::parse_usage;
+use claude_usage_monitor::models::ports::{FetchLogRepo, ProfileRepo, UsageRepo};
 
 fn record_rising_usage(env: &common::gui::GuiEnv) {
     let p = env.store.ensure_default().unwrap();
@@ -171,8 +171,8 @@ fn empty_db_shows_not_fetched_and_daemon_stopped() {
     h.get_by_label("稼働中の実行はありません");
 }
 
-use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
-use claude_profile_switcher::models::gateways::process::SysProcessInfo;
+use claude_usage_monitor::controllers::daemon::ingest::Ingestor;
+use claude_usage_monitor::models::gateways::process::SysProcessInfo;
 use std::sync::Arc;
 
 fn ingest(env: &common::gui::GuiEnv) {
@@ -203,7 +203,7 @@ fn append(path: &std::path::Path, line: &str) {
 fn headless_line(ts: chrono::DateTime<Utc>) -> String {
     format!(
         r#"{{"type":"assistant","entrypoint":"sdk-cli","sessionId":"hl1","cwd":"/work/app","timestamp":"{}","message":{{"id":"m1","model":"claude-opus-5-5","content":[{{"type":"tool_use","id":"t1","name":"Bash","input":{{"command":"cargo test"}}}}],"usage":{{"input_tokens":1000,"output_tokens":10}}}}}}"#,
-        claude_profile_switcher::models::repositories::db::ts(ts)
+        claude_usage_monitor::models::repositories::db::ts(ts)
     )
 }
 
@@ -235,7 +235,7 @@ fn job_shows_badge_and_progress() {
         &job,
         format!(
             r#"{{"state":"working","detail":"3/8件目","sessionId":"js1","name":"夜間ジョブ","cwd":"/work/app","inFlight":{{"tasks":2}},"createdAt":"{0}","updatedAt":"{0}"}}"#,
-            claude_profile_switcher::models::repositories::db::ts(now() - chrono::Duration::minutes(1))
+            claude_usage_monitor::models::repositories::db::ts(now() - chrono::Duration::minutes(1))
         ),
     )
     .unwrap();
@@ -247,8 +247,8 @@ fn job_shows_badge_and_progress() {
 
 #[test]
 fn header_shows_today_and_week_totals() {
-    use claude_profile_switcher::models::domain::pricing::seed_models;
-    use claude_profile_switcher::models::ports::ModelRepo;
+    use claude_usage_monitor::models::domain::pricing::seed_models;
+    use claude_usage_monitor::models::ports::ModelRepo;
     let env = gui_env(now());
     env.store.seed_if_empty(&seed_models()).unwrap();
     append(
@@ -262,10 +262,10 @@ fn header_shows_today_and_week_totals() {
     assert_eq!(h.get_all_by_label("1.01k <$0.01").count(), 2);
 }
 
-use claude_profile_switcher::models::domain::pricing::TokenUsage;
-use claude_profile_switcher::models::domain::records::{SessionUpsert, TurnRecord};
-use claude_profile_switcher::models::domain::transcript::SessionKind;
-use claude_profile_switcher::models::ports::IngestRepo;
+use claude_usage_monitor::models::domain::pricing::TokenUsage;
+use claude_usage_monitor::models::domain::records::{SessionUpsert, TurnRecord};
+use claude_usage_monitor::models::domain::transcript::SessionKind;
+use claude_usage_monitor::models::ports::IngestRepo;
 
 fn seed_session_with_turns(
     env: &common::gui::GuiEnv,
@@ -359,7 +359,7 @@ fn history_search_and_kind_filter_keep_cards_and_trend() {
 }
 
 fn seed_live_session(env: &common::gui::GuiEnv) -> std::path::PathBuf {
-    use claude_profile_switcher::models::domain::records::SubagentRecord;
+    use claude_usage_monitor::models::domain::records::SubagentRecord;
     seed_session_with_turns(
         env,
         "s1",
@@ -386,13 +386,10 @@ fn seed_live_session(env: &common::gui::GuiEnv) -> std::path::PathBuf {
 }
 
 fn live_depth(
-    h: &egui_kittest::Harness<
-        'static,
-        claude_profile_switcher::controllers::gui::app::GuiController,
-    >,
+    h: &egui_kittest::Harness<'static, claude_usage_monitor::controllers::gui::app::GuiController>,
 ) -> u8 {
     match &h.state().vm().body {
-        claude_profile_switcher::controllers::gui::app::TabVm::Dashboard(d) => {
+        claude_usage_monitor::controllers::gui::app::TabVm::Dashboard(d) => {
             d.detail
                 .as_ref()
                 .unwrap()
@@ -432,20 +429,18 @@ fn job_timeline_appears_in_live_log() {
     seed_live_session(&env);
     let p = env.store.ensure_default().unwrap();
     env.store
-        .upsert_job(
-            &claude_profile_switcher::models::domain::records::JobRecord {
-                job_id: "j1".into(),
-                profile_id: p.id,
-                session_id: Some("s1".into()),
-                name: None,
-                state: "working".into(),
-                detail: Some("2/8件目".into()),
-                in_flight_tasks: 1,
-                tokens: None,
-                created_at: None,
-                updated_at: now(),
-            },
-        )
+        .upsert_job(&claude_usage_monitor::models::domain::records::JobRecord {
+            job_id: "j1".into(),
+            profile_id: p.id,
+            session_id: Some("s1".into()),
+            name: None,
+            state: "working".into(),
+            detail: Some("2/8件目".into()),
+            in_flight_tasks: 1,
+            tokens: None,
+            created_at: None,
+            updated_at: now(),
+        })
         .unwrap();
     append(
         &env.home.path().join(".claude/jobs/j1/timeline.jsonl"),
@@ -478,8 +473,8 @@ fn replay_next_button_changes_displayed_turn() {
 
 #[test]
 fn trend_range_switches_and_analytics_tab_renders() {
-    use claude_profile_switcher::controllers::gui::app::TabVm;
-    use claude_profile_switcher::controllers::gui::dashboard::trend::TrendRange;
+    use claude_usage_monitor::controllers::gui::app::TabVm;
+    use claude_usage_monitor::controllers::gui::dashboard::trend::TrendRange;
     let env = gui_env(now());
     record_rising_usage(&env);
     seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
@@ -498,7 +493,7 @@ fn trend_range_switches_and_analytics_tab_renders() {
 
 #[cfg(unix)]
 #[test]
-fn profile_added_in_tab_and_activated_from_card_is_used_by_cps_run() {
+fn profile_added_in_tab_and_activated_from_card_is_used_by_cumon_run() {
     use egui::accesskit::Role;
     let env = gui_env(now());
     env.store.ensure_default().unwrap();
@@ -524,10 +519,10 @@ fn profile_added_in_tab_and_activated_from_card_is_used_by_cps_run() {
     h.run();
     h.get_by_label_contains("work に切り替えました");
     assert!(matches!(&h.state().vm().body,
-        claude_profile_switcher::controllers::gui::app::TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active)));
+        claude_usage_monitor::controllers::gui::app::TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active)));
     let bin = tempfile::tempdir().unwrap();
     common::fake_claude(bin.path());
-    common::cps(env.data.path(), env.home.path(), Some(bin.path()))
+    common::cumon(env.data.path(), env.home.path(), Some(bin.path()))
         .args(["run", "-p", "hi"])
         .assert()
         .success()
@@ -539,7 +534,7 @@ fn profile_added_in_tab_and_activated_from_card_is_used_by_cps_run() {
 
 #[test]
 fn settings_threshold_is_saved_for_daemon() {
-    use claude_profile_switcher::models::ports::SettingsRepo;
+    use claude_usage_monitor::models::ports::SettingsRepo;
     use egui::accesskit::Role;
     let env = gui_env(now());
     let mut h = env.harness();

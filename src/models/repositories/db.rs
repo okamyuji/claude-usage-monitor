@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn db_bytes_is_sum_of_db_and_wal() {
         let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("cps.db");
+        let path = d.path().join("cumon.db");
         let s = SqliteStore::open(&path).unwrap();
         s.with(|c| c.execute("INSERT INTO settings(key, value) VALUES('k', 'v')", []))
             .unwrap();
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn open_creates_missing_parent_dirs() {
         let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("a/b/cps.db");
+        let path = d.path().join("a/b/cumon.db");
         SqliteStore::open(&path).unwrap();
         assert!(path.exists());
     }
@@ -195,7 +195,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("f"), "").unwrap();
         assert!(matches!(
-            SqliteStore::open(&d.path().join("f/cps.db")),
+            SqliteStore::open(&d.path().join("f/cumon.db")),
             Err(RepoError::Storage(_))
         ));
     }

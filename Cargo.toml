@@ -1,5 +1,5 @@
 [package]
-name = "claude-profile-switcher"
+name = "claude-usage-monitor"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
@@ -7,7 +7,7 @@ license = "MIT"
 description = "Claude CodeのToken使用量とセッションを常駐監視して可視化するツール"
 
 [[bin]]
-name = "cps"
+name = "cumon"
 path = "src/main.rs"
 
 [dependencies]

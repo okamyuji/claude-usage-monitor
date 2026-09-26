@@ -1,6 +1,6 @@
 //! プロファイルタブ。一覧、追加、使用中の切替、削除、トークン期限。
 //!
-//! 追加や切替は`cps profile`と同じ関数を呼ぶ。GUIとCLIで結果がずれないようにするため。
+//! 追加や切替は`cumon profile`と同じ関数を呼ぶ。GUIとCLIで結果がずれないようにするため。
 use crate::controllers::cli::profile::{ProfileCommand, execute};
 use crate::controllers::gui::app::GuiDeps;
 use crate::models::domain::display::fmt_clock;
@@ -8,7 +8,7 @@ use crate::models::domain::profile::Profile;
 use crate::models::ports::{CredentialError, RepoError};
 
 /// ログインの手順（spec 9章）。
-pub const LOGIN_HELP: &str = "追加したプロファイルは、「使用中にする」を押してからターミナルで cps run を実行し、/login でログインすると使えます";
+pub const LOGIN_HELP: &str = "追加したプロファイルは、「使用中にする」を押してからターミナルで cumon run を実行し、/login でログインすると使えます";
 
 /// プロファイル1行。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +98,7 @@ pub fn build(
     })
 }
 
-/// `cps profile`と同じ処理を実行し、表示する文を返す。失敗もその文で返す。
+/// `cumon profile`と同じ処理を実行し、表示する文を返す。失敗もその文で返す。
 pub fn run_command(deps: &GuiDeps, cmd: ProfileCommand) -> String {
     let mut out = Vec::new();
     match execute(deps.profiles.as_ref(), &deps.home, cmd, &mut out) {

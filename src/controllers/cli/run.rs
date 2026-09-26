@@ -1,4 +1,4 @@
-//! `cps run`。使用中プロファイルの設定ディレクトリで`claude`を起動する。
+//! `cumon run`。使用中プロファイルの設定ディレクトリで`claude`を起動する。
 use crate::controllers::cli::CliError;
 use crate::models::domain::profile::Profile;
 use crate::models::ports::{ProfileRepo, RepoError};

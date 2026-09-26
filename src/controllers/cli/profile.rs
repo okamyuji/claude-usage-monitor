@@ -1,4 +1,4 @@
-//! `cps profile`。プロファイルの一覧、追加、切替、削除。
+//! `cumon profile`。プロファイルの一覧、追加、切替、削除。
 use crate::controllers::cli::CliError;
 use crate::models::domain::profile::validate_profile_name;
 use crate::models::ports::{ProfileRepo, RepoError};
@@ -86,7 +86,7 @@ fn add(
     writeln!(out, "追加しました: {name}（{}）", dir.display())?;
     writeln!(
         out,
-        "このプロファイルでログインするには `cps profile use {name}` の後に `cps run` を実行し、/login してください"
+        "このプロファイルでログインするには `cumon profile use {name}` の後に `cumon run` を実行し、/login してください"
     )?;
     Ok(())
 }

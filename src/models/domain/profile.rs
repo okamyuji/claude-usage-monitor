@@ -13,7 +13,7 @@ pub struct Profile {
     pub name: String,
     /// 設定ディレクトリ。`None`は`~/.claude`を使う既定の状態で、`CLAUDE_CONFIG_DIR`を設定しない。
     pub config_dir: Option<PathBuf>,
-    /// 使用中か。`cps run`はこのプロファイルで起動する。
+    /// 使用中か。`cumon run`はこのプロファイルで起動する。
     pub is_active: bool,
 }
 

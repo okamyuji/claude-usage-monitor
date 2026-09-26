@@ -1,7 +1,7 @@
 //! ログイン時の自動起動を実際に登録し、plistを確かめてから解除する。計画3のTask 5の実動作確認用。
 #![forbid(unsafe_code)]
-use claude_profile_switcher::models::gateways::autostart::SystemAutostart;
-use claude_profile_switcher::models::ports::Autostart;
+use claude_usage_monitor::models::gateways::autostart::SystemAutostart;
+use claude_usage_monitor::models::ports::Autostart;
 
 fn main() {
     let exe = std::env::args().nth(1).expect("登録する実行ファイルのパス");
@@ -12,7 +12,7 @@ fn main() {
     let plist = directories::BaseDirs::new()
         .expect("ホーム")
         .home_dir()
-        .join("Library/LaunchAgents/claude-profile-switcher.plist");
+        .join("Library/LaunchAgents/claude-usage-monitor.plist");
     println!("{}", std::fs::read_to_string(&plist).expect("plist"));
     a.disable().expect("解除");
     println!(

@@ -1,4 +1,4 @@
-//! `cps gui`の起動。
+//! `cumon gui`の起動。
 
 use crate::models::ports::GuiLauncher;
 use std::path::PathBuf;
@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn open_reports_spawn_failure_and_success() {
         assert!(
-            ExeGuiLauncher::new("/nonexistent/cps".into())
+            ExeGuiLauncher::new("/nonexistent/cumon".into())
                 .open()
                 .unwrap_err()
                 .contains("GUIを起動できません")

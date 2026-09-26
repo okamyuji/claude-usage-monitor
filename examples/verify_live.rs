@@ -1,10 +1,10 @@
 //! 利用者の~/.claudeから稼働中セッションとバックグラウンドジョブを読み、プロセスの生存も表示する。
 //! Task 14の実動作確認用。
 #![forbid(unsafe_code)]
-use claude_profile_switcher::models::gateways::jobs::read_jobs;
-use claude_profile_switcher::models::gateways::live_sessions::read_live_sessions;
-use claude_profile_switcher::models::gateways::process::SysProcessInfo;
-use claude_profile_switcher::models::ports::ProcessInfo;
+use claude_usage_monitor::models::gateways::jobs::read_jobs;
+use claude_usage_monitor::models::gateways::live_sessions::read_live_sessions;
+use claude_usage_monitor::models::gateways::process::SysProcessInfo;
+use claude_usage_monitor::models::ports::ProcessInfo;
 
 fn main() {
     let dir = std::path::Path::new(&std::env::var("HOME").expect("HOME")).join(".claude");

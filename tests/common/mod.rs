@@ -78,10 +78,10 @@ impl WireMock {
 
 use std::path::Path;
 
-/// 一時ディレクトリをデータとホームにして`cps`を起動する。
-pub fn cps(data: &Path, home: &Path, path_prepend: Option<&Path>) -> assert_cmd::Command {
-    let mut c = assert_cmd::Command::cargo_bin("cps").unwrap();
-    c.env("CPS_DATA_DIR", data)
+/// 一時ディレクトリをデータとホームにして`cumon`を起動する。
+pub fn cumon(data: &Path, home: &Path, path_prepend: Option<&Path>) -> assert_cmd::Command {
+    let mut c = assert_cmd::Command::cargo_bin("cumon").unwrap();
+    c.env("CUMON_DATA_DIR", data)
         .env("HOME", home)
         .env_remove("CLAUDE_CONFIG_DIR");
     if let Some(p) = path_prepend {

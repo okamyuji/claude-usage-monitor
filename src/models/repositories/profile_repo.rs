@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn reopening_keeps_data_and_schema() {
         let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("cps.db");
+        let path = d.path().join("cumon.db");
         crate::models::repositories::db::SqliteStore::open(&path)
             .unwrap()
             .add("sub", None)

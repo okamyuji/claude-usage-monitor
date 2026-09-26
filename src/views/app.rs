@@ -119,12 +119,12 @@ pub fn apply_theme(ctx: &egui::Context, t: Theme) {
 }
 
 /// eframeのアプリ。
-pub struct CpsApp {
+pub struct CumonApp {
     ctl: GuiController,
     theme: Theme,
 }
 
-impl CpsApp {
+impl CumonApp {
     /// controllerを受け取って作る。
     pub fn new(ctl: GuiController) -> Self {
         let theme = ctl.vm().theme;
@@ -132,7 +132,7 @@ impl CpsApp {
     }
 }
 
-impl eframe::App for CpsApp {
+impl eframe::App for CumonApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.ctl.tick();
         if self.ctl.vm().theme != self.theme {
@@ -224,7 +224,7 @@ mod tests {
     fn eframe_app_draws_shell_and_follows_theme_change() {
         let home = tempfile::tempdir().unwrap();
         let (_d, ctl) = controller(home.path());
-        let mut app = CpsApp::new(ctl);
+        let mut app = CumonApp::new(ctl);
         app.theme = Theme::Dark;
         let mut h = Harness::new_eframe(|_cc| app);
         h.run();

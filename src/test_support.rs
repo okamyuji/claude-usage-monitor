@@ -4,7 +4,7 @@ use crate::models::repositories::db::SqliteStore;
 /// 一時ディレクトリに実DBを作る。`TempDir`を返すのは、呼び出し側が持っている間だけファイルを残すため。
 pub(crate) fn temp_store() -> (tempfile::TempDir, SqliteStore) {
     let dir = tempfile::tempdir().expect("一時ディレクトリ");
-    let store = SqliteStore::open(&dir.path().join("cps.db")).expect("DBを開く");
+    let store = SqliteStore::open(&dir.path().join("cumon.db")).expect("DBを開く");
     (dir, store)
 }
 

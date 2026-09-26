@@ -142,7 +142,7 @@ impl ApplicationHandler<UserEvent> for App {
         if cause == StartCause::Init
             && let Err(e) = self.create_tray()
         {
-            eprintln!("cps: {e}");
+            eprintln!("cumon: {e}");
         }
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             let Some(a) = self.ids.get(&ev.id).cloned() else {
@@ -155,7 +155,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 TrayOutcome::Message(m) => {
-                    let _ = self.notifier.notify("Claude Profile Switcher", &m);
+                    let _ = self.notifier.notify("Claude Usage Monitor", &m);
                 }
             }
         }
@@ -197,7 +197,7 @@ pub fn run_with_tray(
     let el = match event_loop() {
         Ok(el) => el,
         Err(e) => {
-            eprintln!("cps: {e}。トレイなしで続けます");
+            eprintln!("cumon: {e}。トレイなしで続けます");
             worker();
             return Ok(());
         }

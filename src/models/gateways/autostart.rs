@@ -1,11 +1,11 @@
 //! ログイン時の自動起動。
 //!
-//! macOSはLaunchAgent、WindowsはRunレジストリ、LinuxはXDG autostartに、`cps daemon`を登録する。3 OSの違いはauto-launchが吸収する。
+//! macOSはLaunchAgent、WindowsはRunレジストリ、LinuxはXDG autostartに、`cumon daemon`を登録する。3 OSの違いはauto-launchが吸収する。
 use crate::models::ports::Autostart;
 use auto_launch::{AutoLaunch, AutoLaunchBuilder, MacOSLaunchMode};
 use std::path::Path;
 
-const APP_NAME: &str = "claude-profile-switcher";
+const APP_NAME: &str = "claude-usage-monitor";
 
 /// auto-launchによる実装。
 pub struct SystemAutostart {
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn builds_for_existing_executable() {
         let a = SystemAutostart::new(std::path::Path::new("/usr/bin/true")).unwrap();
-        assert_eq!(a.app_name(), "claude-profile-switcher");
+        assert_eq!(a.app_name(), "claude-usage-monitor");
         assert_eq!(a.args(), ["daemon"]);
     }
 
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     #[ignore = "enable_and_disable_round_trip_in_temp_home から子プロセスとして呼ぶ"]
     fn child_enable_disable() {
-        if std::env::var_os("CPS_AUTOSTART_CHILD").is_none() {
+        if std::env::var_os("CUMON_AUTOSTART_CHILD").is_none() {
             return;
         }
         let a = SystemAutostart::new(std::path::Path::new("/usr/bin/true")).unwrap();
@@ -92,7 +92,7 @@ mod tests {
                 "--ignored",
                 "--nocapture",
             ])
-            .env("CPS_AUTOSTART_CHILD", "1")
+            .env("CUMON_AUTOSTART_CHILD", "1")
             .env("HOME", home.path())
             .env("XDG_CONFIG_HOME", home.path().join(".config"))
             .output()

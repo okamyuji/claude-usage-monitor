@@ -1,15 +1,15 @@
 //! README用の画像を、GPUで画面外に描いて書き出す。画面のロック中でも作れ、同じデータから何度でも作り直せるようにするため。
 //!
 //! 架空データのDBとHOMEを環境変数で渡して手元から実行する。
-//! `CPS_DEMO_DATA=<DBのあるディレクトリ> CPS_DEMO_HOME=<HOME> cargo test --test readme_images -- --ignored`
+//! `CUMON_DEMO_DATA=<DBのあるディレクトリ> CUMON_DEMO_HOME=<HOME> cargo test --test readme_images -- --ignored`
 #![forbid(unsafe_code)]
 mod common;
 
 use chrono::Utc;
-use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
-use claude_profile_switcher::models::repositories::db::SqliteStore;
-use claude_profile_switcher::views::app::{install_fonts, show_app};
-use claude_profile_switcher::views::theme;
+use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
+use claude_usage_monitor::models::repositories::db::SqliteStore;
+use claude_usage_monitor::views::app::{install_fonts, show_app};
+use claude_usage_monitor::views::theme;
 use common::gui::{FakeAutostart, FakeDaemon, FixedClock, NoCatalog, NoCreds};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -18,7 +18,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 fn deps(data: &Path, home: &Path) -> GuiDeps {
-    let s = Arc::new(SqliteStore::open(&data.join("cps.db")).unwrap());
+    let s = Arc::new(SqliteStore::open(&data.join("cumon.db")).unwrap());
     let daemon = Arc::new(FakeDaemon::default());
     daemon.running.store(true, Ordering::SeqCst);
     GuiDeps {
@@ -50,10 +50,11 @@ fn save(h: &mut Harness<'_, GuiController>, out: &Path, name: &str) {
 #[test]
 #[ignore]
 fn write_readme_images() {
-    let data = PathBuf::from(std::env::var("CPS_DEMO_DATA").expect("CPS_DEMO_DATA"));
-    let home = PathBuf::from(std::env::var("CPS_DEMO_HOME").expect("CPS_DEMO_HOME"));
-    let out =
-        PathBuf::from(std::env::var("CPS_README_IMAGES").unwrap_or_else(|_| "docs/images".into()));
+    let data = PathBuf::from(std::env::var("CUMON_DEMO_DATA").expect("CUMON_DEMO_DATA"));
+    let home = PathBuf::from(std::env::var("CUMON_DEMO_HOME").expect("CUMON_DEMO_HOME"));
+    let out = PathBuf::from(
+        std::env::var("CUMON_README_IMAGES").unwrap_or_else(|_| "docs/images".into()),
+    );
     std::fs::create_dir_all(&out).unwrap();
     let mut h = Harness::builder()
         .with_size(egui::vec2(1280.0, 820.0))

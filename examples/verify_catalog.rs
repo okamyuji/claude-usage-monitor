@@ -1,10 +1,10 @@
 //! Anthropic公式の料金ページとモデル一覧を実際に取得し、読み取ったモデル情報を表示する。
 //! ページ構成が変わったときに解析が壊れていないかを実サイトで確かめるための実動作確認用。
 #![forbid(unsafe_code)]
-use claude_profile_switcher::models::gateways::model_catalog::{
+use claude_usage_monitor::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
-use claude_profile_switcher::models::ports::ModelCatalogSource;
+use claude_usage_monitor::models::ports::ModelCatalogSource;
 use std::time::Duration;
 
 fn main() {

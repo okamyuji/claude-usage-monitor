@@ -1,4 +1,4 @@
-# Claude Profile Switcher
+# Claude Usage Monitor
 
 Claude CodeのToken使用量、レート制限、セッションの動きを、バックグラウンドで動くエージェントも含めて常駐監視するデスクトップアプリです。複数アカウント（プロファイル）の切り替えにも対応しています。
 
@@ -24,7 +24,7 @@ Claude CodeのToken使用量、レート制限、セッションの動きを、�
 
 ## インストール
 
-Rust 1.98以上が必要です。リポジトリを取得してから、次のコマンドで`cps`コマンドを入れます。
+Rust 1.98以上が必要です。リポジトリを取得してから、次のコマンドで`cumon`コマンドを入れます。
 
 ```bash
 cargo install --path .
@@ -35,40 +35,40 @@ cargo install --path .
 常駐デーモンを起動すると、使用量の取得とセッションの記録を始めます。
 
 ```bash
-cps daemon
+cumon daemon
 ```
 
 画面はデーモンとは別のプロセスで開きます。閉じるとプロセスごと終わるので、描画に使ったメモリはOSに返ります。
 
 ```bash
-cps gui
+cumon gui
 ```
 
-メニューバーを使わない環境では、`cps daemon --no-tray`で起動します。ログイン時に自動で起動したい場合は、設定タブの「ログイン時にデーモンを起動する」を有効にしてください。
+メニューバーを使わない環境では、`cumon daemon --no-tray`で起動します。ログイン時に自動で起動したい場合は、設定タブの「ログイン時にデーモンを起動する」を有効にしてください。
 
 ### プロファイルの切り替え
 
-プロファイルの実体は、Claude Codeの設定ディレクトリ（`CLAUDE_CONFIG_DIR`）です。`cps run`は、使用中のプロファイルの設定ディレクトリを指定して`claude`を起動します。普段の`claude`をこれに置き換えるには、シェルに次の別名を登録してください。
+プロファイルの実体は、Claude Codeの設定ディレクトリ（`CLAUDE_CONFIG_DIR`）です。`cumon run`は、使用中のプロファイルの設定ディレクトリを指定して`claude`を起動します。普段の`claude`をこれに置き換えるには、シェルに次の別名を登録してください。
 
 ```bash
-alias claude='cps run'
+alias claude='cumon run'
 ```
 
 プロファイルの管理には、次のコマンドを使います。
 
 ```bash
-cps profile list
-cps profile add work              # 設定ディレクトリは ~/.claude-work
-cps profile add work --config-dir ~/claude-work
-cps profile use work
-cps profile remove work
+cumon profile list
+cumon profile add work              # 設定ディレクトリは ~/.claude-work
+cumon profile add work --config-dir ~/claude-work
+cumon profile use work
+cumon profile remove work
 ```
 
-追加したプロファイルは、`cps profile use`で使用中にしてから`cps run`を実行し、Claude Codeの`/login`でログインすると使えます。プロファイルタブとダッシュボードのカードからも、同じ操作を行えます。
+追加したプロファイルは、`cumon profile use`で使用中にしてから`cumon run`を実行し、Claude Codeの`/login`でログインすると使えます。プロファイルタブとダッシュボードのカードからも、同じ操作を行えます。
 
 ## データの場所と保持期間
 
-記録は、macOSでは`~/Library/Application Support/work.okamyuji.cps/cps.db`に、ほかのOSではそれぞれのアプリ用データディレクトリにSQLiteで保存します。保持期間の既定は90日で、設定タブで変えられます。アクセストークンは保存しません。使用量の取得のたびに、Claude Codeが保存した認証情報を読み出して使います。
+記録は、macOSでは`~/Library/Application Support/work.okamyuji.cumon/cumon.db`に、ほかのOSではそれぞれのアプリ用データディレクトリにSQLiteで保存します。保持期間の既定は90日で、設定タブで変えられます。アクセストークンは保存しません。使用量の取得のたびに、Claude Codeが保存した認証情報を読み出して使います。
 
 ## メモリ使用量
 

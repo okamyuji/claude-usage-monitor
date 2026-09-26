@@ -1,32 +1,32 @@
-//! `cps`コマンドの入口。CLIの解析と依存の組み立てだけを行う。
+//! `cumon`コマンドの入口。CLIの解析と依存の組み立てだけを行う。
 #![forbid(unsafe_code)]
 use clap::{Parser, Subcommand};
-use claude_profile_switcher::controllers::cli::CliError;
-use claude_profile_switcher::controllers::cli::profile::{ProfileCommand, execute};
-use claude_profile_switcher::controllers::cli::run::run_claude;
-use claude_profile_switcher::controllers::daemon::alert::{AlertDeps, Alerter};
-use claude_profile_switcher::controllers::daemon::catalog::CatalogUpdater;
-use claude_profile_switcher::controllers::daemon::collector::{CollectorDeps, UsageCollector};
-use claude_profile_switcher::controllers::daemon::ingest::Ingestor;
-use claude_profile_switcher::controllers::daemon::runner::{Daemon, DaemonParts, DaemonSettings};
-use claude_profile_switcher::controllers::daemon::tray::{TrayController, TrayDeps};
-use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
-use claude_profile_switcher::models::domain::profile::Profile;
-use claude_profile_switcher::models::gateways::autostart::SystemAutostart;
-use claude_profile_switcher::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
-use claude_profile_switcher::models::gateways::daemon_control::LockFileDaemon;
-use claude_profile_switcher::models::gateways::launcher::ExeGuiLauncher;
-use claude_profile_switcher::models::gateways::model_catalog::{
+use claude_usage_monitor::controllers::cli::CliError;
+use claude_usage_monitor::controllers::cli::profile::{ProfileCommand, execute};
+use claude_usage_monitor::controllers::cli::run::run_claude;
+use claude_usage_monitor::controllers::daemon::alert::{AlertDeps, Alerter};
+use claude_usage_monitor::controllers::daemon::catalog::CatalogUpdater;
+use claude_usage_monitor::controllers::daemon::collector::{CollectorDeps, UsageCollector};
+use claude_usage_monitor::controllers::daemon::ingest::Ingestor;
+use claude_usage_monitor::controllers::daemon::runner::{Daemon, DaemonParts, DaemonSettings};
+use claude_usage_monitor::controllers::daemon::tray::{TrayController, TrayDeps};
+use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
+use claude_usage_monitor::models::domain::profile::Profile;
+use claude_usage_monitor::models::gateways::autostart::SystemAutostart;
+use claude_usage_monitor::models::gateways::credentials::{SecurityCli, SystemCredentialStore};
+use claude_usage_monitor::models::gateways::daemon_control::LockFileDaemon;
+use claude_usage_monitor::models::gateways::launcher::ExeGuiLauncher;
+use claude_usage_monitor::models::gateways::model_catalog::{
     DEFAULT_CATALOG_BASE, HttpModelCatalog,
 };
-use claude_profile_switcher::models::gateways::notifier::notifier_from_env;
-use claude_profile_switcher::models::gateways::process::{SysProcessInfo, SystemClock};
-use claude_profile_switcher::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
-use claude_profile_switcher::models::ports::ProfileRepo;
-use claude_profile_switcher::models::repositories::db::SqliteStore;
-use claude_profile_switcher::views::app::{CpsApp, apply_theme, install_fonts};
-use claude_profile_switcher::views::theme;
-use claude_profile_switcher::views::tray::run_with_tray;
+use claude_usage_monitor::models::gateways::notifier::notifier_from_env;
+use claude_usage_monitor::models::gateways::process::{SysProcessInfo, SystemClock};
+use claude_usage_monitor::models::gateways::usage_api::{DEFAULT_USAGE_BASE, HttpUsageApi};
+use claude_usage_monitor::models::ports::ProfileRepo;
+use claude_usage_monitor::models::repositories::db::SqliteStore;
+use claude_usage_monitor::views::app::{CumonApp, apply_theme, install_fonts};
+use claude_usage_monitor::views::theme;
+use claude_usage_monitor::views::tray::run_with_tray;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -38,7 +38,7 @@ use std::time::Duration;
 
 /// Claude CodeのToken使用量とセッションを常駐監視し、プロファイルを切り替えるツール。
 #[derive(Parser)]
-#[command(name = "cps", version)]
+#[command(name = "cumon", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -106,15 +106,15 @@ fn other(msg: impl Into<String>) -> CliError {
     CliError::Io(std::io::Error::other(msg.into()))
 }
 
-/// データとホームの場所。`CPS_DATA_DIR`はテストと複数環境の切り分けのために上書きを許す。
+/// データとホームの場所。`CUMON_DATA_DIR`はテストと複数環境の切り分けのために上書きを許す。
 fn paths() -> Result<Paths, CliError> {
     let home = directories::BaseDirs::new()
         .ok_or_else(|| other("ホームディレクトリが見つかりません"))?
         .home_dir()
         .to_path_buf();
-    let data_dir = match std::env::var_os("CPS_DATA_DIR") {
+    let data_dir = match std::env::var_os("CUMON_DATA_DIR") {
         Some(d) => PathBuf::from(d),
-        None => directories::ProjectDirs::from("work", "okamyuji", "cps")
+        None => directories::ProjectDirs::from("work", "okamyuji", "cumon")
             .ok_or_else(|| other("データディレクトリが見つかりません"))?
             .data_dir()
             .to_path_buf(),
@@ -123,7 +123,8 @@ fn paths() -> Result<Paths, CliError> {
 }
 
 fn open_store(p: &Paths) -> Result<SqliteStore, CliError> {
-    SqliteStore::open(&p.data_dir.join("cps.db")).map_err(|e| other(format!("DBを開けません: {e}")))
+    SqliteStore::open(&p.data_dir.join("cumon.db"))
+        .map_err(|e| other(format!("DBを開けません: {e}")))
 }
 
 fn profile_command(action: ProfileAction) -> ProfileCommand {
@@ -167,7 +168,7 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
     let clock: Arc<SystemClock> = Arc::new(SystemClock);
     let catalog = Arc::new(CatalogUpdater::new(
         Arc::new(HttpModelCatalog::new(
-            &env_or("CPS_CATALOG_BASE", DEFAULT_CATALOG_BASE),
+            &env_or("CUMON_CATALOG_BASE", DEFAULT_CATALOG_BASE),
             Duration::from_secs(30),
         )),
         store.clone(),
@@ -204,17 +205,17 @@ fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
-            .with_title("Claude Profile Switcher"),
+            .with_title("Claude Usage Monitor"),
         ..Default::default()
     };
     eframe::run_native(
-        "claude-profile-switcher",
+        "claude-usage-monitor",
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             apply_theme(&cc.egui_ctx, ctl.vm().theme);
-            Ok(Box::new(CpsApp::new(ctl)))
+            Ok(Box::new(CumonApp::new(ctl)))
         }),
     )
     .map_err(|e| other(format!("GUIを起動できません: {e}")))?;
@@ -237,7 +238,7 @@ fn spawn_catalog_thread(updater: CatalogUpdater) -> (Sender<()>, JoinHandle<()>)
     let handle = std::thread::spawn(move || {
         loop {
             if let Err(e) = updater.run_once() {
-                eprintln!("cps: モデル情報の更新に失敗しました: {e}");
+                eprintln!("cumon: モデル情報の更新に失敗しました: {e}");
             }
             if !matches!(
                 stop_rx.recv_timeout(Duration::from_secs(24 * 60 * 60)),
@@ -281,7 +282,7 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
     let clock = Arc::new(SystemClock);
     let process = Arc::new(SysProcessInfo::new());
     let api = Arc::new(HttpUsageApi::new(
-        &env_or("CPS_USAGE_API_BASE", DEFAULT_USAGE_BASE),
+        &env_or("CUMON_USAGE_API_BASE", DEFAULT_USAGE_BASE),
         Duration::from_secs(15),
     ));
     let creds = Arc::new(SystemCredentialStore::new(Arc::new(SecurityCli::default())));
@@ -337,7 +338,7 @@ fn run_daemon(
     no_tray: bool,
 ) -> Result<ExitCode, CliError> {
     let Some(_lock) = acquire_lock(&p.data_dir)? else {
-        eprintln!("cps: デーモンは既に起動しています");
+        eprintln!("cumon: デーモンは既に起動しています");
         return Ok(ExitCode::from(1));
     };
     let store = Arc::new(store);
@@ -345,7 +346,7 @@ fn run_daemon(
     store.ensure_default()?;
     let catalog = CatalogUpdater::new(
         Arc::new(HttpModelCatalog::new(
-            &env_or("CPS_CATALOG_BASE", DEFAULT_CATALOG_BASE),
+            &env_or("CUMON_CATALOG_BASE", DEFAULT_CATALOG_BASE),
             Duration::from_secs(30),
         )),
         store.clone(),
@@ -392,7 +393,7 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("cps: {e}");
+            eprintln!("cumon: {e}");
             ExitCode::from(e.exit_code())
         }
     }

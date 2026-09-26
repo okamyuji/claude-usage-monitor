@@ -1,9 +1,9 @@
 //! 実デーモンが溜めたDBから、プロファイルごとに上限到達の予測を表示する。Task 5とTask 19の実動作確認用。
 #![forbid(unsafe_code)]
 use chrono::{Duration, Utc};
-use claude_profile_switcher::models::domain::projection::{WINDOW_MINUTES, project};
-use claude_profile_switcher::models::ports::{ProfileRepo, UsageRepo};
-use claude_profile_switcher::models::repositories::db::SqliteStore;
+use claude_usage_monitor::models::domain::projection::{WINDOW_MINUTES, project};
+use claude_usage_monitor::models::ports::{ProfileRepo, UsageRepo};
+use claude_usage_monitor::models::repositories::db::SqliteStore;
 
 fn main() {
     let db = std::env::args()

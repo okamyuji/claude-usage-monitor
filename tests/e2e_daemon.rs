@@ -1,4 +1,4 @@
-//! `cps daemon`のE2E。実バイナリを一時HOMEで起動し、WireMockの応答とJSONLがDBに入ることを確かめる。
+//! `cumon daemon`のE2E。実バイナリを一時HOMEで起動し、WireMockの応答とJSONLがDBに入ることを確かめる。
 #![forbid(unsafe_code)]
 mod common;
 
@@ -40,11 +40,11 @@ fn write_home(home: &Path, token_expired: bool) {
 }
 
 fn daemon(data: &Path, home: &Path, wm: &WireMock) -> Command {
-    let mut c = Command::cargo_bin("cps").unwrap();
-    c.env("CPS_DATA_DIR", data)
+    let mut c = Command::cargo_bin("cumon").unwrap();
+    c.env("CUMON_DATA_DIR", data)
         .env("HOME", home)
-        .env("CPS_USAGE_API_BASE", &wm.base_url)
-        .env("CPS_CATALOG_BASE", &wm.base_url)
+        .env("CUMON_USAGE_API_BASE", &wm.base_url)
+        .env("CUMON_CATALOG_BASE", &wm.base_url)
         .args([
             "daemon",
             "--no-tray",
@@ -73,7 +73,7 @@ fn daemon_collects_usage_sessions_headless_and_jobs() {
     let home = tempfile::tempdir().unwrap();
     write_home(home.path(), false);
     daemon(data.path(), home.path(), &wm).assert().success();
-    let db = data.path().join("cps.db");
+    let db = data.path().join("cumon.db");
     assert_eq!(
         q(
             &db,
@@ -106,7 +106,7 @@ fn expired_token_is_logged_as_401_without_calling_api() {
     let home = tempfile::tempdir().unwrap();
     write_home(home.path(), true);
     daemon(data.path(), home.path(), &wm).assert().success();
-    let db = data.path().join("cps.db");
+    let db = data.path().join("cumon.db");
     assert_eq!(
         q(
             &db,
@@ -141,14 +141,14 @@ fn threshold_change_notifies_once_on_next_cycle() {
     write_home(home.path(), false);
     let log = data.path().join("notify.log");
     // DBを作ってから閾値を10%に下げ、デーモンの最初の周期で5時間枠（13%）を通知させる。
-    Command::cargo_bin("cps")
+    Command::cargo_bin("cumon")
         .unwrap()
-        .env("CPS_DATA_DIR", data.path())
+        .env("CUMON_DATA_DIR", data.path())
         .env("HOME", home.path())
         .args(["profile", "list"])
         .assert()
         .success();
-    Connection::open(data.path().join("cps.db"))
+    Connection::open(data.path().join("cumon.db"))
         .unwrap()
         .execute(
             "INSERT INTO settings(key, value) VALUES('notify_threshold_percent', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -156,7 +156,7 @@ fn threshold_change_notifies_once_on_next_cycle() {
         )
         .unwrap();
     daemon(data.path(), home.path(), &wm)
-        .env("CPS_NOTIFY_LOG", &log)
+        .env("CUMON_NOTIFY_LOG", &log)
         .assert()
         .success();
     let lines = std::fs::read_to_string(&log).unwrap();
@@ -182,20 +182,20 @@ fn daemon_with_tray_runs_and_exits_after_max_ticks() {
     let data = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     write_home(home.path(), false);
-    Command::cargo_bin("cps")
+    Command::cargo_bin("cumon")
         .unwrap()
-        .env("CPS_DATA_DIR", data.path())
+        .env("CUMON_DATA_DIR", data.path())
         .env("HOME", home.path())
-        .env("CPS_USAGE_API_BASE", &wm.base_url)
-        .env("CPS_CATALOG_BASE", &wm.base_url)
-        .env("CPS_NOTIFY_LOG", data.path().join("n.log"))
+        .env("CUMON_USAGE_API_BASE", &wm.base_url)
+        .env("CUMON_CATALOG_BASE", &wm.base_url)
+        .env("CUMON_NOTIFY_LOG", data.path().join("n.log"))
         .args(["daemon", "--interval-secs", "1", "--max-ticks", "2"])
         .timeout(std::time::Duration::from_secs(60))
         .assert()
         .success();
     assert_eq!(
         q(
-            &data.path().join("cps.db"),
+            &data.path().join("cumon.db"),
             "SELECT COUNT(*) FROM usage_samples WHERE kind = 'session'"
         ),
         2

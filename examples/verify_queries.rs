@@ -1,11 +1,11 @@
 //! 実データのDBに読み取り用のクエリを流し、件数と合計を表示する。Task 5〜7の実動作確認用。
 #![forbid(unsafe_code)]
 use chrono::{Duration, Utc};
-use claude_profile_switcher::models::domain::read_models::{GroupBy, SessionFilter};
-use claude_profile_switcher::models::ports::{
+use claude_usage_monitor::models::domain::read_models::{GroupBy, SessionFilter};
+use claude_usage_monitor::models::ports::{
     AnalyticsRepo, DashboardRepo, ProfileRepo, SessionQueryRepo,
 };
-use claude_profile_switcher::models::repositories::db::SqliteStore;
+use claude_usage_monitor::models::repositories::db::SqliteStore;
 
 fn main() {
     let db = std::env::args()

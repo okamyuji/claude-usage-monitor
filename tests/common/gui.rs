@@ -1,13 +1,13 @@
 //! GUIのE2E用の組み立て。
 #![allow(dead_code)]
 use chrono::{DateTime, Utc};
-use claude_profile_switcher::controllers::gui::app::{GuiController, GuiDeps};
-use claude_profile_switcher::models::domain::profile::Profile;
-use claude_profile_switcher::models::ports::{
+use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
+use claude_usage_monitor::models::domain::profile::Profile;
+use claude_usage_monitor::models::ports::{
     CatalogRefresh, Clock, Credential, CredentialError, CredentialStore, DaemonControl, RepoError,
 };
-use claude_profile_switcher::models::repositories::db::SqliteStore;
-use claude_profile_switcher::views::app::show_app;
+use claude_usage_monitor::models::repositories::db::SqliteStore;
+use claude_usage_monitor::views::app::show_app;
 use egui_kittest::Harness;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -47,7 +47,7 @@ impl CatalogRefresh for NoCatalog {
 #[derive(Default)]
 pub struct FakeAutostart(pub Mutex<bool>);
 
-impl claude_profile_switcher::models::ports::Autostart for FakeAutostart {
+impl claude_usage_monitor::models::ports::Autostart for FakeAutostart {
     fn is_enabled(&self) -> Result<bool, String> {
         Ok(*self.0.lock().unwrap())
     }
@@ -79,7 +79,7 @@ pub struct GuiEnv {
 pub fn gui_env(now: DateTime<Utc>) -> GuiEnv {
     let data = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let store = Arc::new(SqliteStore::open(&data.path().join("cps.db")).unwrap());
+    let store = Arc::new(SqliteStore::open(&data.path().join("cumon.db")).unwrap());
     GuiEnv {
         data,
         home,
@@ -112,7 +112,7 @@ impl GuiEnv {
         }
     }
 
-    /// 既定の大きさ（1280×820）のウィンドウで動かす。`cps gui`の初期サイズと同じにするため。
+    /// 既定の大きさ（1280×820）のウィンドウで動かす。`cumon gui`の初期サイズと同じにするため。
     pub fn harness(&self) -> Harness<'static, GuiController> {
         self.harness_sized(1280.0, 820.0)
     }
@@ -123,7 +123,7 @@ impl GuiEnv {
             .with_size(egui::vec2(w, h))
             .build_ui_state(
                 |ui, c: &mut GuiController| {
-                    // `cps gui`の`CpsApp::ui`と同じ順で呼ぶ。毎フレームの処理（ライブログの追記の読み取り）も同じ経路で確かめるため。
+                    // `cumon gui`の`CumonApp::ui`と同じ順で呼ぶ。毎フレームの処理（ライブログの追記の読み取り）も同じ経路で確かめるため。
                     c.tick();
                     let (vm, forms) = c.view_parts();
                     let acts = show_app(ui, vm, forms);
