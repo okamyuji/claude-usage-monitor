@@ -52,6 +52,17 @@ pub fn middle_height(remaining: f32, trend: f32) -> f32 {
     (remaining - trend - GAP).max(MIN_MIDDLE)
 }
 
+/// 伸びる列の最小幅。
+pub const MIN_FLEX: f32 = 80.0;
+
+/// 表の列幅。`Some`は固定幅、`None`は残りを受け取る列（1つだけ）。列の間は`GAP / 2`空ける。
+pub fn flex_columns(avail: f32, fixed: &[Option<f32>]) -> Vec<f32> {
+    let gaps = GAP / 2.0 * fixed.len().saturating_sub(1) as f32;
+    let used: f32 = fixed.iter().flatten().sum();
+    let rest = (avail - used - gaps).max(MIN_FLEX);
+    fixed.iter().map(|w| w.unwrap_or(rest)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +108,18 @@ mod tests {
     fn middle_height_keeps_minimum() {
         assert_eq!(middle_height(700.0, 200.0), 488.0);
         assert_eq!(middle_height(300.0, 200.0), 200.0);
+    }
+
+    #[test]
+    fn flex_columns_give_rest_to_flexible_column() {
+        assert_eq!(
+            flex_columns(500.0, &[Some(60.0), None, Some(40.0)]),
+            [60.0, 388.0, 40.0]
+        );
+        assert_eq!(
+            flex_columns(100.0, &[Some(60.0), None, Some(40.0)]),
+            [60.0, MIN_FLEX, 40.0]
+        );
+        assert_eq!(flex_columns(300.0, &[Some(60.0)]), [60.0]);
     }
 }

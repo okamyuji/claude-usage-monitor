@@ -161,7 +161,9 @@ mod tests {
         let text = "漢字豆腐（）稼働中ー「」";
         let has = |ctx: &egui::Context| {
             // テクスチャの差分は描画側が受け取る前提なので、使わないことをeguiに伝えてから捨てる。
-            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            ctx.run_ui(egui::RawInput::default(), |_| {})
+                .textures_delta
+                .clear();
             ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(13.0), text))
         };
         let plain = egui::Context::default();

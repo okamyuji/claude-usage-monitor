@@ -55,6 +55,20 @@ pub fn section(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).heading().strong());
 }
 
+/// 幅を決めたセル。表の列をウィンドウ幅に合わせて揃えるため。
+pub fn cell<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let h = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_width(width);
+            add(ui)
+        },
+    )
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,11 +84,13 @@ mod tests {
             badge(ui, "入力待ち", LIGHT.warn, LIGHT.warn_soft);
             usage_bar(ui, 1.5, LIGHT.accent);
             trunc(ui, "とても長い入力の冒頭");
+            cell(ui, 80.0, |ui| ui.label("セル"));
         });
         h.get_by_label("レート制限");
         h.get_by_label("ⓘ");
         h.get_by_label("入力待ち");
         h.get_by_label("とても長い入力の冒頭");
+        h.get_by_label("セル");
     }
 
     #[test]

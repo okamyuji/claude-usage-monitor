@@ -1,5 +1,6 @@
 //! ダッシュボードの配置（spec 7.2節の3段）。区画の中身は同じディレクトリの各ファイルが描く。
 pub mod cards;
+pub mod detail;
 pub mod sessions;
 
 use crate::controllers::gui::app::{Action, Forms};
@@ -9,7 +10,7 @@ use crate::views::layout::{
 };
 use crate::views::theme::card_frame;
 use crate::views::widgets::{pal, section};
-use egui::{Align, Layout, RichText, Sense, Ui, vec2};
+use egui::{Align, Layout, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 /// ダッシュボードを描く。
@@ -28,8 +29,8 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
         forms,
         mid_h,
         acts,
-        |ui, _forms, acts| sessions::show(ui, vm, acts),
-        |ui, _forms, _acts| detail(ui),
+        |ui, forms, acts| sessions::show(ui, vm, forms, acts),
+        |ui, forms, acts| detail::show(ui, vm.detail.as_ref(), forms, acts),
     );
     ui.add_space(GAP);
     trend_area(ui, vm, trend_h, acts);
@@ -77,10 +78,6 @@ pub fn split(
         }
         filled_card(ui, vec2(rw, height), |ui| right(ui, forms, acts));
     });
-}
-
-fn detail(ui: &mut Ui) {
-    ui.label(RichText::new("左の一覧からセッションを選んでください").color(pal(ui).weak));
 }
 
 fn trend_area(ui: &mut Ui, vm: &DashboardVm, height: f32, acts: &mut Vec<Action>) {

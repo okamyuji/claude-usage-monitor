@@ -262,3 +262,99 @@ fn header_shows_today_and_week_totals() {
     h.get_by_label("今週");
     assert_eq!(h.get_all_by_label("1.01k <$0.01").count(), 2);
 }
+
+use claude_profile_switcher::models::domain::pricing::TokenUsage;
+use claude_profile_switcher::models::domain::records::{SessionUpsert, TurnRecord};
+use claude_profile_switcher::models::domain::transcript::SessionKind;
+use claude_profile_switcher::models::ports::IngestRepo;
+
+fn seed_session_with_turns(
+    env: &common::gui::GuiEnv,
+    sid: &str,
+    name: &str,
+    kind: SessionKind,
+    status: Option<&str>,
+) {
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .upsert_session(&SessionUpsert {
+            session_id: sid.into(),
+            profile_id: p.id,
+            kind,
+            entrypoint: None,
+            cwd: Some("/work/app".into()),
+            git_branch: Some("main".into()),
+            name: Some(name.into()),
+            first_prompt: None,
+            started_at: now() - chrono::Duration::minutes(10),
+            last_activity_at: now() - chrono::Duration::minutes(5),
+            status: status.map(str::to_string),
+        })
+        .unwrap();
+    for (i, (kind, summary)) in [
+        ("prompt", "設計を見直して"),
+        ("tool_use", "Read: src/main.rs"),
+        ("text", "見直し案です"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        env.store
+            .upsert_turn(&TurnRecord {
+                session_id: sid.into(),
+                agent_id: String::new(),
+                message_id: format!("{sid}-m{i}"),
+                ts: now() - chrono::Duration::minutes(8 - i as i64),
+                model: (i > 0).then(|| "claude-opus-5-5".to_string()),
+                kind: kind.to_string(),
+                summary: summary.to_string(),
+                usage: TokenUsage {
+                    input: 1200 * i as u64,
+                    output: 10,
+                    ..TokenUsage::default()
+                },
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn history_row_opens_turns_beside_the_list() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("Read: src/main.rs");
+    h.get_by_label("レート制限");
+    h.get_by_label("推移");
+    h.get_all_by_label("内訳").nth(1).unwrap().click();
+    h.run();
+    h.get_by_label_contains("入力 1.20k / 出力 10");
+}
+
+#[test]
+fn history_search_and_kind_filter_keep_cards_and_trend() {
+    use egui::accesskit::Role;
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    seed_session_with_turns(&env, "s2", "夜間の集計", SessionKind::Headless, None);
+    let mut h = env.harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談");
+    h.get_by_role_and_label(Role::TextInput, "検索").click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "検索")
+        .type_text("夜間");
+    h.run();
+    h.get_by_label("夜間の集計");
+    assert!(h.query_by_label("設計の相談").is_none());
+    h.get_by_label("対話").click();
+    h.run();
+    assert!(h.query_by_label("夜間の集計").is_none());
+    h.get_by_label("レート制限");
+    h.get_by_label("推移");
+}

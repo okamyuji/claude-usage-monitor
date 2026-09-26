@@ -143,12 +143,15 @@ pub struct AppVm {
 pub struct Forms {
     /// 中段の左の幅の比率。境界のつまみで変わる。
     pub split_ratio: f32,
+    /// 履歴の検索語。
+    pub session_query: String,
 }
 
 impl Default for Forms {
     fn default() -> Self {
         Self {
             split_ratio: DEFAULT_SPLIT,
+            session_query: String::new(),
         }
     }
 }
@@ -273,7 +276,11 @@ impl GuiController {
 
     fn build_body(&mut self) -> Result<TabVm, RepoError> {
         Ok(match self.vm.tab {
-            Tab::Dashboard => TabVm::Dashboard(Box::new(dashboard::build(&self.deps, &self.dash)?)),
+            Tab::Dashboard => TabVm::Dashboard(Box::new(dashboard::build(
+                &self.deps,
+                &self.dash,
+                &self.forms.session_query,
+            )?)),
             t @ (Tab::Analytics | Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
                 TabVm::Pending(t)
             }
