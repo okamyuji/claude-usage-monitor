@@ -110,6 +110,23 @@ impl IngestRepo for SqliteStore {
         })
     }
 
+    fn end_missing_interactive(
+        &self,
+        profile_id: i64,
+        alive_session_ids: &[String],
+    ) -> Result<usize, RepoError> {
+        let alive = serde_json::to_string(alive_session_ids)
+            .map_err(|e| RepoError::Invalid(e.to_string()))?;
+        self.with(|c| {
+            c.execute(
+                "UPDATE sessions SET status = 'ended'
+                 WHERE profile_id = ?1 AND kind = 'interactive' AND status IS NOT NULL AND status != 'ended'
+                   AND session_id NOT IN (SELECT value FROM json_each(?2))",
+                params![profile_id, alive],
+            )
+        })
+    }
+
     fn mark_tool_error(&self, tool_use_id: &str) -> Result<(), RepoError> {
         self.with(|c| {
             c.execute(
@@ -399,5 +416,51 @@ mod tests {
                 .unwrap();
             assert_eq!(n, 0, "{table}");
         }
+    }
+
+    #[test]
+    fn end_missing_interactive_only_touches_live_interactive_rows() {
+        let (_d, s) = temp_store();
+        let p = s.ensure_default().unwrap();
+        let t = chrono::Utc::now();
+        let mk = |id: &str, kind: SessionKind, status: Option<&str>| SessionUpsert {
+            session_id: id.into(),
+            profile_id: p.id,
+            kind,
+            entrypoint: None,
+            cwd: None,
+            git_branch: None,
+            name: None,
+            first_prompt: None,
+            started_at: t,
+            last_activity_at: t,
+            status: status.map(str::to_string),
+        };
+        s.upsert_session(&mk("alive", SessionKind::Interactive, Some("busy")))
+            .unwrap();
+        s.upsert_session(&mk("gone", SessionKind::Interactive, Some("idle")))
+            .unwrap();
+        s.upsert_session(&mk("hist", SessionKind::Interactive, None))
+            .unwrap();
+        s.upsert_session(&mk("job", SessionKind::BackgroundJob, Some("working")))
+            .unwrap();
+        let n = s
+            .end_missing_interactive(p.id, &["alive".to_string()])
+            .unwrap();
+        assert_eq!(n, 1);
+        let status = |id: &str| -> Option<String> {
+            s.with(|c| {
+                c.query_row(
+                    "SELECT status FROM sessions WHERE session_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap()
+        };
+        assert_eq!(status("alive").as_deref(), Some("busy"));
+        assert_eq!(status("gone").as_deref(), Some("ended"));
+        assert_eq!(status("hist"), None);
+        assert_eq!(status("job").as_deref(), Some("working"));
     }
 }

@@ -6,8 +6,11 @@ use crate::controllers::daemon::collector::UsageCollector;
 use crate::controllers::daemon::ingest::{IngestReport, Ingestor};
 use crate::controllers::daemon::retention::purge_expired;
 use crate::models::domain::profile::Profile;
+use crate::models::domain::records::{FetchLogEntry, FetchResult};
 use crate::models::gateways::jsonl::TranscriptFile;
-use crate::models::ports::{Clock, MaintenanceRepo, ProcessInfo, ProfileRepo, RepoError};
+use crate::models::ports::{
+    Clock, FetchLogRepo, MaintenanceRepo, ProcessInfo, ProfileRepo, RepoError, SettingsRepo,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +31,9 @@ pub struct DaemonSettings {
     pub retention_days: i64,
     /// 使用量の取得をこの回数行ったら終了する。E2Eとリーク検査で回数を決めて止めるため。
     pub max_usage_ticks: Option<u64>,
+    /// `true`なら全体走査ごとに`settings`表から取得間隔と保持日数を読み直す。
+    /// CLIで`--interval-secs`を指定したときとテストでは`false`にし、指定した間隔を設定で変えられないようにする。
+    pub follow_settings: bool,
 }
 
 impl Default for DaemonSettings {
@@ -38,6 +44,7 @@ impl Default for DaemonSettings {
             stats_interval: Duration::from_secs(600),
             retention_days: 90,
             max_usage_ticks: None,
+            follow_settings: false,
         }
     }
 }
@@ -50,6 +57,10 @@ pub struct DaemonParts {
     pub ingestor: Ingestor,
     /// プロファイル一覧。
     pub profiles: Arc<dyn ProfileRepo>,
+    /// 設定。
+    pub settings: Arc<dyn SettingsRepo>,
+    /// 取得ログ。取り込み件数を診断画面へ渡す。
+    pub log: Arc<dyn FetchLogRepo>,
     /// 保守。
     pub maintenance: Arc<dyn MaintenanceRepo>,
     /// プロセス情報。
@@ -196,13 +207,42 @@ impl Daemon {
         Ok(())
     }
 
-    fn full_scan(&self) -> Result<(), RepoError> {
+    /// 現在の周期設定。設定の反映をテストで確かめるため公開する。
+    pub fn settings(&self) -> &DaemonSettings {
+        &self.s
+    }
+
+    fn full_scan(&mut self) -> Result<(), RepoError> {
+        self.reload_settings();
+        let mut total = IngestReport::default();
         for p in self.p.profiles.list()? {
-            self.p
+            let report = self
+                .p
                 .ingestor
                 .scan_all(&p, &p.resolved_config_dir(&self.p.home))?;
+            total = total.plus(report);
         }
-        Ok(())
+        self.p.log.log(&FetchLogEntry {
+            target: "ingest".into(),
+            at: self.p.clock.now(),
+            result: FetchResult::Ok,
+            http_status: None,
+            message: format!(
+                "files={} lines={} malformed={}",
+                total.files_read, total.lines, total.malformed
+            ),
+        })
+    }
+
+    /// 設定画面の変更を、デーモンを再起動せずに次の全体走査から反映する。読めなければ今の値を使い続ける。
+    fn reload_settings(&mut self) {
+        if !self.s.follow_settings {
+            return;
+        }
+        if let Ok(st) = self.p.settings.load() {
+            self.s.usage_interval = Duration::from_secs(st.usage_interval_secs);
+            self.s.retention_days = st.retention_days;
+        }
     }
 
     /// `shutdown`が立つか、`max_usage_ticks`に達するまで回す。DBの失敗だけを返して止まる。
@@ -264,8 +304,9 @@ impl Daemon {
 mod tests {
     use super::*;
     use crate::controllers::daemon::collector::CollectorDeps;
+    use crate::models::domain::settings::Settings;
     use crate::models::domain::usage::parse_usage;
-    use crate::models::ports::{Credential, ProfileRepo};
+    use crate::models::ports::{Credential, FetchLogRepo, ProfileRepo, SettingsRepo};
     use crate::test_support::{FakeApi, FakeCreds, FixedClock, temp_store};
     use chrono::Utc;
     use std::collections::HashMap;
@@ -321,6 +362,8 @@ mod tests {
                 collector,
                 ingestor,
                 profiles: store.clone(),
+                settings: store.clone(),
+                log: store.clone(),
                 maintenance: store.clone(),
                 process,
                 clock,
@@ -350,6 +393,7 @@ mod tests {
     fn daemon_for(
         store: &Arc<crate::models::repositories::db::SqliteStore>,
         home: &std::path::Path,
+        settings: DaemonSettings,
     ) -> Daemon {
         let clock = Arc::new(FixedClock::at(Utc::now()));
         let process = Arc::new(crate::models::gateways::process::SysProcessInfo::new());
@@ -380,12 +424,14 @@ mod tests {
                 collector,
                 ingestor,
                 profiles: store.clone(),
+                settings: store.clone(),
+                log: store.clone(),
                 maintenance: store.clone(),
                 process,
                 clock,
                 home: home.to_path_buf(),
             },
-            DaemonSettings::default(),
+            settings,
         )
     }
 
@@ -413,7 +459,7 @@ mod tests {
         writeln!(std::fs::File::create(&sub).unwrap(), "{}", line("2")).unwrap();
         std::fs::write(&live, r#"{"pid":1,"sessionId":"s1","status":"busy"}"#).unwrap();
         std::fs::write(&timeline, "{}\n").unwrap();
-        let daemon = daemon_for(&store, home.path());
+        let daemon = daemon_for(&store, home.path(), DaemonSettings::default());
         let mut dirty: HashSet<PathBuf> = [
             main,
             sub,
@@ -450,7 +496,11 @@ mod tests {
     fn empty_dirty_set_does_nothing() {
         let (_d, store) = temp_store();
         let store = Arc::new(store);
-        let daemon = daemon_for(&store, std::path::Path::new("/h"));
+        let daemon = daemon_for(
+            &store,
+            std::path::Path::new("/h"),
+            DaemonSettings::default(),
+        );
         daemon.ingest_paths(&mut HashSet::new()).unwrap();
         assert!(store.list().unwrap().is_empty());
     }
@@ -572,6 +622,8 @@ mod tests {
                 collector,
                 ingestor,
                 profiles: store.clone(),
+                settings: store.clone(),
+                log: store.clone(),
                 maintenance: store.clone(),
                 process,
                 clock,
@@ -618,5 +670,61 @@ mod tests {
             1
         );
         assert!(profile_for_path(&ps, home, std::path::Path::new("/tmp/x")).is_none());
+    }
+
+    fn one_tick(follow: bool) -> DaemonSettings {
+        DaemonSettings {
+            usage_interval: Duration::from_millis(10),
+            max_usage_ticks: Some(1),
+            follow_settings: follow,
+            ..DaemonSettings::default()
+        }
+    }
+
+    #[test]
+    fn full_scan_records_ingest_counts_in_fetch_log() {
+        let (_d, store) = temp_store();
+        let store = Arc::new(store);
+        store.ensure_default().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let f = home.path().join(".claude/projects/-w/s1.jsonl");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        let line = format!(
+            r#"{{"type":"user","uuid":"u1","sessionId":"s1","timestamp":"{}","message":{{"content":"hi"}}}}"#,
+            crate::models::repositories::db::ts(Utc::now())
+        );
+        std::fs::write(&f, format!("{line}\n{{broken\n")).unwrap();
+        let mut d = daemon_for(&store, home.path(), one_tick(false));
+        let (_tx, rx) = sync_channel::<PathBuf>(1);
+        d.run(&rx, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            store.recent("ingest", 1).unwrap()[0].message,
+            "files=1 lines=2 malformed=1"
+        );
+    }
+
+    #[test]
+    fn follow_settings_reloads_interval_and_retention() {
+        let (_d, store) = temp_store();
+        let store = Arc::new(store);
+        store.ensure_default().unwrap();
+        store
+            .save(&Settings {
+                usage_interval_secs: 300,
+                retention_days: 7,
+                ..Settings::default()
+            })
+            .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let (_tx, rx) = sync_channel::<PathBuf>(1);
+        let mut d = daemon_for(&store, home.path(), one_tick(true));
+        d.run(&rx, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            (d.settings().usage_interval, d.settings().retention_days),
+            (Duration::from_secs(300), 7)
+        );
+        let mut fixed = daemon_for(&store, home.path(), one_tick(false));
+        fixed.run(&rx, &AtomicBool::new(false)).unwrap();
+        assert_eq!(fixed.settings().usage_interval, Duration::from_millis(10));
     }
 }

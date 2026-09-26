@@ -31,6 +31,17 @@ pub struct IngestReport {
     pub malformed: usize,
 }
 
+impl IngestReport {
+    /// 2つの合計。全プロファイル分を1行の取得ログにまとめるため。
+    pub fn plus(self, o: IngestReport) -> IngestReport {
+        IngestReport {
+            files_read: self.files_read + o.files_read,
+            lines: self.lines + o.lines,
+            malformed: self.malformed + o.malformed,
+        }
+    }
+}
+
 /// 取り込み役。
 pub struct Ingestor {
     repo: Arc<dyn IngestRepo>,
@@ -328,7 +339,9 @@ impl Ingestor {
     /// 稼働中セッションとジョブを取り込む。
     pub fn ingest_live_state(&self, profile: &Profile, config_dir: &Path) -> Result<(), RepoError> {
         let now = self.clock.now();
-        for s in read_live_sessions(config_dir).unwrap_or_default() {
+        let live = read_live_sessions(config_dir).unwrap_or_default();
+        let alive: Vec<String> = live.iter().map(|s| s.session_id.clone()).collect();
+        for s in live {
             let status = if self.process.is_alive(s.pid) {
                 s.status
             } else {
@@ -348,6 +361,7 @@ impl Ingestor {
                 status,
             })?;
         }
+        self.repo.end_missing_interactive(profile.id, &alive)?;
         for j in read_jobs(config_dir).unwrap_or_default() {
             let updated = j.updated_at.unwrap_or(now);
             if let Some(sid) = &j.session_id {
@@ -625,5 +639,41 @@ mod tests {
             ]
         );
         assert_eq!(count(&e.store, "SELECT in_flight_tasks FROM jobs"), 1);
+    }
+
+    #[test]
+    fn vanished_live_file_marks_session_ended() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let live = cfg.join("sessions/4242.json");
+        std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+        std::fs::write(
+            &live,
+            r#"{"pid":42,"sessionId":"s-live","status":"busy","startedAt":1790000000000,"updatedAt":1790000000000}"#,
+        )
+        .unwrap();
+        e.ingestor.ingest_live_state(&e.profile, &cfg).unwrap();
+        std::fs::remove_file(&live).unwrap();
+        e.ingestor.ingest_live_state(&e.profile, &cfg).unwrap();
+        let status: String = e
+            .store
+            .with(|c| {
+                c.query_row(
+                    "SELECT status FROM sessions WHERE session_id='s-live'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(status, "ended");
+    }
+
+    #[test]
+    fn scan_all_reports_malformed_lines() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        write(&cfg.join("projects/-w/s1.jsonl"), &[A1, "{broken"]);
+        let r = e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!((r.files_read, r.malformed), (1, 1));
     }
 }

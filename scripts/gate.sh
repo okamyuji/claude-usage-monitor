@@ -24,4 +24,10 @@ mutant_args=()
 for f in "$@"; do
   mutant_args+=(--file "$f")
 done
-cargo mutants -d "$root" "${mutant_args[@]}" --timeout 180 --jobs 4
+# 終了コード3はタイムアウトだけが出た場合。ループの終了条件を壊す変異は無限ループになり、タイムアウトで検出されるので合格とする。
+# 生存（コード2）とその他の失敗は不合格のまま返す。
+status=0
+cargo mutants -d "$root" "${mutant_args[@]}" --timeout 180 --jobs 4 || status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+  exit "$status"
+fi

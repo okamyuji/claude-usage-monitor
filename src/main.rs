@@ -38,8 +38,8 @@ enum Command {
     /// 常駐して使用量とセッションを収集する
     Daemon {
         /// 使用量の取得間隔（秒）。E2Eとリーク検査で短くするため
-        #[arg(long, default_value_t = 60, hide = true)]
-        interval_secs: u64,
+        #[arg(long, hide = true)]
+        interval_secs: Option<u64>,
         /// 使用量の取得をこの回数行ったら終了する
         #[arg(long, hide = true)]
         max_ticks: Option<u64>,
@@ -229,6 +229,8 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
             collector,
             ingestor,
             profiles: store.clone(),
+            settings: store.clone(),
+            log: store.clone(),
             maintenance: store,
             process,
             clock,
@@ -242,7 +244,7 @@ fn build_daemon(p: &Paths, store: Arc<SqliteStore>, settings: DaemonSettings) ->
 fn run_daemon(
     p: &Paths,
     store: SqliteStore,
-    interval_secs: u64,
+    interval_secs: Option<u64>,
     max_ticks: Option<u64>,
 ) -> Result<ExitCode, CliError> {
     let Some(_lock) = acquire_lock(&p.data_dir)? else {
@@ -264,7 +266,8 @@ fn run_daemon(
     let (stop_tx, catalog_thread) = spawn_catalog_thread(catalog);
     let (_watcher, rx) = start_watcher(&store.list()?, &p.home)?;
     let settings = DaemonSettings {
-        usage_interval: Duration::from_secs(interval_secs),
+        usage_interval: Duration::from_secs(interval_secs.unwrap_or(60)),
+        follow_settings: interval_secs.is_none(),
         max_usage_ticks: max_ticks,
         ..DaemonSettings::default()
     };

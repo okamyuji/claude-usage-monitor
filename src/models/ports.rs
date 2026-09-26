@@ -205,6 +205,13 @@ pub trait IngestRepo: Send + Sync {
     fn upsert_subagent(&self, s: &SubagentRecord) -> Result<(), RepoError>;
     /// ジョブを追加または更新する。
     fn upsert_job(&self, j: &JobRecord) -> Result<(), RepoError>;
+    /// 稼働中ファイルに現れない対話セッションを`ended`にし、件数を返す。
+    /// Claude Codeは終了時に稼働中ファイルを消すため、消えたことを終了の根拠にする。
+    fn end_missing_interactive(
+        &self,
+        profile_id: i64,
+        alive_session_ids: &[String],
+    ) -> Result<usize, RepoError>;
 }
 
 /// 保守処理の永続化。
