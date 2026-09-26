@@ -278,3 +278,17 @@ pub(crate) fn gui_deps(
         catalog: Arc::new(CountingCatalog::default()),
     }
 }
+
+/// 通知を記録するだけのフェイク。
+#[derive(Default)]
+pub(crate) struct RecordingNotifier(pub(crate) Mutex<Vec<(String, String)>>);
+
+impl crate::models::ports::Notifier for RecordingNotifier {
+    fn notify(&self, title: &str, body: &str) -> Result<(), String> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((title.to_string(), body.to_string()));
+        Ok(())
+    }
+}
