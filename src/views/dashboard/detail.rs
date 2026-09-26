@@ -1,15 +1,16 @@
 //! 選んだセッションの詳細（spec 7.2節の中段の右）。見出し、合計、ターン、ライブログ、再生。
 use crate::controllers::gui::app::{Action, Forms};
 use crate::controllers::gui::dashboard::DashAction;
+use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogVm};
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail};
 use crate::models::domain::display::help as h;
+use crate::models::domain::live_log::LiveKind;
 use crate::views::layout::flex_columns;
 use crate::views::widgets::{cell, help, pal, section, trunc};
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
 
 /// 詳細を描く。
-#[allow(unused_variables)]
 pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mut Vec<Action>) {
     let Some(d) = d else {
         ui.label(RichText::new("左の一覧からセッションを選んでください").color(pal(ui).weak));
@@ -34,9 +35,15 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
     ui.separator();
     match d.tab {
         DetailTab::Turns => turns(ui, d, acts),
-        DetailTab::LiveLog => {
-            ui.label(RichText::new("ライブログを準備しています").color(p.weak));
-        }
+        DetailTab::LiveLog => match &d.live {
+            Some(v) => live(ui, v, forms, acts),
+            None => {
+                ui.label(
+                    RichText::new("ライブログを開けません。セッションの記録が見つかりません")
+                        .color(p.warn),
+                );
+            }
+        },
         DetailTab::Replay => {
             ui.label(RichText::new("再生を準備しています").color(p.weak));
         }
@@ -119,4 +126,66 @@ fn turns(ui: &mut Ui, d: &SessionDetail, acts: &mut Vec<Action>) {
                 }
             }
         });
+}
+
+fn live(ui: &mut Ui, vm: &LiveLogVm, forms: &mut Forms, acts: &mut Vec<Action>) {
+    let p = pal(ui);
+    let f = &mut forms.live_filter;
+    ui.horizontal_wrapped(|ui| {
+        let mut changed = ui.checkbox(&mut f.tools, "ツール").changed();
+        changed |= ui.checkbox(&mut f.text, "本文").changed();
+        changed |= ui.checkbox(&mut f.errors_only, "エラーのみ").changed();
+        egui::ComboBox::from_label("発生元")
+            .selected_text(f.source.clone().unwrap_or_else(|| "すべて".into()))
+            .show_ui(ui, |ui| {
+                changed |= ui.selectable_value(&mut f.source, None, "すべて").changed();
+                for s in &vm.sources {
+                    changed |= ui
+                        .selectable_value(&mut f.source, Some(s.clone()), s)
+                        .changed();
+                }
+            });
+        if changed {
+            acts.push(Action::Live(LiveAction::FilterChanged));
+        }
+        ui.label(
+            RichText::new(format!("{}行を保持（最大2,000行）", vm.total))
+                .small()
+                .color(p.weak),
+        );
+    });
+    if let Some(n) = &vm.note {
+        ui.label(RichText::new(n).color(p.warn));
+    }
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt("live_log")
+        .stick_to_bottom(true)
+        .auto_shrink([false, false]);
+    if vm.jump_to_bottom {
+        area = area.vertical_scroll_offset(f32::MAX);
+        acts.push(Action::Live(LiveAction::JumpDone));
+    }
+    let out = area.show(ui, |ui| {
+        for l in &vm.lines {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&l.time).monospace().color(p.weak));
+                ui.add_space(16.0 * l.depth as f32);
+                ui.label(RichText::new(&l.source).strong());
+                if let Some(t) = &l.tool {
+                    ui.label(RichText::new(t).monospace().color(p.accent));
+                }
+                let color = if l.kind == LiveKind::ToolError {
+                    p.err
+                } else {
+                    p.text
+                };
+                trunc(ui, RichText::new(&l.text).color(color));
+            });
+        }
+    });
+    // 手で上へスクロールしたときだけ「最新へ戻る」を出す（spec 7.4節）。
+    let at_bottom = out.state.offset.y + out.inner_rect.height() >= out.content_size.y - 4.0;
+    if !at_bottom && ui.button("最新へ戻る").clicked() {
+        acts.push(Action::Live(LiveAction::JumpToLatest));
+    }
 }

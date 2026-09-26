@@ -1,7 +1,10 @@
 //! GUI全体の状態、タブの切り替え、読み直しの周期。
+use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogState};
+use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
 use crate::models::domain::display::fmt_clock;
+use crate::models::domain::live_log::LiveFilter;
 use crate::models::domain::settings::Theme;
 use crate::models::ports::{
     AnalyticsRepo, CatalogRefresh, Clock, CredentialStore, DaemonControl, DashboardRepo,
@@ -99,6 +102,8 @@ pub enum Action {
     SetTheme(Theme),
     /// ダッシュボードの操作。
     Dash(DashAction),
+    /// ライブログの操作。
+    Live(LiveAction),
 }
 
 /// 上部の今日と今週の集計（「1.26M $4.12」の形）。空なら表示しない。
@@ -145,6 +150,8 @@ pub struct Forms {
     pub split_ratio: f32,
     /// 履歴の検索語。
     pub session_query: String,
+    /// ライブログの絞り込み。
+    pub live_filter: LiveFilter,
 }
 
 impl Default for Forms {
@@ -152,6 +159,7 @@ impl Default for Forms {
         Self {
             split_ratio: DEFAULT_SPLIT,
             session_query: String::new(),
+            live_filter: LiveFilter::default(),
         }
     }
 }
@@ -162,6 +170,8 @@ pub struct GuiController {
     vm: AppVm,
     forms: Forms,
     pub(crate) dash: DashboardState,
+    pub(crate) live: Option<LiveLogState>,
+    pub(crate) jump_to_bottom: bool,
     last_refresh: Option<DateTime<Utc>>,
 }
 
@@ -186,6 +196,8 @@ impl GuiController {
             },
             forms: Forms::default(),
             dash: DashboardState::default(),
+            live: None,
+            jump_to_bottom: false,
             last_refresh: None,
         };
         c.refresh();
@@ -224,6 +236,9 @@ impl GuiController {
                 }
             }
             Action::Dash(d) => dashboard::handle(&mut self.dash, d),
+            Action::Live(LiveAction::FilterChanged) => {}
+            Action::Live(LiveAction::JumpToLatest) => self.jump_to_bottom = true,
+            Action::Live(LiveAction::JumpDone) => self.jump_to_bottom = false,
         }
         self.refresh();
     }
@@ -245,6 +260,7 @@ impl GuiController {
 
     /// 毎フレーム呼ぶ。前回の読み込みから`REFRESH_SECS`秒たっていれば読み直す。
     pub fn tick(&mut self) {
+        self.poll_live();
         let now = self.deps.clock.now();
         if self
             .last_refresh
@@ -276,15 +292,53 @@ impl GuiController {
 
     fn build_body(&mut self) -> Result<TabVm, RepoError> {
         Ok(match self.vm.tab {
-            Tab::Dashboard => TabVm::Dashboard(Box::new(dashboard::build(
-                &self.deps,
-                &self.dash,
-                &self.forms.session_query,
-            )?)),
+            Tab::Dashboard => {
+                let mut vm = dashboard::build(&self.deps, &self.dash, &self.forms.session_query)?;
+                self.sync_live(&mut vm);
+                TabVm::Dashboard(Box::new(vm))
+            }
             t @ (Tab::Analytics | Tab::Profiles | Tab::Settings | Tab::Diagnostics) => {
+                self.live = None;
                 TabVm::Pending(t)
             }
         })
+    }
+
+    /// ライブログを開く、読み進める、捨てるの判断をする。
+    fn sync_live(&mut self, vm: &mut DashboardVm) {
+        let Some(d) = vm.detail.as_mut().filter(|d| d.tab == DetailTab::LiveLog) else {
+            self.live = None;
+            return;
+        };
+        match &mut self.live {
+            Some(l) if l.session_id() == d.session_id => {
+                l.poll();
+            }
+            _ => self.live = LiveLogState::open(&self.deps, &d.session_id).ok(),
+        }
+        d.live = self.live_vm();
+    }
+
+    fn live_vm(&self) -> Option<crate::controllers::gui::dashboard::live_log::LiveLogVm> {
+        self.live.as_ref().map(|l| {
+            let mut v = l.vm(&self.forms.live_filter, self.deps.tz);
+            v.jump_to_bottom = self.jump_to_bottom;
+            v
+        })
+    }
+
+    /// 毎フレーム、ライブログの追記だけを読む。行が増えたときだけ詳細のViewModelを差し替える。
+    fn poll_live(&mut self) {
+        let changed = self.live.as_mut().is_some_and(LiveLogState::poll);
+        if !changed {
+            return;
+        }
+        let live = self.live_vm();
+        if let TabVm::Dashboard(d) = &mut self.vm.body
+            && let Some(det) = d.detail.as_mut()
+        {
+            det.live = live;
+        }
     }
 }
 
@@ -400,5 +454,81 @@ mod tests {
         assert!(
             matches!(&c.vm().body, TabVm::Dashboard(d) if d.cards.len() == 1 && d.active.is_empty())
         );
+    }
+
+    fn with_live_session(
+        store: &crate::models::repositories::db::SqliteStore,
+        home: &std::path::Path,
+    ) -> std::path::PathBuf {
+        use crate::models::domain::transcript::SessionKind;
+        use crate::test_support::seed_session;
+        seed_session(
+            store,
+            "s1",
+            SessionKind::Interactive,
+            Some("busy"),
+            Utc.with_ymd_and_hms(2026, 9, 26, 3, 0, 0).unwrap(),
+        );
+        seed_session(
+            store,
+            "s2",
+            SessionKind::Interactive,
+            None,
+            Utc.with_ymd_and_hms(2026, 9, 26, 2, 0, 0).unwrap(),
+        );
+        let f = home.join(".claude/projects/-w/s1.jsonl");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "{\"type\":\"user\",\"timestamp\":\"2026-09-26T02:59:00.000Z\",\"sessionId\":\"s1\",\"message\":{\"content\":\"hi\"}}\n").unwrap();
+        f
+    }
+
+    fn live_total(c: &GuiController) -> usize {
+        match &c.vm().body {
+            TabVm::Dashboard(d) => d
+                .detail
+                .as_ref()
+                .and_then(|x| x.live.as_ref())
+                .map(|l| l.total)
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn switching_detail_or_session_discards_live_state() {
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        use std::io::Write;
+        let (_d, home, _c, s, mut c) = ctl(FakeDaemon::default());
+        let f = with_live_session(&s, home.path());
+        c.handle(Action::Dash(DashAction::Select(
+            "s1".into(),
+            DetailTab::LiveLog,
+        )));
+        assert_eq!(c.live.as_ref().map(|l| l.session_id()), Some("s1"));
+        let before = live_total(&c);
+        let mut w = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+        writeln!(w, "{{\"type\":\"user\",\"timestamp\":\"2026-09-26T02:59:30.000Z\",\"sessionId\":\"s1\",\"message\":{{\"content\":\"again\"}}}}").unwrap();
+        c.tick();
+        assert_eq!(live_total(&c), before + 1, "毎フレームの`tick`で追記を読む");
+        c.handle(Action::Dash(DashAction::SetDetailTab(DetailTab::Turns)));
+        assert!(c.live.is_none());
+        c.handle(Action::Dash(DashAction::SetDetailTab(DetailTab::LiveLog)));
+        assert!(c.live.is_some());
+        c.handle(Action::Dash(DashAction::Select(
+            "s2".into(),
+            DetailTab::LiveLog,
+        )));
+        assert_eq!(c.live.as_ref().map(|l| l.session_id()), Some("s2"));
+        assert_eq!(live_total(&c), 0, "前のセッションの行を持ち越さない");
+        c.handle(Action::Live(LiveAction::JumpToLatest));
+        assert!(c.jump_to_bottom);
+        c.handle(Action::Live(LiveAction::JumpDone));
+        assert!(!c.jump_to_bottom);
+        c.handle(Action::Dash(DashAction::Select(
+            "s1".into(),
+            DetailTab::LiveLog,
+        )));
+        c.handle(Action::SelectTab(Tab::Settings));
+        assert!(c.live.is_none(), "別のタブへ移ったら捨てる");
     }
 }

@@ -1,5 +1,6 @@
 //! セッションの履歴と、選んだセッションの詳細（合計とターン表）。
 use crate::controllers::gui::app::GuiDeps;
+use crate::controllers::gui::dashboard::live_log::LiveLogVm;
 use crate::models::domain::activity::{RunKind, is_active};
 use crate::models::domain::display::{
     context_ratio, fmt_clock, fmt_duration, fmt_ratio, fmt_tokens, fmt_usd,
@@ -110,6 +111,8 @@ pub struct SessionDetail {
     pub turns: Vec<TurnItem>,
     /// 表示の種類。
     pub tab: DetailTab,
+    /// ライブログ。「ライブログ」を表示しているときだけcontrollerが入れる。
+    pub live: Option<LiveLogVm>,
 }
 
 /// セッションの見出し。名前、最初の入力、IDの先頭の順に使う。
@@ -342,6 +345,7 @@ pub fn detail(
         },
         turns,
         tab,
+        live: None,
     }))
 }
 

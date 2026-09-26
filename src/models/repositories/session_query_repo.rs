@@ -149,6 +149,17 @@ impl SessionQueryRepo for SqliteStore {
         })?;
         Ok(rows.into_iter().map(subagent_row).collect())
     }
+
+    fn job_id(&self, session_id: &str) -> Result<Option<String>, RepoError> {
+        let rows: Vec<(String,)> = self.with(|c| {
+            query_rows(
+                c,
+                "SELECT job_id FROM jobs WHERE session_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                params![session_id],
+            )
+        })?;
+        Ok(rows.into_iter().next().map(|(j,)| j))
+    }
 }
 
 #[cfg(test)]
@@ -352,5 +363,27 @@ mod tests {
         s.with(|c| c.execute("UPDATE turns SET input = 0, ts = 'bad'", []))
             .unwrap();
         assert!(s.turns("s1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn job_id_for_session() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "js", SessionKind::BackgroundJob, Some("working"), t0());
+        let p = crate::models::ports::ProfileRepo::ensure_default(&s).unwrap();
+        s.upsert_job(&crate::models::domain::records::JobRecord {
+            job_id: "j1".into(),
+            profile_id: p.id,
+            session_id: Some("js".into()),
+            name: None,
+            state: "working".into(),
+            detail: None,
+            in_flight_tasks: 0,
+            tokens: None,
+            created_at: None,
+            updated_at: t0(),
+        })
+        .unwrap();
+        assert_eq!(s.job_id("js").unwrap().as_deref(), Some("j1"));
+        assert_eq!(s.job_id("none").unwrap(), None);
     }
 }

@@ -239,6 +239,8 @@ pub trait SessionQueryRepo: Send + Sync {
     fn model_usage(&self, session_ids: &[String]) -> Result<Vec<SessionModelUsage>, RepoError>;
     /// サブエージェント。
     fn subagents(&self, session_ids: &[String]) -> Result<Vec<SubagentRow>, RepoError>;
+    /// セッションに結び付くジョブのID。ライブログで`timeline.jsonl`を探すのに使う。
+    fn job_id(&self, session_id: &str) -> Result<Option<String>, RepoError>;
 }
 
 /// 分析画面と推移画面の読み取り。

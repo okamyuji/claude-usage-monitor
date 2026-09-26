@@ -2,6 +2,7 @@
 //!
 //! 区画ごとのViewModelは同じディレクトリの各ファイルが作り、ここで1つにまとめる。
 pub mod cards;
+pub mod live_log;
 pub mod runs;
 pub mod sessions;
 

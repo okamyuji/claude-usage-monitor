@@ -358,3 +358,102 @@ fn history_search_and_kind_filter_keep_cards_and_trend() {
     h.get_by_label("レート制限");
     h.get_by_label("推移");
 }
+
+fn seed_live_session(env: &common::gui::GuiEnv) -> std::path::PathBuf {
+    use claude_profile_switcher::models::domain::records::SubagentRecord;
+    seed_session_with_turns(
+        env,
+        "s1",
+        "設計の相談",
+        SessionKind::Interactive,
+        Some("busy"),
+    );
+    env.store
+        .upsert_subagent(&SubagentRecord {
+            agent_id: "a1".into(),
+            session_id: "s1".into(),
+            agent_type: Some("go-reviewer".into()),
+            description: Some("メモリ機能のレビュー".into()),
+            parent_tool_use_id: Some("toolu_1".into()),
+            spawn_depth: Some(1),
+        })
+        .unwrap();
+    let proj = env.home.path().join(".claude/projects/-work-app");
+    append(
+        &proj.join("s1.jsonl"),
+        r#"{"type":"assistant","timestamp":"2026-09-26T02:59:00.000Z","sessionId":"s1","message":{"id":"m9","content":[{"type":"tool_use","id":"toolu_1","name":"Agent","input":{}}]}}"#,
+    );
+    proj
+}
+
+fn live_depth(
+    h: &egui_kittest::Harness<
+        'static,
+        claude_profile_switcher::controllers::gui::app::GuiController,
+    >,
+) -> u8 {
+    match &h.state().vm().body {
+        claude_profile_switcher::controllers::gui::app::TabVm::Dashboard(d) => {
+            d.detail
+                .as_ref()
+                .unwrap()
+                .live
+                .as_ref()
+                .unwrap()
+                .lines
+                .last()
+                .unwrap()
+                .depth
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn active_session_opens_live_log_and_streams_subagent_lines() {
+    let env = gui_env(now());
+    let proj = seed_live_session(&env);
+    let mut h = env.harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("go-reviewer「メモリ機能のレビュー」を起動");
+    h.get_by_label("レート制限");
+    append(
+        &proj.join("s1/subagents/agent-a1.jsonl"),
+        r#"{"type":"assistant","timestamp":"2026-09-26T02:59:30.000Z","sessionId":"s1","message":{"id":"s9","content":[{"type":"tool_use","id":"t9","name":"Grep","input":{"pattern":"mutex"}}]}}"#,
+    );
+    h.run();
+    h.get_by_label_contains("mutex");
+    assert_eq!(live_depth(&h), 1);
+}
+
+#[test]
+fn job_timeline_appears_in_live_log() {
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .upsert_job(
+            &claude_profile_switcher::models::domain::records::JobRecord {
+                job_id: "j1".into(),
+                profile_id: p.id,
+                session_id: Some("s1".into()),
+                name: None,
+                state: "working".into(),
+                detail: Some("2/8件目".into()),
+                in_flight_tasks: 1,
+                tokens: None,
+                created_at: None,
+                updated_at: now(),
+            },
+        )
+        .unwrap();
+    append(
+        &env.home.path().join(".claude/jobs/j1/timeline.jsonl"),
+        r#"{"at":"2026-09-26T02:59:40.000Z","state":"working","detail":"2/8件目"}"#,
+    );
+    let mut h = env.harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("ジョブ: working（2/8件目）");
+}
