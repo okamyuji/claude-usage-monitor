@@ -5,6 +5,7 @@ use crate::models::domain::usage::{UsageSnapshot, parse_usage};
 use crate::models::ports::{UsageApi, UsageApiError};
 use std::time::Duration;
 use ureq::Agent;
+use ureq::tls::{RootCerts, TlsConfig};
 
 /// 本番の接続先。テストではWireMockのURLに差し替える。
 pub const DEFAULT_USAGE_BASE: &str = "https://api.anthropic.com";
@@ -27,8 +28,14 @@ pub struct HttpUsageApi {
 
 impl HttpUsageApi {
     /// 接続先と全体のタイムアウトを指定して作る。
+    /// 証明書はOSの証明書ストアで検証する。同梱のwebpki-rootsでは、社内プロキシが差し込むCAを信頼できず、TLSが`invalid data`で失敗するため。
     pub fn new(base_url: &str, timeout: Duration) -> Self {
         let agent: Agent = Agent::config_builder()
+            .tls_config(
+                TlsConfig::builder()
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .timeout_global(Some(timeout))
             .http_status_as_error(false)
             .build()

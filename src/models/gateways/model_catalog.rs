@@ -4,6 +4,7 @@ use crate::models::domain::pricing::ModelInfo;
 use crate::models::ports::{CatalogError, ModelCatalogSource};
 use std::time::Duration;
 use ureq::Agent;
+use ureq::tls::{RootCerts, TlsConfig};
 
 /// 本番の取得元。
 pub const DEFAULT_CATALOG_BASE: &str = "https://platform.claude.com";
@@ -17,9 +18,14 @@ pub struct HttpModelCatalog {
 }
 
 impl HttpModelCatalog {
-    /// 取得元と全体のタイムアウトを指定して作る。
+    /// 取得元と全体のタイムアウトを指定して作る。証明書はOSの証明書ストアで検証する（理由は`HttpUsageApi::new`と同じ）。
     pub fn new(base_url: &str, timeout: Duration) -> Self {
         let agent: Agent = Agent::config_builder()
+            .tls_config(
+                TlsConfig::builder()
+                    .root_certs(RootCerts::PlatformVerifier)
+                    .build(),
+            )
             .timeout_global(Some(timeout))
             .build()
             .into();
