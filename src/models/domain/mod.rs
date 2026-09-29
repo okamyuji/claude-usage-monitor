@@ -4,6 +4,7 @@ pub mod backoff;
 pub mod catalog;
 pub mod display;
 pub mod live_log;
+pub mod memory;
 pub mod pricing;
 pub mod profile;
 pub mod projection;
