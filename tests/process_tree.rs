@@ -141,8 +141,14 @@ fn system_sender_terminates_child_with_sigterm() {
     assert_eq!(SystemExitSender.send(pid, Target::TerminalSession), Ok(()));
     let status = s.child.wait().unwrap();
     assert_eq!(status.signal(), Some(15));
+}
+
+/// 回収済みの子のpidは、ほかのプロセスに再利用されうるので送り先に使わない。存在しえないpidで確かめる。
+/// `i32::MAX`にするのは、`u32::MAX - 1`などが`Pid`で負の値になり、負のpidへの`kill`はプロセスグループを指すため。
+#[test]
+fn system_sender_reports_gone_for_missing_pid() {
     assert_eq!(
-        SystemExitSender.send(pid, Target::TerminalSession),
+        SystemExitSender.send(i32::MAX as u32, Target::TerminalSession),
         Err(ExitError::Gone)
     );
 }
