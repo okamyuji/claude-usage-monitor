@@ -1,5 +1,6 @@
 //! 稼働中の実行の一覧。対話、ヘッドレス、ジョブと、その下のサブエージェント。
 use crate::controllers::gui::app::GuiDeps;
+use crate::controllers::gui::dashboard::memory::SessionMemory;
 use crate::models::domain::activity::{RunKind, is_active, run_state, subagent_active};
 use crate::models::domain::display::{context_ratio, fmt_duration, fmt_ratio, fmt_tokens, fmt_usd};
 use crate::models::domain::pricing::{ModelInfo, TokenUsage, find_model, sum_cost, total_tokens};
@@ -33,6 +34,8 @@ pub struct RunItem {
     pub detail: Option<String>,
     /// 字下げ。サブエージェントは1。
     pub depth: u8,
+    /// メモリ。プロセスと結び付いた親の行だけに付ける。
+    pub memory: Option<SessionMemory>,
 }
 
 /// 稼働中の実行を、親の直後にそのサブエージェントを並べる順で作る。
@@ -133,6 +136,7 @@ fn run_item(
             None => format!("実行中タスク {}", j.in_flight_tasks),
         }),
         depth: 0,
+        memory: None,
     }
 }
 
@@ -167,6 +171,7 @@ fn sub_item(
         cost,
         detail: None,
         depth: 1,
+        memory: None,
     }
 }
 

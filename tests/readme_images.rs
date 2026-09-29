@@ -10,7 +10,7 @@ use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
 use claude_usage_monitor::models::repositories::db::SqliteStore;
 use claude_usage_monitor::views::app::{install_fonts, show_app};
 use claude_usage_monitor::views::theme;
-use common::gui::{FakeAutostart, FakeDaemon, FixedClock, NoCatalog, NoCreds};
+use common::gui::{FakeAutostart, FakeDaemon, FakeProcessTree, FixedClock, NoCatalog, NoCreds};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use std::path::{Path, PathBuf};
@@ -38,6 +38,7 @@ fn deps(data: &Path, home: &Path) -> GuiDeps {
         daemon,
         catalog: Arc::new(NoCatalog),
         autostart: Arc::new(FakeAutostart::default()),
+        process_tree: Arc::new(FakeProcessTree::default()),
     }
 }
 

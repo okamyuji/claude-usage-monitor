@@ -1,4 +1,6 @@
 //! テスト専用の補助。実SQLiteの一時DBを作る。DBをモックしない方針をテスト全体で守るため。
+use crate::models::domain::memory::{ExitError, ProcEntry, Victim};
+use crate::models::ports::ProcessTree;
 use crate::models::repositories::db::SqliteStore;
 
 /// 一時ディレクトリに実DBを作る。`TempDir`を返すのは、呼び出し側が持っている間だけファイルを残すため。
@@ -277,7 +279,45 @@ pub(crate) fn gui_deps(
         daemon,
         catalog: Arc::new(CountingCatalog::default()),
         autostart: Arc::new(FakeAutostart::default()),
+        process_tree: Arc::new(FakeProcessTree::default()),
     }
+}
+/// 固定の一覧を返し、終了の要求を記録するだけのプロセス一覧。利用者のプロセスに触れずにGUIを確かめるため。
+#[derive(Default)]
+pub(crate) struct FakeProcessTree {
+    pub(crate) procs: Mutex<Vec<ProcEntry>>,
+    pub(crate) exits: Mutex<Vec<Victim>>,
+    pub(crate) fail: Mutex<Option<ExitError>>,
+}
+
+impl ProcessTree for FakeProcessTree {
+    fn snapshot(&self) -> Vec<ProcEntry> {
+        self.procs.lock().unwrap().clone()
+    }
+    fn request_exit(&self, v: &Victim) -> Result<(), ExitError> {
+        if let Some(e) = self.fail.lock().unwrap().clone() {
+            return Err(e);
+        }
+        self.exits.lock().unwrap().push(*v);
+        Ok(())
+    }
+}
+
+/// メモリの状態のテスト用の依存。一時ディレクトリはテストの間だけ残す必要があるので、一緒に返す。
+pub(crate) fn gui_deps_with_procs(
+    procs: Arc<FakeProcessTree>,
+) -> (GuiDeps, tempfile::TempDir, tempfile::TempDir) {
+    let (db, store) = temp_store();
+    let home = tempfile::tempdir().unwrap();
+    let mut d = gui_deps(
+        Arc::new(store),
+        Arc::new(FixedClock::at(Utc::now())),
+        home.path(),
+        Arc::new(FakeCreds(HashMap::new())),
+        Arc::new(FakeDaemon::default()),
+    );
+    d.process_tree = procs;
+    (d, db, home)
 }
 
 /// 通知を記録するだけのフェイク。

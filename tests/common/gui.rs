@@ -2,9 +2,11 @@
 #![allow(dead_code)]
 use chrono::{DateTime, Utc};
 use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
+use claude_usage_monitor::models::domain::memory::{ExitError, ProcEntry, Victim};
 use claude_usage_monitor::models::domain::profile::Profile;
 use claude_usage_monitor::models::ports::{
-    CatalogRefresh, Clock, Credential, CredentialError, CredentialStore, DaemonControl, RepoError,
+    CatalogRefresh, Clock, Credential, CredentialError, CredentialStore, DaemonControl,
+    ProcessTree, RepoError,
 };
 use claude_usage_monitor::models::repositories::db::SqliteStore;
 use claude_usage_monitor::views::app::show_app;
@@ -68,12 +70,30 @@ impl CredentialStore for NoCreds {
     }
 }
 
+/// 固定の一覧を返し、終了の要求を記録するだけのプロセス一覧。利用者のプロセスに触れずにGUIを確かめるため。
+#[derive(Default)]
+pub struct FakeProcessTree {
+    pub procs: Mutex<Vec<ProcEntry>>,
+    pub exits: Mutex<Vec<Victim>>,
+}
+
+impl ProcessTree for FakeProcessTree {
+    fn snapshot(&self) -> Vec<ProcEntry> {
+        self.procs.lock().unwrap().clone()
+    }
+    fn request_exit(&self, v: &Victim) -> Result<(), ExitError> {
+        self.exits.lock().unwrap().push(*v);
+        Ok(())
+    }
+}
+
 pub struct GuiEnv {
     pub data: tempfile::TempDir,
     pub home: tempfile::TempDir,
     pub store: Arc<SqliteStore>,
     pub clock: Arc<FixedClock>,
     pub daemon: Arc<FakeDaemon>,
+    pub procs: Arc<FakeProcessTree>,
 }
 
 pub fn gui_env(now: DateTime<Utc>) -> GuiEnv {
@@ -86,6 +106,7 @@ pub fn gui_env(now: DateTime<Utc>) -> GuiEnv {
         store,
         clock: Arc::new(FixedClock(Mutex::new(now))),
         daemon: Arc::new(FakeDaemon::default()),
+        procs: Arc::new(FakeProcessTree::default()),
     }
 }
 
@@ -109,6 +130,7 @@ impl GuiEnv {
             daemon: self.daemon.clone(),
             catalog: Arc::new(NoCatalog),
             autostart: Arc::new(FakeAutostart::default()),
+            process_tree: self.procs.clone(),
         }
     }
 
