@@ -1,3 +1,4 @@
 # OSの通知センターへ実際に通知を出す関数は、テストのたびに利用者の画面へ通知が出るため変異の対象から外す。
 # 通知の中身と回数は、ファイルへ書く通知役（CUMON_NOTIFY_LOG）でE2Eが確かめている。
-exclude_re = ["impl Notifier for SystemNotifier"]
+# OSへ終了を要求する関数も同じ理由で外す。照合（verify）は外さないので、無関係なプロセスへ送る変異はテストで止まる。
+exclude_re = ["impl Notifier for SystemNotifier", "impl ExitSender for SystemExitSender"]
