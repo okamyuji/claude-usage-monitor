@@ -576,3 +576,189 @@ fn settings_threshold_is_saved_for_daemon() {
     h.run();
     h.get_by_label("JSONLの取り込み");
 }
+
+mod memory_e2e {
+    use super::*;
+    use claude_usage_monitor::controllers::gui::app::{GuiController, TabVm};
+    use claude_usage_monitor::models::domain::memory::{ProcEntry, Target, Victim};
+    use std::path::PathBuf;
+
+    const MIB: u64 = 1 << 20;
+    const TERM: &str = "/Users/u/.local/bin/claude";
+
+    fn proc(pid: u32, parent: u32, mib: u64, start: i64, exe: &str) -> ProcEntry {
+        ProcEntry {
+            pid,
+            parent: Some(parent),
+            rss: mib * MIB,
+            start_time: start as u64,
+            exe: Some(PathBuf::from(exe)),
+        }
+    }
+
+    fn live_file(env: &common::gui::GuiEnv, pid: u32, sid: &str, started: i64) {
+        let dir = env.home.path().join(".claude/sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{pid}.json")),
+            format!(
+                r#"{{"pid":{pid},"sessionId":"{sid}","startedAt":{}}}"#,
+                started * 1000
+            ),
+        )
+        .unwrap();
+    }
+
+    fn start() -> i64 {
+        (now() - chrono::Duration::minutes(10)).timestamp()
+    }
+
+    fn setup() -> common::gui::GuiEnv {
+        let env = gui_env(now());
+        seed_live_session(&env);
+        live_file(&env, 4242, "s1", start() + 2);
+        *env.procs.procs.lock().unwrap() = vec![
+            proc(4242, 1, 400, start(), TERM),
+            proc(4243, 4242, 100, start(), "/bin/zsh"),
+        ];
+        env
+    }
+
+    fn victim() -> Victim {
+        Victim {
+            pid: 4242,
+            start_time: start() as u64,
+            target: Target::TerminalSession,
+        }
+    }
+
+    fn notice(h: &egui_kittest::Harness<'static, GuiController>) -> Option<String> {
+        h.state().vm().notice.clone()
+    }
+
+    fn open_exit_dialog(h: &mut egui_kittest::Harness<'static, GuiController>) {
+        h.get_by_label("設計の相談").click_secondary();
+        h.run();
+        h.get_by_label("終了してメモリを解放").click();
+        h.run();
+    }
+
+    #[test]
+    fn row_shows_memory_and_right_click_requests_exit_after_confirm() {
+        let env = setup();
+        let mut h = env.harness();
+        h.get_by_label_contains("500MB");
+        open_exit_dialog(&mut h);
+        h.get_by_label_contains("実行中の編集が失われることがあります");
+        h.get_by_label("終了する").click();
+        h.run();
+        assert_eq!(*env.procs.exits.lock().unwrap(), [victim()]);
+        assert!(notice(&h).unwrap().contains("claude --resume s1"));
+        assert!(h.query_by_label("終了する").is_none(), "ダイアログが閉じる");
+    }
+
+    #[test]
+    fn cancel_does_not_request_exit() {
+        let env = setup();
+        let mut h = env.harness();
+        open_exit_dialog(&mut h);
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(env.procs.exits.lock().unwrap().is_empty());
+        assert!(h.query_by_label("終了する").is_none());
+    }
+
+    #[test]
+    fn refresh_while_dialog_is_open_keeps_the_same_victim() {
+        let env = setup();
+        let mut h = env.harness();
+        open_exit_dialog(&mut h);
+        seed_session_with_turns(
+            &env,
+            "s0",
+            "新しい相談",
+            SessionKind::Interactive,
+            Some("busy"),
+        );
+        live_file(&env, 5000, "s0", start() + 1);
+        env.procs
+            .procs
+            .lock()
+            .unwrap()
+            .insert(0, proc(5000, 1, 50, start(), TERM));
+        env.advance(chrono::Duration::seconds(6));
+        h.run();
+        h.get_by_label_contains("50MB");
+        h.get_by_label("終了する").click();
+        h.run();
+        assert_eq!(*env.procs.exits.lock().unwrap(), [victim()]);
+    }
+
+    #[test]
+    fn desktop_card_requests_exit_after_confirm() {
+        let env = setup();
+        env.procs.procs.lock().unwrap().push(proc(
+            100,
+            1,
+            1229,
+            50,
+            "/Applications/Claude.app/Contents/MacOS/Claude",
+        ));
+        let mut h = env.harness();
+        h.get_by_label("Claude Desktop");
+        h.get_by_label_contains("1.2GB");
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("終了する").click();
+        h.run();
+        assert_eq!(
+            *env.procs.exits.lock().unwrap(),
+            [Victim {
+                pid: 100,
+                start_time: 50,
+                target: Target::Desktop
+            }]
+        );
+    }
+
+    #[test]
+    fn still_running_target_is_reported_after_grace_period() {
+        let env = setup();
+        let mut h = env.harness();
+        open_exit_dialog(&mut h);
+        h.get_by_label("終了する").click();
+        h.run();
+        env.advance(chrono::Duration::seconds(6));
+        h.run();
+        assert_eq!(
+            notice(&h).as_deref(),
+            Some("設計の相談 に終了を要求しましたが、まだ動いています")
+        );
+    }
+
+    #[test]
+    fn code_tab_session_has_desktop_badge() {
+        let env = gui_env(now());
+        seed_session_with_turns(
+            &env,
+            "c1",
+            "Codeタブの相談",
+            SessionKind::Interactive,
+            Some("busy"),
+        );
+        live_file(&env, 7000, "c1", start());
+        *env.procs.procs.lock().unwrap() = vec![proc(
+            7000,
+            1,
+            300,
+            start(),
+            "/U/Library/Application Support/Claude/claude-code/2.1.284/claude.app/Contents/MacOS/claude",
+        )];
+        let h = env.harness();
+        h.get_by_label("Desktop");
+        match &h.state().vm().body {
+            TabVm::Dashboard(d) => assert!(d.active[0].memory.as_ref().unwrap().desktop),
+            other => panic!("{other:?}"),
+        }
+    }
+}

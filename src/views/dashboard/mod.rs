@@ -1,6 +1,7 @@
 //! ダッシュボードの配置（spec 7.2節の3段）。区画の中身は同じディレクトリの各ファイルが描く。
 pub mod cards;
 pub mod detail;
+pub mod memory;
 pub mod sessions;
 pub mod trend;
 
@@ -17,6 +18,12 @@ use egui::{Align, Layout, Sense, Ui, vec2};
 pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     let total = ui.available_height();
     cards::show(ui, &vm.cards, acts);
+    if let Some(d) = &vm.desktop {
+        memory::desktop(ui, d, acts);
+    }
+    if let Some(c) = &vm.confirm_exit {
+        memory::confirm(ui, c, acts);
+    }
     ui.add_space(GAP);
     let trend_h = if vm.trend_open {
         trend_height(total)

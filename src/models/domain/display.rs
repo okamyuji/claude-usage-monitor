@@ -7,6 +7,8 @@ use chrono::{DateTime, Duration, FixedOffset, Utc};
 
 /// 指標の説明文。ツールチップと画面の注記で同じ文言を使うため、定数にまとめる。
 pub mod help {
+    /// メモリの表示の意味。
+    pub const MEMORY: &str = "子プロセスを含むRSSの合計です。共有メモリを重ねて数えるため、アクティビティモニタの値より大きく出ます";
     /// 入力Token。
     pub const TOKENS_INPUT: &str = "キャッシュを使わずにモデルへ渡した入力の量です";
     /// 出力Token。
