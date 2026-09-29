@@ -21,6 +21,7 @@ use claude_usage_monitor::models::gateways::model_catalog::{
 };
 use claude_usage_monitor::models::gateways::notifier::notifier_from_env;
 use claude_usage_monitor::models::gateways::process::{SysProcessInfo, SystemClock};
+use claude_usage_monitor::models::gateways::process_tree::{SysProcessTree, SystemExitSender};
 use claude_usage_monitor::models::gateways::usage_api::{
     DEFAULT_USAGE_BASE, HttpUsageApi, is_allowed_usage_base,
 };
@@ -195,6 +196,7 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
         autostart: Arc::new(SystemAutostart::new(&exe).map_err(other)?),
         daemon: Arc::new(LockFileDaemon::new(p.data_dir.join("daemon.lock"), exe)),
         catalog,
+        process_tree: Arc::new(SysProcessTree::new(Arc::new(SystemExitSender))),
     }))
 }
 

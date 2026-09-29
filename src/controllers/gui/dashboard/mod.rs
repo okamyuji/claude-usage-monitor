@@ -3,6 +3,7 @@
 //! 区画ごとのViewModelは同じディレクトリの各ファイルが作り、ここで1つにまとめる。
 pub mod cards;
 pub mod live_log;
+pub mod memory;
 pub mod replay;
 pub mod runs;
 pub mod sessions;
@@ -10,6 +11,7 @@ pub mod trend;
 
 use crate::controllers::gui::app::GuiDeps;
 use crate::controllers::gui::dashboard::cards::ProfileCard;
+use crate::controllers::gui::dashboard::memory::{ConfirmExit, DesktopMemoryVm, MemoryState};
 use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayState};
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail, SessionItem};
@@ -121,6 +123,10 @@ pub struct DashboardVm {
     pub trend: Option<TrendsVm>,
     /// 推移の範囲。折りたたみ中も選択を示すために持つ。
     pub trend_range: TrendRange,
+    /// Desktopのカード。Desktopが動いていなければ`None`。
+    pub desktop: Option<DesktopMemoryVm>,
+    /// 確認中の終了の要求。
+    pub confirm_exit: Option<ConfirmExit>,
 }
 
 /// 操作を状態に反映する。
@@ -152,7 +158,12 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
 }
 
 /// ダッシュボードのViewModelを作る。履歴は一覧が履歴のときだけ読む。
-pub fn build(deps: &GuiDeps, st: &DashboardState, query: &str) -> Result<DashboardVm, RepoError> {
+pub fn build(
+    deps: &GuiDeps,
+    st: &DashboardState,
+    query: &str,
+    mem: &MemoryState,
+) -> Result<DashboardVm, RepoError> {
     let (history, history_limited) = match st.mode {
         ListMode::History => sessions::history(deps, query, st.profile, st.kind)?,
         ListMode::Active => (vec![], false),
@@ -164,11 +175,14 @@ pub fn build(deps: &GuiDeps, st: &DashboardState, query: &str) -> Result<Dashboa
     if let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::Replay) {
         d.replay = Some(replay::build(deps, &d.session_id, &st.replay)?);
     }
+    let lives = memory::lives(deps);
+    let mut active = runs::runs(deps)?;
+    memory::attach(&mut active, mem, &lives);
     Ok(DashboardVm {
         mode: st.mode,
         trend_open: st.trend_open,
         cards: cards::cards(deps)?,
-        active: runs::runs(deps)?,
+        active,
         history,
         history_limited,
         profiles: sessions::profiles(deps)?,
@@ -182,6 +196,8 @@ pub fn build(deps: &GuiDeps, st: &DashboardState, query: &str) -> Result<Dashboa
             None
         },
         trend_range: st.trend_range,
+        desktop: memory::desktop(mem, &lives),
+        confirm_exit: mem.confirm().cloned(),
     })
 }
 

@@ -2,6 +2,7 @@
 //!
 //! 具象型（SQLite、ureq、Keychain）をcontrollersから隠し、テストでHTTPや時計を差し替えられるようにする。
 //! DBはテストでも実SQLiteを使うため、リポジトリのtraitはテスト用の差し替えではなく層の境界として置く。
+use crate::models::domain::memory::{ExitError, ProcEntry, Target, Victim};
 use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
@@ -127,6 +128,20 @@ pub trait ProcessInfo: Send + Sync {
     fn is_alive(&self, pid: u32) -> bool;
     /// 自プロセスのRSS（バイト）。リークを目視で確かめるために記録する。
     fn self_rss_bytes(&self) -> u64;
+}
+
+/// 全プロセスの一覧と、終了の要求。GUIがメモリを表示し、利用者の操作でプロセスを終わらせるため。
+pub trait ProcessTree: Send + Sync {
+    /// 全プロセスを取り直す。
+    fn snapshot(&self) -> Vec<ProcEntry>;
+    /// 送る直前に照合し、一致したときだけ終了を要求する。
+    fn request_exit(&self, v: &Victim) -> Result<(), ExitError>;
+}
+
+/// 実際に終了を要求する役。テストで利用者のプロセスを終わらせないよう、記録するだけの実装に差し替える。
+pub trait ExitSender: Send + Sync {
+    /// 終了を要求する。照合は呼び出し側で済ませてある。
+    fn send(&self, pid: u32, target: Target) -> Result<(), ExitError>;
 }
 
 /// プロファイルの永続化。

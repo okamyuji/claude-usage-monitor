@@ -1,5 +1,6 @@
 //! セッションのJSONLの場所の特定と、末尾から読むための位置の計算。
 
+use crate::models::domain::session_id::is_safe_id;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -39,14 +40,6 @@ fn subagent_files(dir: &Path) -> Vec<(String, PathBuf)> {
         .unwrap_or_default();
     out.sort();
     out
-}
-
-/// パスに連結してよいIDか。IDはJSONLやジョブの状態ファイルから来るため、`../`や絶対パスで設定ディレクトリの外を指させない。
-fn is_safe_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
 /// セッションIDからJSONLを探す。プロジェクトのディレクトリ名はcwdの変換規則に依存するため、全プロジェクトを見て探す。

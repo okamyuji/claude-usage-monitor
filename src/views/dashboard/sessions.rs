@@ -1,6 +1,7 @@
 //! セッション一覧（spec 7.2節の中段の左）。稼働中と履歴を切り替える。
 use crate::controllers::gui::app::Action;
 use crate::controllers::gui::app::Forms;
+use crate::controllers::gui::dashboard::memory::MemAction;
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionItem};
 use crate::controllers::gui::dashboard::{DashAction, DashboardVm, ListMode};
@@ -86,18 +87,27 @@ fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
         badge(ui, r.kind.label(), fg, bg);
         let (fg, bg) = state_colors(&r.state, p);
         badge(ui, &r.state, fg, bg);
+        if r.memory.as_ref().is_some_and(|m| m.desktop) {
+            badge(ui, "Desktop", p.accent, p.accent_soft);
+        }
         let title =
             RichText::new(&r.title)
                 .strong()
                 .color(if selected { p.accent } else { p.text });
-        if ui
-            .add(egui::Label::new(title).truncate().sense(Sense::click()))
-            .clicked()
-        {
+        let resp = ui.add(egui::Label::new(title).truncate().sense(Sense::click()));
+        if resp.clicked() {
             acts.push(Action::Dash(DashAction::Select(
                 r.session_id.clone(),
                 DetailTab::LiveLog,
             )));
+        }
+        if let Some(m) = &r.memory {
+            resp.context_menu(|ui| {
+                if ui.button("終了してメモリを解放").clicked() {
+                    acts.push(Action::Memory(MemAction::Ask(m.exit.clone())));
+                    ui.close();
+                }
+            });
         }
     });
     let context = format!("コンテキスト {}", r.context);
@@ -107,6 +117,7 @@ fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
         &r.elapsed,
         &r.tokens,
         &r.cost,
+        r.memory.as_ref().map_or("—", |m| m.text.as_str()),
     ]
     .into_iter()
     .filter(|s| !s.is_empty())

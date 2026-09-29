@@ -1,6 +1,7 @@
 //! GUI全体の状態、タブの切り替え、読み直しの周期。
 use crate::controllers::cli::profile::ProfileCommand;
 use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogState};
+use crate::controllers::gui::dashboard::memory::{MemAction, MemoryState};
 use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
@@ -16,8 +17,8 @@ use crate::models::domain::pricing::seed_models;
 use crate::models::domain::settings::Theme;
 use crate::models::ports::{
     AnalyticsRepo, Autostart, CatalogRefresh, Clock, CredentialStore, DaemonControl, DashboardRepo,
-    DiagnosticsRepo, FetchLogRepo, ModelRepo, ProfileRepo, RepoError, SessionQueryRepo,
-    SettingsRepo, UsageRepo,
+    DiagnosticsRepo, FetchLogRepo, ModelRepo, ProcessTree, ProfileRepo, RepoError,
+    SessionQueryRepo, SettingsRepo, UsageRepo,
 };
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use std::path::PathBuf;
@@ -100,6 +101,8 @@ pub struct GuiDeps {
     pub catalog: Arc<dyn CatalogRefresh>,
     /// ログイン時の自動起動。
     pub autostart: Arc<dyn Autostart>,
+    /// プロセスの一覧と終了の要求。ダッシュボードのメモリ表示に使う。
+    pub process_tree: Arc<dyn ProcessTree>,
 }
 
 /// 利用者の操作。
@@ -121,6 +124,8 @@ pub enum Action {
     Profiles(ProfilesAction),
     /// 設定タブの操作。
     Settings(SettingsAction),
+    /// メモリの操作。
+    Memory(MemAction),
 }
 
 /// 上部の今日と今週の集計（「1.26M $4.12」の形）。空なら表示しない。
@@ -210,6 +215,7 @@ pub struct GuiController {
     vm: AppVm,
     forms: Forms,
     pub(crate) dash: DashboardState,
+    pub(crate) mem: MemoryState,
     pub(crate) live: Option<LiveLogState>,
     pub(crate) jump_to_bottom: bool,
     pub(crate) replay_len: usize,
@@ -244,6 +250,7 @@ impl GuiController {
             },
             forms: Forms::default(),
             dash: DashboardState::default(),
+            mem: MemoryState::default(),
             live: None,
             jump_to_bottom: false,
             replay_len: 0,
@@ -304,6 +311,11 @@ impl GuiController {
             Action::SetPeriod(p) => self.period = p,
             Action::Profiles(a) => self.handle_profiles(a),
             Action::Settings(a) => self.handle_settings(a),
+            Action::Memory(m) => {
+                if let Some(msg) = self.mem.handle(&self.deps, m, self.deps.clock.now()) {
+                    self.vm.notice = Some(msg);
+                }
+            }
         }
         self.refresh();
     }
@@ -480,6 +492,11 @@ impl GuiController {
             self.refresh();
             return;
         }
+        if let Some(msg) = self.mem.poll() {
+            self.vm.notice = Some(msg);
+            self.refresh();
+            return;
+        }
         let now = self.deps.clock.now();
         if self.vm.tab == Tab::Dashboard
             && self.dash.detail_tab == DetailTab::Replay
@@ -504,6 +521,11 @@ impl GuiController {
     pub fn refresh(&mut self) {
         let now = self.deps.clock.now();
         self.vm.daemon_running = self.deps.daemon.is_running();
+        if self.vm.tab == Tab::Dashboard
+            && let Some(msg) = self.mem.refresh_if_due(&self.deps, now)
+        {
+            self.vm.notice = Some(msg);
+        }
         match self.build_all() {
             Ok((head, body)) => {
                 self.vm.header = head;
@@ -523,7 +545,8 @@ impl GuiController {
     fn build_body(&mut self) -> Result<TabVm, RepoError> {
         Ok(match self.vm.tab {
             Tab::Dashboard => {
-                let mut vm = dashboard::build(&self.deps, &self.dash, &self.forms.session_query)?;
+                let mut vm =
+                    dashboard::build(&self.deps, &self.dash, &self.forms.session_query, &self.mem)?;
                 self.sync_live(&mut vm);
                 if let Some(r) = vm.detail.as_ref().and_then(|d| d.replay.as_ref()) {
                     self.replay_len = r.len;
@@ -631,6 +654,28 @@ mod tests {
             Arc::new(daemon),
         );
         (d, home, clock, s, GuiController::new(deps))
+    }
+
+    #[test]
+    fn dashboard_takes_process_snapshot_and_shows_desktop_card() {
+        use crate::models::domain::memory::ProcEntry;
+        use crate::test_support::{FakeProcessTree, gui_deps_with_procs};
+        let procs = Arc::new(FakeProcessTree::default());
+        *procs.procs.lock().unwrap() = vec![ProcEntry {
+            pid: 100,
+            parent: Some(1),
+            rss: 2 << 30,
+            start_time: 50,
+            exe: Some("/Applications/Claude.app/Contents/MacOS/Claude".into()),
+        }];
+        let (deps, _db, _home) = gui_deps_with_procs(procs);
+        let c = GuiController::new(deps);
+        match &c.vm().body {
+            TabVm::Dashboard(d) => {
+                assert_eq!(d.desktop.as_ref().map(|x| x.text.as_str()), Some("2.0GB"))
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
