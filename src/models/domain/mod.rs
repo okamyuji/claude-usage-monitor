@@ -9,6 +9,7 @@ pub mod profile;
 pub mod projection;
 pub mod read_models;
 pub mod records;
+pub mod session_id;
 pub mod settings;
 pub mod transcript;
 pub mod usage;
