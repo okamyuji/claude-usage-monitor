@@ -20,6 +20,10 @@ impl SystemAutostart {
             .set_app_path(&exe.to_string_lossy())
             .set_macos_launch_mode(MacOSLaunchMode::LaunchAgent)
             .set_args(&["daemon"])
+            // 異常終了だけ再起動する。トレイの「終了」は0で終わるので、利用者が止めたデーモンは起こし直さない。
+            .set_agent_extra_config(
+                "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>",
+            )
             .build()
             .map_err(|e| format!("自動起動を設定できません: {e}"))?;
         Ok(Self { inner })
@@ -74,6 +78,19 @@ mod tests {
         assert!(!a.is_enabled().unwrap());
         a.enable().unwrap();
         assert!(a.is_enabled().unwrap());
+        #[cfg(target_os = "macos")]
+        {
+            let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+            let plist = std::fs::read_to_string(
+                home.join("Library/LaunchAgents/claude-usage-monitor.plist"),
+            )
+            .unwrap();
+            assert!(
+                plist
+                    .contains("<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>"),
+                "{plist}"
+            );
+        }
         a.disable().unwrap();
         assert!(!a.is_enabled().unwrap());
     }
