@@ -117,7 +117,7 @@ fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
         &r.elapsed,
         &r.tokens,
         &r.cost,
-        r.memory.as_ref().map_or("", |m| m.text.as_str()),
+        r.memory.as_ref().map_or("—", |m| m.text.as_str()),
     ]
     .into_iter()
     .filter(|s| !s.is_empty())

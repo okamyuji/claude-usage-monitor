@@ -92,8 +92,10 @@ pub struct Bound {
     pub session_id: String,
     /// 終了を要求するときの対象。
     pub victim: Victim,
-    /// 子孫を含むRSSの合計。
+    /// 子孫を含むRSSの合計。同じセッションのプロセスが複数あるときは、全員の分を足す。
     pub rss: u64,
+    /// このセッションに属するプロセス。Desktopの合計から除くのに使う。
+    pub members: Vec<u32>,
     /// プロファイルの設定ディレクトリ。
     pub config_dir: Option<PathBuf>,
 }
@@ -173,6 +175,19 @@ impl<'a> Tree<'a> {
         self.by_pid.get(&pid).copied()
     }
 
+    /// `pid`の祖先に`root`があるか。循環した表でも止まるよう、訪れたpidを覚える。
+    pub fn is_under(&self, pid: u32, root: u32) -> bool {
+        let mut seen = HashSet::new();
+        let mut cur = self.get(pid).and_then(|e| e.parent);
+        while let Some(p) = cur.filter(|p| seen.insert(*p)) {
+            if p == root {
+                return true;
+            }
+            cur = self.get(p).and_then(|e| e.parent);
+        }
+        false
+    }
+
     /// `root`と子孫のRSSの合計。`stop`に入るpidの下へは進まない。
     /// 各プロセスを別々の時点で読むため親子の表が循環することがあり、訪れたpidを覚えて2回数えない。
     pub fn subtree_rss(&self, root: u32, stop: &HashSet<u32>) -> u64 {
@@ -215,19 +230,38 @@ pub fn bind(tree: &Tree, lives: &[LiveProc]) -> Vec<Bound> {
         .collect();
     // 同じ時刻のファイルが2つあっても、読んだ順（`read_dir`の順は決まらない）に左右されないよう、pidまで含めて並べる。
     cands.sort_by_key(|(l, _, _)| (l.session_id.as_str(), Reverse((l.started_at, l.pid))));
-    cands.dedup_by(|b, a| a.0.session_id == b.0.session_id);
-    let pids: HashSet<u32> = cands.iter().map(|(_, e, _)| e.pid).collect();
-    cands
+    // 同じpidを別のセッションが名乗っていても、1つのセッションにだけ数える。
+    // 先に各セッションの最新のプロセスに割り当ててから、残りを割り当てる。そうしないと、名前順で先のセッションが別のセッションの本体を取ってしまう。
+    let mut owner: HashSet<u32> = HashSet::new();
+    let groups: Vec<&[(&LiveProc, &ProcEntry, Target)]> = cands
+        .chunk_by(|a, b| a.0.session_id == b.0.session_id)
+        .filter(|g| owner.insert(g[0].1.pid))
+        .collect();
+    let members: Vec<Vec<u32>> = groups
+        .iter()
+        .map(|g| {
+            let rest = g[1..].iter().map(|c| c.1.pid).filter(|p| owner.insert(*p));
+            std::iter::once(g[0].1.pid)
+                .chain(rest.collect::<Vec<_>>())
+                .collect()
+        })
+        .collect();
+    groups
         .into_iter()
-        .map(|(l, e, target)| Bound {
-            session_id: l.session_id.clone(),
-            victim: Victim {
-                pid: e.pid,
-                start_time: e.start_time,
-                target,
-            },
-            rss: tree.subtree_rss(e.pid, &pids),
-            config_dir: l.config_dir.clone(),
+        .zip(members)
+        .map(|(g, members)| {
+            let (l, e, target) = g[0];
+            Bound {
+                session_id: l.session_id.clone(),
+                victim: Victim {
+                    pid: e.pid,
+                    start_time: e.start_time,
+                    target,
+                },
+                rss: members.iter().map(|m| tree.subtree_rss(*m, &owner)).sum(),
+                members,
+                config_dir: l.config_dir.clone(),
+            }
         })
         .collect()
 }
@@ -239,11 +273,16 @@ pub fn desktop(tree: &Tree, bound: &[Bound]) -> Option<(Victim, u64)> {
         .values()
         .filter(|e| classify(e.exe.as_deref()) == ProcKind::Desktop)
         .min_by_key(|e| e.pid)?;
-    let stop: HashSet<u32> = bound.iter().map(|b| b.victim.pid).collect();
+    let stop: HashSet<u32> = bound
+        .iter()
+        .flat_map(|b| b.members.iter().copied())
+        .collect();
+    // 本体の子のcrashpadは木の中で数える。本体より前に起動したものは、前回のDesktopの残骸とみなして足さない。
     let crash: u64 = tree
         .by_pid
         .values()
         .filter(|e| is_desktop_crashpad(e.exe.as_deref()))
+        .filter(|e| e.start_time >= root.start_time && !tree.is_under(e.pid, root.pid))
         .map(|e| e.rss)
         .sum();
     let v = Victim {
@@ -502,6 +541,55 @@ mod tests {
             assert_eq!(got.len(), 1);
             assert_eq!(got[0].victim.pid, 20);
         }
+    }
+
+    #[test]
+    fn sums_every_process_of_same_session_into_newest_row() {
+        let apart = vec![p(30, 1, 10, 100, TERM), p(40, 1, 20, 200, TERM)];
+        let t = Tree::new(&apart);
+        let b = bind(&t, &[live("s", 30, 101), live("s", 40, 201)]);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].victim.pid, 40, "終了の対象は新しいほう");
+        assert_eq!(b[0].rss, 30 * MIB);
+        let mut m = b[0].members.clone();
+        m.sort();
+        assert_eq!(m, [30, 40]);
+        let nested = vec![
+            p(30, 1, 10, 100, TERM),
+            p(31, 30, 1, 100, "/bin/zsh"),
+            p(40, 31, 20, 200, TERM),
+        ];
+        let t = Tree::new(&nested);
+        let b = bind(&t, &[live("s", 30, 101), live("s", 40, 201)]);
+        assert_eq!(b[0].rss, 31 * MIB, "入れ子でも二重に数えない");
+    }
+
+    #[test]
+    fn desktop_total_skips_every_member_of_bound_sessions() {
+        let snap = vec![
+            p(100, 1, 200, 50, DESK),
+            p(103, 100, 300, 60, DESK_SESSION),
+            p(104, 100, 70, 65, DESK_SESSION),
+        ];
+        let t = Tree::new(&snap);
+        let bound = bind(&t, &[live("code", 103, 61), live("code", 104, 66)]);
+        assert_eq!(desktop(&t, &bound).unwrap().1, 200 * MIB);
+    }
+
+    #[test]
+    fn crashpad_inside_tree_or_older_than_desktop_is_not_added() {
+        let snap = vec![
+            p(100, 1, 200, 50, DESK),
+            p(105, 100, 9, 50, CRASHPAD),
+            p(106, 1, 8, 40, CRASHPAD),
+            p(107, 1, 7, 55, CRASHPAD),
+        ];
+        let t = Tree::new(&snap);
+        assert_eq!(
+            desktop(&t, &[]).unwrap().1,
+            (200 + 9 + 7) * MIB,
+            "子のcrashpadは木の中で1回だけ、Desktopより古い残骸は足さない"
+        );
     }
 
     #[test]

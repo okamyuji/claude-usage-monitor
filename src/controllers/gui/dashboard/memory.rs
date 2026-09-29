@@ -3,10 +3,13 @@
 //! 全プロセスの取得は数ミリ秒から20ミリ秒かかるため、`refresh`のたびではなく`REFRESH_SECS`ごとに取り、結果を持っておく。
 use crate::controllers::gui::app::{GuiDeps, REFRESH_SECS};
 use crate::controllers::gui::dashboard::runs::RunItem;
-use crate::models::domain::memory::{self, Bound, LiveProc, ProcEntry, Target, Tree, Victim};
+use crate::models::domain::memory::{
+    self, Bound, ExitError, LiveProc, ProcEntry, Target, Tree, Victim,
+};
 use crate::models::domain::memory_text::{fmt_bytes, resume_command};
 use crate::models::gateways::live_sessions::read_live_sessions;
 use chrono::{DateTime, Duration, Utc};
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// 終了を要求してから、まだ動いているかを確かめるまでの秒数。Claude Codeが終了処理を済ませる時間を見込む。
 pub const EXIT_GRACE_SECS: i64 = 5;
@@ -69,6 +72,19 @@ pub struct MemoryState {
     taken_at: Option<DateTime<Utc>>,
     confirm: Option<ConfirmExit>,
     pending: Vec<PendingExit>,
+    jobs: Vec<ExitJob>,
+}
+
+/// 別スレッドで送っている終了の要求。
+#[derive(Debug)]
+struct ExitJob {
+    exit: ConfirmExit,
+    at: DateTime<Utc>,
+    rx: Receiver<Result<(), ExitError>>,
+}
+
+fn interrupted(c: &ConfirmExit) -> String {
+    format!("{} の終了の要求が中断しました", c.title)
 }
 
 impl MemoryState {
@@ -112,24 +128,67 @@ impl MemoryState {
             }
             MemAction::Confirm => {
                 let c = self.confirm.take()?;
-                Some(match deps.process_tree.request_exit(&c.victim) {
-                    Ok(()) => {
-                        self.pending.push(PendingExit {
-                            victim: c.victim,
-                            title: c.title.clone(),
-                            at: now,
-                        });
-                        match &c.resume {
-                            Some(cmd) => format!(
-                                "{} に終了を要求しました。再開するには次を実行します: {cmd}",
-                                c.title
-                            ),
-                            None => format!("{} に終了を要求しました", c.title),
-                        }
-                    }
-                    Err(e) => e.to_string(),
-                })
+                let (tx, rx) = std::sync::mpsc::channel();
+                let tree = deps.process_tree.clone();
+                let v = c.victim;
+                // Desktopの終了はosascriptの応答を待つ。許可のダイアログが出ると数十秒かかるため、描画を止めないよう別スレッドで送る。
+                std::thread::spawn(move || {
+                    let _ = tx.send(tree.request_exit(&v));
+                });
+                let msg = format!("{} に終了を要求しています", c.title);
+                self.jobs.push(ExitJob {
+                    exit: c,
+                    at: now,
+                    rx,
+                });
+                Some(msg)
             }
+        }
+    }
+
+    /// 終わった要求の結果を受け取り、知らせを返す。
+    pub fn poll(&mut self) -> Option<String> {
+        let mut msgs = vec![];
+        for j in std::mem::take(&mut self.jobs) {
+            match j.rx.try_recv() {
+                Ok(r) => msgs.push(self.finish(j.exit, j.at, r)),
+                Err(TryRecvError::Empty) => self.jobs.push(j),
+                Err(TryRecvError::Disconnected) => msgs.push(interrupted(&j.exit)),
+            }
+        }
+        (!msgs.is_empty()).then(|| msgs.join(" / "))
+    }
+
+    /// 要求がすべて終わるまで待って結果を受け取る。テストで別スレッドの終了を待つため。
+    #[cfg(test)]
+    pub(crate) fn wait_jobs(&mut self) -> Option<String> {
+        let mut msgs = vec![];
+        for j in std::mem::take(&mut self.jobs) {
+            msgs.push(match j.rx.recv() {
+                Ok(r) => self.finish(j.exit, j.at, r),
+                Err(_) => interrupted(&j.exit),
+            });
+        }
+        (!msgs.is_empty()).then(|| msgs.join(" / "))
+    }
+
+    fn finish(&mut self, c: ConfirmExit, at: DateTime<Utc>, r: Result<(), ExitError>) -> String {
+        match r {
+            Ok(()) => {
+                self.pending.push(PendingExit {
+                    victim: c.victim,
+                    title: c.title.clone(),
+                    at,
+                });
+                match &c.resume {
+                    Some(cmd) => format!(
+                        "{} に終了を要求しました。再開するには次を実行します: {cmd}",
+                        c.title
+                    ),
+                    None => format!("{} に終了を要求しました", c.title),
+                }
+            }
+            Err(e) => e.to_string(),
         }
     }
 
@@ -208,7 +267,6 @@ fn session_memory(it: &RunItem, b: &Bound) -> SessionMemory {
 mod tests {
     use super::*;
     use crate::models::domain::activity::RunKind;
-    use crate::models::domain::memory::ExitError;
     use crate::test_support::{FakeProcessTree, gui_deps_with_procs};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -366,23 +424,25 @@ mod tests {
             "確認中でなければ何もしない"
         );
         st.handle(&deps, a, t0());
+        assert_eq!(st.poll(), None, "要求の前は受け取るものがない");
         assert_eq!(
             st.handle(&deps, MemAction::Confirm, t0()).as_deref(),
+            Some("設計 に終了を要求しています")
+        );
+        assert_eq!(
+            st.wait_jobs().as_deref(),
             Some("設計 に終了を要求しました。再開するには次を実行します: claude --resume x")
         );
         assert_eq!(*procs.exits.lock().unwrap(), [v]);
         assert!(st.confirm().is_none());
         st.handle(&deps, ask(v, "設計", None), t0());
-        assert_eq!(
-            st.handle(&deps, MemAction::Confirm, t0()).as_deref(),
-            Some("設計 に終了を要求しました")
-        );
+        st.handle(&deps, MemAction::Confirm, t0());
+        assert_eq!(st.wait_jobs().as_deref(), Some("設計 に終了を要求しました"));
         *procs.fail.lock().unwrap() = Some(ExitError::Gone);
         st.handle(&deps, ask(v, "設計", None), t0());
-        assert_eq!(
-            st.handle(&deps, MemAction::Confirm, t0()).as_deref(),
-            Some("すでに終了しています")
-        );
+        st.handle(&deps, MemAction::Confirm, t0());
+        assert_eq!(st.wait_jobs().as_deref(), Some("すでに終了しています"));
+        assert_eq!(st.wait_jobs(), None, "受け取り済みの要求は残らない");
         assert_eq!(st.pending.len(), 2, "失敗した要求は猶予の判定に入れない");
     }
 
@@ -405,6 +465,7 @@ mod tests {
         for (v, t) in [(a, "A"), (b, "B")] {
             st.handle(&deps, ask(v, t, None), t0());
             st.handle(&deps, MemAction::Confirm, t0());
+            st.wait_jobs();
         }
         let early = t0() + Duration::seconds(EXIT_GRACE_SECS - 1);
         assert_eq!(st.refresh_if_due(&deps, early), None, "猶予の中");
@@ -432,6 +493,7 @@ mod tests {
             };
             st.handle(&deps, ask(v, t, None), t0());
             st.handle(&deps, MemAction::Confirm, t0());
+            st.wait_jobs();
         }
         let at = t0() + Duration::seconds(EXIT_GRACE_SECS);
         let msg = st.refresh_if_due(&deps, at).unwrap();
@@ -450,9 +512,55 @@ mod tests {
         };
         st.handle(&deps, ask(v, "C", None), t0());
         st.handle(&deps, MemAction::Confirm, t0());
+        st.wait_jobs();
         *procs.procs.lock().unwrap() = vec![p(30, 1, 1, 99, TERM)];
         let at = t0() + Duration::seconds(EXIT_GRACE_SECS);
         assert_eq!(st.refresh_if_due(&deps, at), None);
+    }
+
+    #[test]
+    fn poll_returns_result_once_the_request_finishes() {
+        let procs = Arc::new(FakeProcessTree::default());
+        let (deps, _db, _home) = gui_deps_with_procs(procs.clone());
+        let mut st = MemoryState::default();
+        let v = Victim {
+            pid: 10,
+            start_time: 5,
+            target: Target::TerminalSession,
+        };
+        st.handle(&deps, ask(v, "D", None), t0());
+        st.handle(&deps, MemAction::Confirm, t0());
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let msg = loop {
+            if let Some(m) = st.poll() {
+                break m;
+            }
+            assert!(std::time::Instant::now() < until, "要求が終わりません");
+            std::thread::yield_now();
+        };
+        assert_eq!(msg, "D に終了を要求しました");
+        assert_eq!(*procs.exits.lock().unwrap(), [v]);
+        assert_eq!(st.pending.len(), 1);
+    }
+
+    #[test]
+    fn reports_interrupted_request_when_worker_dies() {
+        let procs = Arc::new(FakeProcessTree::default());
+        procs.panic.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (deps, _db, _home) = gui_deps_with_procs(procs);
+        let mut st = MemoryState::default();
+        let v = Victim {
+            pid: 10,
+            start_time: 5,
+            target: Target::TerminalSession,
+        };
+        st.handle(&deps, ask(v, "E", None), t0());
+        st.handle(&deps, MemAction::Confirm, t0());
+        assert_eq!(
+            st.wait_jobs().as_deref(),
+            Some("E の終了の要求が中断しました")
+        );
+        assert!(st.pending.is_empty());
     }
 
     #[test]

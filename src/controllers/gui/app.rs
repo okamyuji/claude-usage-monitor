@@ -492,6 +492,11 @@ impl GuiController {
             self.refresh();
             return;
         }
+        if let Some(msg) = self.mem.poll() {
+            self.vm.notice = Some(msg);
+            self.refresh();
+            return;
+        }
         let now = self.deps.clock.now();
         if self.vm.tab == Tab::Dashboard
             && self.dash.detail_tab == DetailTab::Replay

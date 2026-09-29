@@ -288,6 +288,7 @@ pub(crate) struct FakeProcessTree {
     pub(crate) procs: Mutex<Vec<ProcEntry>>,
     pub(crate) exits: Mutex<Vec<Victim>>,
     pub(crate) fail: Mutex<Option<ExitError>>,
+    pub(crate) panic: AtomicBool,
 }
 
 impl ProcessTree for FakeProcessTree {
@@ -295,6 +296,7 @@ impl ProcessTree for FakeProcessTree {
         self.procs.lock().unwrap().clone()
     }
     fn request_exit(&self, v: &Victim) -> Result<(), ExitError> {
+        assert!(!self.panic.load(Ordering::SeqCst), "要求の途中で落ちる");
         if let Some(e) = self.fail.lock().unwrap().clone() {
             return Err(e);
         }
