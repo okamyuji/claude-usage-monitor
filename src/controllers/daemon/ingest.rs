@@ -114,10 +114,16 @@ impl FileState<'_> {
             self.sessions.insert(sid.to_string(), s);
         }
         let s = self.sessions.get_mut(sid).expect("直前に挿入済み");
-        // ファイル先頭の行（queue-operationなど）はentrypointを持たないことがあるため、後の行で種別を確定させる。
+        // ファイル先頭の行（queue-operationやpermission-modeなど）はentrypointやcwdを持たないことがあるため、後の行で埋める。
         if s.entrypoint.is_none() && pl.meta.entrypoint.is_some() {
             s.entrypoint = pl.meta.entrypoint.clone();
             s.kind = SessionKind::from_entrypoint(s.entrypoint.as_deref());
+        }
+        if s.cwd.is_none() {
+            s.cwd = pl.meta.cwd.clone();
+        }
+        if s.git_branch.is_none() {
+            s.git_branch = pl.meta.git_branch.clone();
         }
         s.last_activity_at = s.last_activity_at.max(at);
         s.started_at = s.started_at.min(at);
@@ -527,6 +533,39 @@ mod tests {
             })
             .unwrap();
         assert_eq!((kind.as_str(), ep.as_str()), ("headless", "sdk-cli"));
+    }
+
+    #[test]
+    fn cwd_and_branch_on_later_line_fill_the_session() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        // 今のClaude Codeは、cwdを持たないmodeやpermission-modeの行をファイルの先頭に書く。
+        let first =
+            r#"{"type":"permission-mode","sessionId":"s1","timestamp":"2026-09-26T00:00:00.000Z"}"#;
+        let user = r#"{"type":"user","uuid":"q1","sessionId":"s1","timestamp":"2026-09-26T00:00:00.500Z","cwd":"/w/app","gitBranch":"main","message":{"content":"hi"}}"#;
+        let moved = r#"{"type":"user","uuid":"q2","sessionId":"s1","timestamp":"2026-09-26T00:00:01.000Z","cwd":"/w/other","gitBranch":"dev","message":{"content":"next"}}"#;
+        write(&cfg.join("projects/-w/s1.jsonl"), &[first, user, moved]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "cwd"), "/w/app");
+        assert_eq!(session_col(&e.store, "git_branch"), "main");
+    }
+
+    #[test]
+    fn cwd_and_branch_seen_first_survive_a_later_scan() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let f = cfg.join("projects/-w/s1.jsonl");
+        let user = r#"{"type":"user","uuid":"q1","sessionId":"s1","timestamp":"2026-09-26T00:00:00.500Z","cwd":"/w/app","gitBranch":"main","message":{"content":"hi"}}"#;
+        write(&f, &[user]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        // 追記分だけを読む2回目のスキャンでも、最初に見えた値を残す。
+        let mode =
+            r#"{"type":"permission-mode","sessionId":"s1","timestamp":"2026-09-26T00:00:02.000Z"}"#;
+        let moved = r#"{"type":"user","uuid":"q2","sessionId":"s1","timestamp":"2026-09-26T00:00:03.000Z","cwd":"/w/other","gitBranch":"dev","message":{"content":"next"}}"#;
+        write(&f, &[mode, moved]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "cwd"), "/w/app");
+        assert_eq!(session_col(&e.store, "git_branch"), "main");
     }
 
     #[test]
