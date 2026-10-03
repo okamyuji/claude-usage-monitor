@@ -157,6 +157,21 @@ pub fn handle(st: &mut DashboardState, a: DashAction) {
     }
 }
 
+/// 選んだセッションの詳細。再生を開いているときは再生の中身も入れる。カレンダータブと共用する。
+pub fn selected_detail(
+    deps: &GuiDeps,
+    st: &DashboardState,
+) -> Result<Option<SessionDetail>, RepoError> {
+    let mut detail = match &st.selected {
+        Some(id) => sessions::detail(deps, id, &st.expanded, st.detail_tab)?,
+        None => None,
+    };
+    if let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::Replay) {
+        d.replay = Some(replay::build(deps, &d.session_id, &st.replay)?);
+    }
+    Ok(detail)
+}
+
 /// ダッシュボードのViewModelを作る。履歴は一覧が履歴のときだけ読む。
 pub fn build(
     deps: &GuiDeps,
@@ -168,13 +183,7 @@ pub fn build(
         ListMode::History => sessions::history(deps, query, st.profile, st.kind)?,
         ListMode::Active => (vec![], false),
     };
-    let mut detail = match &st.selected {
-        Some(id) => sessions::detail(deps, id, &st.expanded, st.detail_tab)?,
-        None => None,
-    };
-    if let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::Replay) {
-        d.replay = Some(replay::build(deps, &d.session_id, &st.replay)?);
-    }
+    let detail = selected_detail(deps, st)?;
     let lives = memory::lives(deps);
     let mut active = runs::runs(deps)?;
     memory::attach(&mut active, mem, &lives);
@@ -204,6 +213,37 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_detail_builds_replay_only_on_replay_tab() {
+        use crate::test_support::{
+            FakeCreds, FakeDaemon, FixedClock, gui_deps, seed_session, seed_turn, temp_store,
+            tokens,
+        };
+        use chrono::{TimeZone, Utc};
+        use std::sync::Arc;
+        let (_d, s) = temp_store();
+        let s = Arc::new(s);
+        let home = tempfile::tempdir().unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 26, 3, 0, 0).unwrap();
+        let deps = gui_deps(
+            s.clone(),
+            Arc::new(FixedClock::at(now)),
+            home.path(),
+            Arc::new(FakeCreds(std::collections::HashMap::new())),
+            Arc::new(FakeDaemon::default()),
+        );
+        seed_session(&s, "a", SessionKind::Interactive, None, now);
+        seed_turn(&s, "a", "", "m1", now, None, "prompt", tokens(1, 1));
+        let mut st = DashboardState::default();
+        assert_eq!(selected_detail(&deps, &st).unwrap(), None);
+        handle(&mut st, DashAction::Select("a".into(), DetailTab::Turns));
+        let turns = selected_detail(&deps, &st).unwrap().unwrap();
+        assert!(turns.replay.is_none());
+        handle(&mut st, DashAction::SetDetailTab(DetailTab::Replay));
+        let replay = selected_detail(&deps, &st).unwrap().unwrap();
+        assert_eq!(replay.replay.unwrap().len, 1);
+    }
 
     #[test]
     fn handle_switches_mode_and_toggles_trend() {

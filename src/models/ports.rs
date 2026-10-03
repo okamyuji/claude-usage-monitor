@@ -7,7 +7,7 @@ use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
 use crate::models::domain::read_models::{
-    DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
+    CalendarTurn, DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
     SessionModelUsage, SessionRow, SubagentRow, ToolStat, TurnRow,
 };
 use crate::models::domain::records::{
@@ -256,6 +256,12 @@ pub trait SessionQueryRepo: Send + Sync {
     fn subagents(&self, session_ids: &[String]) -> Result<Vec<SubagentRow>, RepoError>;
     /// セッションに結び付くジョブのID。ライブログで`timeline.jsonl`を探すのに使う。
     fn job_id(&self, session_id: &str) -> Result<Option<String>, RepoError>;
+    /// `[from, to)`のターンを、セッション順、時刻順に返す。サブエージェントのターンも含める。
+    fn calendar_turns(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<CalendarTurn>, RepoError>;
 }
 
 /// 分析画面と推移画面の読み取り。
