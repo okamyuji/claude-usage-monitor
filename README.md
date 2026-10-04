@@ -32,11 +32,12 @@ Rust 1.98以上が必要です。リポジトリを取得してから、次の�
 cargo install --path .
 ```
 
-macOSで、ログイン時の自動起動を有効にしたまま入れ直す場合は、続けて次のコマンドを実行します。`cargo install`はバイナリを同じファイルのまま書き換えるため、そのまま再起動すると、macOSが署名の検査でデーモンを止めます。ファイルを置き直してから、デーモンを再起動してください。
+macOSで、ログイン時の自動起動を有効にしたまま入れ直す場合は、次の順に実行します。デーモンを登録したままバイナリを入れ替えて再起動すると、macOSが入れ替え後の最初の起動を署名の検査で止めます。インストールの前にlaunchdから外し、インストールの後に登録し直してください。
 
 ```bash
-cp ~/.cargo/bin/cumon ~/.cargo/bin/cumon.new && mv -f ~/.cargo/bin/cumon.new ~/.cargo/bin/cumon
-launchctl kickstart -k gui/$(id -u)/claude-usage-monitor
+launchctl bootout gui/$(id -u)/claude-usage-monitor
+cargo install --path .
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/claude-usage-monitor.plist
 ```
 
 ## 使い方
