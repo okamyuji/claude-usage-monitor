@@ -9,7 +9,9 @@ use crate::models::domain::display::{
 use crate::models::domain::pricing::{
     ModelInfo, TokenUsage, cache_hit_rate, cost_for, find_model, sum_cost, total_tokens,
 };
-use crate::models::domain::read_models::{SessionFilter, SessionModelUsage, SessionRow, TurnRow};
+use crate::models::domain::read_models::{
+    SessionFilter, SessionModelUsage, SessionRow, TimeRange, TurnRow,
+};
 use crate::models::domain::transcript::{SessionKind, one_line};
 use crate::models::ports::RepoError;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -287,6 +289,7 @@ pub fn detail(
     id: &str,
     expanded: &HashSet<String>,
     tab: DetailTab,
+    range: Option<TimeRange>,
 ) -> Result<Option<SessionDetail>, RepoError> {
     let Some(s) = deps.sessions.session(id)? else {
         return Ok(None);
@@ -318,7 +321,7 @@ pub fn detail(
     let share = ratio(sub, total_tokens(&total));
     let turns = match tab {
         DetailTab::Turns => turn_items(
-            &deps.sessions.turns(id, TURN_LIMIT)?,
+            &deps.sessions.turns(id, TURN_LIMIT, range)?,
             &models,
             &names,
             expanded,
@@ -502,7 +505,7 @@ mod tests {
     #[test]
     fn detail_has_totals_turns_and_unpriced_marker() {
         let (_d, _h, deps) = setup();
-        let d = detail(&deps, "s1", &HashSet::new(), DetailTab::Turns)
+        let d = detail(&deps, "s1", &HashSet::new(), DetailTab::Turns, None)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -544,7 +547,7 @@ mod tests {
         let expanded: HashSet<String> = ["a1:m3".to_string(), ":m2".to_string()]
             .into_iter()
             .collect();
-        let d = detail(&deps, "s1", &expanded, DetailTab::Turns)
+        let d = detail(&deps, "s1", &expanded, DetailTab::Turns, None)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -590,7 +593,7 @@ mod tests {
             Arc::new(FakeCreds(std::collections::HashMap::new())),
             Arc::new(FakeDaemon::default()),
         );
-        let d = detail(&deps, "c1", &HashSet::new(), DetailTab::Turns)
+        let d = detail(&deps, "c1", &HashSet::new(), DetailTab::Turns, None)
             .unwrap()
             .unwrap();
         assert_eq!(d.totals.cache_write, fmt_tokens(3_000));
@@ -600,7 +603,7 @@ mod tests {
     fn missing_session_has_no_detail() {
         let (_d, _h, deps) = setup();
         assert!(
-            detail(&deps, "gone", &HashSet::new(), DetailTab::Turns)
+            detail(&deps, "gone", &HashSet::new(), DetailTab::Turns, None)
                 .unwrap()
                 .is_none()
         );

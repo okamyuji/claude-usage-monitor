@@ -3,9 +3,11 @@ use crate::controllers::cli::profile::ProfileCommand;
 use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogState};
 use crate::controllers::gui::dashboard::memory::{MemAction, MemoryState};
 use crate::controllers::gui::dashboard::sessions::DetailTab;
+use crate::controllers::gui::dashboard::sessions::SessionDetail;
 use crate::controllers::gui::dashboard::{self, DashAction, DashboardState, DashboardVm, ListMode};
 use crate::controllers::gui::header;
 use crate::controllers::gui::tabs::analytics::{self, AnalyticsVm, Period};
+use crate::controllers::gui::tabs::calendar::{self, CalendarAction, CalendarState, CalendarVm};
 use crate::controllers::gui::tabs::diagnostics::{self, DiagnosticsVm};
 use crate::controllers::gui::tabs::profiles::{self, ProfilesAction, ProfilesVm};
 use crate::controllers::gui::tabs::settings::{
@@ -29,12 +31,16 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 pub const REFRESH_SECS: i64 = 5;
 /// 中段の左（一覧）の幅の既定の比率（spec 7.3節）。
 pub const DEFAULT_SPLIT: f32 = 0.45;
+/// カレンダーの左（週の7列）の幅の既定の比率。7列を広く取るため、ダッシュボードより大きくする。
+pub const CALENDAR_SPLIT: f32 = 0.6;
 
 /// 上部のタブ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     /// ダッシュボード。
     Dashboard,
+    /// カレンダー。
+    Calendar,
     /// 分析。
     Analytics,
     /// プロファイル。
@@ -47,8 +53,9 @@ pub enum Tab {
 
 impl Tab {
     /// 上部バーの並び。
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Dashboard,
+        Tab::Calendar,
         Tab::Analytics,
         Tab::Profiles,
         Tab::Settings,
@@ -59,6 +66,7 @@ impl Tab {
     pub fn label(self) -> &'static str {
         match self {
             Tab::Dashboard => "ダッシュボード",
+            Tab::Calendar => "カレンダー",
             Tab::Analytics => "分析",
             Tab::Profiles => "プロファイル",
             Tab::Settings => "設定",
@@ -114,8 +122,10 @@ pub enum Action {
     StartDaemon,
     /// テーマを切り替えて保存する。
     SetTheme(Theme),
-    /// ダッシュボードの操作。
+    /// 詳細の操作。表示中のタブ（ダッシュボードかカレンダー）の選択状態へ届ける。
     Dash(DashAction),
+    /// カレンダーの操作。
+    Calendar(CalendarAction),
     /// ライブログの操作。
     Live(LiveAction),
     /// 分析の期間を変える。
@@ -142,6 +152,8 @@ pub struct HeaderVm {
 pub enum TabVm {
     /// ダッシュボード。区画が多く大きいため`Box`に入れる。
     Dashboard(Box<DashboardVm>),
+    /// カレンダー。帯が多く大きいため`Box`に入れる。
+    Calendar(Box<CalendarVm>),
     /// 分析。
     Analytics(AnalyticsVm),
     /// プロファイル。
@@ -178,6 +190,8 @@ pub struct AppVm {
 pub struct Forms {
     /// 中段の左の幅の比率。境界のつまみで変わる。
     pub split_ratio: f32,
+    /// カレンダーの左の幅の比率。ダッシュボードと別に持ち、片方のつまみでもう片方の幅が変わらないようにする。
+    pub calendar_split: f32,
     /// 履歴の検索語。
     pub session_query: String,
     /// ライブログの絞り込み。
@@ -198,6 +212,7 @@ impl Default for Forms {
     fn default() -> Self {
         Self {
             split_ratio: DEFAULT_SPLIT,
+            calendar_split: CALENDAR_SPLIT,
             session_query: String::new(),
             live_filter: LiveFilter::default(),
             replay_position: 0,
@@ -215,6 +230,7 @@ pub struct GuiController {
     vm: AppVm,
     forms: Forms,
     pub(crate) dash: DashboardState,
+    pub(crate) calendar: CalendarState,
     pub(crate) mem: MemoryState,
     pub(crate) live: Option<LiveLogState>,
     pub(crate) jump_to_bottom: bool,
@@ -250,6 +266,7 @@ impl GuiController {
             },
             forms: Forms::default(),
             dash: DashboardState::default(),
+            calendar: CalendarState::default(),
             mem: MemoryState::default(),
             live: None,
             jump_to_bottom: false,
@@ -273,6 +290,25 @@ impl GuiController {
     /// 描画に渡す組。入力欄だけを可変で渡す。
     pub fn view_parts(&mut self) -> (&AppVm, &mut Forms) {
         (&self.vm, &mut self.forms)
+    }
+
+    /// 表示中のタブの選択状態。カレンダーとダッシュボードで選択が混ざらないよう別に持つ。
+    fn sel_mut(&mut self) -> &mut DashboardState {
+        if self.vm.tab == Tab::Calendar {
+            &mut self.calendar.sel
+        } else {
+            &mut self.dash
+        }
+    }
+
+    /// カレンダーで選んだセッション。E2Eから確かめるために公開する。
+    pub fn calendar_selected(&self) -> Option<&str> {
+        self.calendar.sel.selected.as_deref()
+    }
+
+    /// ダッシュボードで選んだセッション。E2Eから確かめるために公開する。
+    pub fn dash_selected(&self) -> Option<&str> {
+        self.dash.selected.as_deref()
     }
 
     /// 一覧の種類。E2Eから選択状態を確かめるために公開する。
@@ -304,7 +340,8 @@ impl GuiController {
                 }
                 self.forms.settings.theme = t;
             }
-            Action::Dash(d) => dashboard::handle(&mut self.dash, d),
+            Action::Dash(d) => dashboard::handle(self.sel_mut(), d),
+            Action::Calendar(a) => calendar::handle(&mut self.calendar, a),
             Action::Live(LiveAction::FilterChanged) => {}
             Action::Live(LiveAction::JumpToLatest) => self.jump_to_bottom = true,
             Action::Live(LiveAction::JumpDone) => self.jump_to_bottom = false,
@@ -498,13 +535,13 @@ impl GuiController {
             return;
         }
         let now = self.deps.clock.now();
-        if self.vm.tab == Tab::Dashboard
-            && self.dash.detail_tab == DetailTab::Replay
-            && self.dash.replay.playing
-        {
-            let before = (self.dash.replay.position, self.dash.replay.playing);
-            dashboard::replay::advance(&mut self.dash.replay, self.replay_len, now);
-            if (self.dash.replay.position, self.dash.replay.playing) != before {
+        let len = self.replay_len;
+        let has_detail = matches!(self.vm.tab, Tab::Dashboard | Tab::Calendar);
+        let sel = self.sel_mut();
+        if has_detail && sel.detail_tab == DetailTab::Replay && sel.replay.playing {
+            let before = (sel.replay.position, sel.replay.playing);
+            dashboard::replay::advance(&mut sel.replay, len, now);
+            if (sel.replay.position, sel.replay.playing) != before {
                 self.refresh();
                 return;
             }
@@ -547,12 +584,17 @@ impl GuiController {
             Tab::Dashboard => {
                 let mut vm =
                     dashboard::build(&self.deps, &self.dash, &self.forms.session_query, &self.mem)?;
-                self.sync_live(&mut vm);
-                if let Some(r) = vm.detail.as_ref().and_then(|d| d.replay.as_ref()) {
-                    self.replay_len = r.len;
-                    self.forms.replay_position = r.position;
-                }
+                self.sync_detail(&mut vm.detail);
                 TabVm::Dashboard(Box::new(vm))
+            }
+            Tab::Calendar => {
+                // 時計を1回だけ読む。2回読むと、その間に日曜0時を越えたとき、選択を残したまま新しい週を描くため。
+                let now = self.deps.clock.now();
+                let today = now.with_timezone(&self.deps.tz).date_naive();
+                calendar::sync_week(&mut self.calendar, today);
+                let mut vm = calendar::build(&self.deps, &self.calendar, now)?;
+                self.sync_detail(&mut vm.detail);
+                TabVm::Calendar(Box::new(vm))
             }
             Tab::Analytics => {
                 self.live = None;
@@ -581,9 +623,13 @@ impl GuiController {
         })
     }
 
-    /// ライブログを開く、読み進める、捨てるの判断をする。
-    fn sync_live(&mut self, vm: &mut DashboardVm) {
-        let Some(d) = vm.detail.as_mut().filter(|d| d.tab == DetailTab::LiveLog) else {
+    /// ライブログを開く、読み進める、捨てるの判断と、再生の長さと位置の反映をする。
+    fn sync_detail(&mut self, detail: &mut Option<SessionDetail>) {
+        if let Some(r) = detail.as_ref().and_then(|d| d.replay.as_ref()) {
+            self.replay_len = r.len;
+            self.forms.replay_position = r.position;
+        }
+        let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::LiveLog) else {
             self.live = None;
             return;
         };
@@ -611,9 +657,12 @@ impl GuiController {
             return;
         }
         let live = self.live_vm();
-        if let TabVm::Dashboard(d) = &mut self.vm.body
-            && let Some(det) = d.detail.as_mut()
-        {
+        let det = match &mut self.vm.body {
+            TabVm::Dashboard(d) => d.detail.as_mut(),
+            TabVm::Calendar(c) => c.detail.as_mut(),
+            _ => None,
+        };
+        if let Some(det) = det {
             det.live = live;
         }
     }
@@ -622,6 +671,7 @@ impl GuiController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controllers::gui::tabs::calendar::CalendarAction;
     use crate::models::ports::ProfileRepo;
     use crate::test_support::{FakeCreds, FakeDaemon, FixedClock, gui_deps, temp_store};
     use chrono::TimeZone;
@@ -683,7 +733,14 @@ mod tests {
         let labels: Vec<&str> = Tab::ALL.iter().map(|t| t.label()).collect();
         assert_eq!(
             labels,
-            ["ダッシュボード", "分析", "プロファイル", "設定", "診断"]
+            [
+                "ダッシュボード",
+                "カレンダー",
+                "分析",
+                "プロファイル",
+                "設定",
+                "診断"
+            ]
         );
     }
 
@@ -823,6 +880,33 @@ mod tests {
     }
 
     #[test]
+    fn tick_streams_live_log_into_calendar_detail() {
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        use std::io::Write;
+        let (_d, home, _c, s, mut c) = ctl(FakeDaemon::default());
+        let f = with_live_session(&s, home.path());
+        c.handle(Action::SelectTab(Tab::Calendar));
+        c.handle(Action::Dash(DashAction::Select(
+            "s1".into(),
+            DetailTab::LiveLog,
+        )));
+        let total = |c: &GuiController| match &c.vm().body {
+            TabVm::Calendar(v) => v
+                .detail
+                .as_ref()
+                .and_then(|x| x.live.as_ref())
+                .map(|l| l.total),
+            _ => None,
+        };
+        assert_eq!(total(&c), Some(1));
+        let mut w = std::fs::OpenOptions::new().append(true).open(&f).unwrap();
+        writeln!(w, "{{\"type\":\"user\",\"timestamp\":\"2026-09-26T02:59:30.000Z\",\"sessionId\":\"s1\",\"message\":{{\"content\":\"again\"}}}}").unwrap();
+        // 時計を進めないので読み直しは起きず、毎フレームの追記の読み取りだけで行が増える。
+        c.tick();
+        assert_eq!(total(&c), Some(2));
+    }
+
+    #[test]
     fn same_session_keeps_live_state_across_refreshes() {
         use crate::controllers::gui::dashboard::sessions::DetailTab;
         let (_d, home, _c, s, mut c) = ctl(FakeDaemon::default());
@@ -878,6 +962,139 @@ mod tests {
         )));
         c.handle(Action::SelectTab(Tab::Settings));
         assert!(c.live.is_none(), "別のタブへ移ったら捨てる");
+    }
+
+    #[test]
+    fn calendar_and_dashboard_keep_separate_selections_and_splits() {
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Calendar));
+        assert!(matches!(c.vm().body, TabVm::Calendar(_)));
+        c.handle(Action::Dash(DashAction::Select(
+            "a".into(),
+            DetailTab::Turns,
+        )));
+        assert_eq!(
+            (c.calendar_selected(), c.dash_selected()),
+            (Some("a"), None)
+        );
+        c.forms_mut().calendar_split = 0.7;
+        c.handle(Action::SelectTab(Tab::Dashboard));
+        assert_eq!(c.dash_selected(), None);
+        assert_eq!(c.view_parts().1.split_ratio, DEFAULT_SPLIT);
+        c.handle(Action::Dash(DashAction::Select(
+            "b".into(),
+            DetailTab::Turns,
+        )));
+        c.handle(Action::SelectTab(Tab::Calendar));
+        assert_eq!(
+            (c.calendar_selected(), c.dash_selected()),
+            (Some("a"), Some("b"))
+        );
+        assert_eq!(c.view_parts().1.calendar_split, 0.7);
+        assert_eq!(Forms::default().calendar_split, CALENDAR_SPLIT);
+    }
+
+    #[test]
+    fn calendar_selection_is_cleared_when_the_week_rolls_over() {
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Calendar));
+        c.handle(Action::Dash(DashAction::Select(
+            "a".into(),
+            DetailTab::Turns,
+        )));
+        // 土 9/26 12:00 JST から、日 9/27 0:00 JST の直前と直後へ進める。
+        clock.advance(chrono::Duration::hours(12) - chrono::Duration::seconds(1));
+        c.refresh();
+        assert_eq!(c.calendar_selected(), Some("a"));
+        clock.advance(chrono::Duration::seconds(1));
+        c.refresh();
+        assert_eq!(c.calendar_selected(), None);
+    }
+
+    /// 読むたびに1ミリ秒進む時計。
+    struct SteppingClock(std::sync::Mutex<chrono::DateTime<chrono::Utc>>);
+
+    impl Clock for SteppingClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            let mut g = self.0.lock().unwrap();
+            let t = *g;
+            *g += chrono::Duration::milliseconds(1);
+            t
+        }
+    }
+
+    #[test]
+    fn calendar_never_shows_the_old_selection_in_a_new_week() {
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        // 時計を読む回数によらず、日曜0時をまたぐ読みがどこに来ても成り立つことを確かめる。
+        for k in 1..=10 {
+            let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
+            c.handle(Action::SelectTab(Tab::Calendar));
+            c.handle(Action::Dash(DashAction::Select(
+                "a".into(),
+                DetailTab::Turns,
+            )));
+            // 土 9/26 12:00 JST から、日 9/27 0:00 JST の k ミリ秒前へ。
+            let t = clock.now() + chrono::Duration::hours(12) - chrono::Duration::milliseconds(k);
+            c.deps.clock = Arc::new(SteppingClock(std::sync::Mutex::new(t)));
+            c.refresh();
+            let TabVm::Calendar(v) = &c.vm().body else {
+                panic!("カレンダーのViewModelではありません")
+            };
+            if v.title.contains("9/27") {
+                assert!(
+                    v.detail.is_none() && c.calendar_selected().is_none(),
+                    "k={k}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn calendar_actions_reach_calendar_state() {
+        let (_d, _h, _c, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Calendar));
+        c.handle(Action::Calendar(CalendarAction::PrevWeek));
+        let TabVm::Calendar(v) = &c.vm().body else {
+            panic!("カレンダーのViewModelではありません")
+        };
+        assert!(v.can_next);
+    }
+
+    #[test]
+    fn replay_advances_on_calendar_tab_with_its_own_state() {
+        use crate::controllers::gui::dashboard::replay::ReplayState;
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        let (_d, _h, clock, _s, mut c) = ctl(FakeDaemon::default());
+        c.handle(Action::SelectTab(Tab::Calendar));
+        let playing = ReplayState {
+            playing: true,
+            speed: 1,
+            last_step: Some(clock.now()),
+            ..ReplayState::default()
+        };
+        c.calendar.sel.detail_tab = DetailTab::Replay;
+        c.calendar.sel.replay = playing.clone();
+        c.dash.detail_tab = DetailTab::Replay;
+        c.dash.replay = playing;
+        c.replay_len = 5;
+        clock.advance(chrono::Duration::seconds(2));
+        c.tick();
+        assert_eq!(
+            (c.calendar.sel.replay.position, c.dash.replay.position),
+            (2, 0)
+        );
+        c.handle(Action::SelectTab(Tab::Analytics));
+        c.replay_len = 5;
+        clock.advance(chrono::Duration::seconds(2));
+        c.tick();
+        assert_eq!(
+            (c.calendar.sel.replay.position, c.dash.replay.position),
+            (2, 0),
+            "詳細のないタブでは進めない"
+        );
     }
 
     #[test]

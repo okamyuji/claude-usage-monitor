@@ -7,8 +7,8 @@ use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
 use crate::models::domain::read_models::{
-    DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
-    SessionModelUsage, SessionRow, SubagentRow, ToolStat, TurnRow,
+    CalendarTurn, DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
+    SessionModelUsage, SessionRow, SubagentRow, TimeRange, ToolStat, TurnRow,
 };
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
@@ -249,13 +249,25 @@ pub trait SessionQueryRepo: Send + Sync {
     /// 1件。
     fn session(&self, session_id: &str) -> Result<Option<SessionRow>, RepoError>;
     /// ターンを時刻順に返す。長いセッションでは新しい方から`limit`件だけを返す。
-    fn turns(&self, session_id: &str, limit: usize) -> Result<Vec<TurnRow>, RepoError>;
+    /// `range`を渡すと、その範囲（両端を含む）のターンだけを読む。
+    fn turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+        range: Option<TimeRange>,
+    ) -> Result<Vec<TurnRow>, RepoError>;
     /// セッション、エージェント、モデルごとの合計。
     fn model_usage(&self, session_ids: &[String]) -> Result<Vec<SessionModelUsage>, RepoError>;
     /// サブエージェント。
     fn subagents(&self, session_ids: &[String]) -> Result<Vec<SubagentRow>, RepoError>;
     /// セッションに結び付くジョブのID。ライブログで`timeline.jsonl`を探すのに使う。
     fn job_id(&self, session_id: &str) -> Result<Option<String>, RepoError>;
+    /// `[from, to)`のターンを、セッション順、時刻順に返す。サブエージェントのターンも含める。
+    fn calendar_turns(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<CalendarTurn>, RepoError>;
 }
 
 /// 分析画面と推移画面の読み取り。

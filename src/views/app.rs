@@ -49,6 +49,7 @@ pub fn show_app(ui: &mut Ui, vm: &AppVm, forms: &mut Forms) -> Vec<Action> {
 fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     match &vm.body {
         TabVm::Dashboard(d) => dashboard::show(ui, d, forms, acts),
+        TabVm::Calendar(v) => crate::views::tabs::calendar::show(ui, v, forms, acts),
         TabVm::Analytics(v) => {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])

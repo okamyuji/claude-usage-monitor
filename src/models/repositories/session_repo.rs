@@ -52,8 +52,8 @@ impl IngestRepo for SqliteStore {
              ON CONFLICT(session_id) DO UPDATE SET
                kind = CASE WHEN ({rank_new}) > ({rank_old}) THEN excluded.kind ELSE sessions.kind END,
                entrypoint = COALESCE(sessions.entrypoint, excluded.entrypoint),
-               cwd = COALESCE(excluded.cwd, sessions.cwd),
-               git_branch = COALESCE(excluded.git_branch, sessions.git_branch),
+               cwd = COALESCE(sessions.cwd, excluded.cwd),
+               git_branch = COALESCE(sessions.git_branch, excluded.git_branch),
                name = COALESCE(excluded.name, sessions.name),
                first_prompt = COALESCE(sessions.first_prompt, excluded.first_prompt),
                started_at = MIN(sessions.started_at, excluded.started_at),
