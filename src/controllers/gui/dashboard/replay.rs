@@ -74,7 +74,7 @@ pub fn build(deps: &GuiDeps, session_id: &str, st: &ReplayState) -> Result<Repla
         .collect();
     let models = deps.models.all()?;
     let items = turn_items(
-        &deps.sessions.turns(session_id, TURN_LIMIT)?,
+        &deps.sessions.turns(session_id, TURN_LIMIT, None)?,
         &models,
         &names,
         &HashSet::new(),

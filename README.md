@@ -6,6 +6,8 @@ Claude CodeのToken使用量、レート制限、セッションの動きを、�
 
 ![詳細にライブログを開いたダッシュボード](docs/images/dashboard-live-log.png)
 
+![帯を押して範囲のターンを開いたカレンダー](docs/images/calendar.png)
+
 ## 特徴
 
 - ダッシュボードの1画面で、使用率のカード、稼働中のセッション、選んだセッションの詳細、使用率の推移をまとめて確認できます。
@@ -13,6 +15,7 @@ Claude CodeのToken使用量、レート制限、セッションの動きを、�
 - 稼働中の一覧は、画面で操作中の対話セッションのほか、SDKや`claude -p`によるヘッドレス実行、バックグラウンドジョブ、サブエージェントも種類別に表示します。
 - セッションを選ぶと、本体とサブエージェントのツール実行を時刻順に流すライブログ、ターンごとのToken内訳、ターンを順にたどる再生を切り替えて見られます。
 - 分析タブでは、プロジェクト別、モデル別、ブランチ別の使用量、キャッシュヒット率、ツールごとのエラー率を集計します。
+- カレンダータブでは、全プロジェクトのセッションを日曜始まりの週間カレンダーに帯で並べます。同じ時刻に動いていたセッションは横に並び、色はプロジェクト別かプロファイル別で分けられます。帯を押すと、右にそのセッションの詳細が出ます。ヘッドレス実行は既定で隠し、切り替えで表示できます。
 - 使用率が設定した閾値を超えると、OSの通知で1回だけ知らせます。余裕のある別のプロファイルがあれば、切り替えのコマンドも通知に添えます。
 - 稼働中のセッションとClaude Desktopのメモリ使用量を表示します。行を右クリックするか、Desktopのカードのボタンを押すと、確認を経てプロセスに終了を要求し、メモリをOSに返せます。
 - メニューバーに使用中のプロファイルの使用率を表示し、画面の起動、プロファイルの切り替え、一時停止をメニューから行えます。
@@ -29,6 +32,14 @@ Rust 1.98以上が必要です。リポジトリを取得してから、次の�
 
 ```bash
 cargo install --path .
+```
+
+macOSで、ログイン時の自動起動を有効にしたまま入れ直す場合は、次の順に実行します。デーモンを登録したままバイナリを入れ替えて再起動すると、macOSが入れ替え後の最初の起動を署名の検査で止めます。インストールの前にlaunchdから外し、インストールの後に登録し直してください。
+
+```bash
+launchctl bootout gui/$(id -u)/claude-usage-monitor
+cargo install --path .
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/claude-usage-monitor.plist
 ```
 
 ## 使い方
@@ -50,6 +61,24 @@ cumon gui
 ```
 
 メニューバーを使わない環境では、`cumon daemon --no-tray`で起動します。ログイン時に自動で起動したい場合は、設定タブの「ログイン時にデーモンを起動する」を有効にしてください。
+
+### デーモンをターミナルから切り離して動かす
+
+ターミナルで`cumon daemon`を実行すると、デーモンはそのターミナルの中で動きます。ターミナルを閉じた後も動かし続けたい場合は、次のいずれかの方法で起動してください。
+
+ログイン時の自動起動を有効にすると、launchdが`claude-usage-monitor`という名前でデーモンを管理します。この場合、ターミナルを閉じてもデーモンは止まらず、ログインし直したときも自動で起動します。トレイの「終了」で止めたデーモンは終了コード0で終わるので、launchdは起動し直しません。もう一度動かすときは、次のコマンドを実行します。
+
+```bash
+launchctl kickstart gui/$(id -u)/claude-usage-monitor
+```
+
+自動起動を使わずにターミナルから切り離すには、`nohup`で起動します。
+
+```bash
+nohup cumon daemon >/dev/null 2>&1 &
+```
+
+GUIからも起動できます。デーモンが動いていないとき、画面の上部に「デーモンを起動」のボタンが出るので、これを押してください。
 
 ### プロファイルの切り替え
 
@@ -97,17 +126,25 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ```
 
-変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。
+変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。`GATE_LOW=1`を付けると、ビルドとテストを1本ずつ、macOSのバックグラウンドの優先度で動かします。時間はかかりますが、マシンが重くなりません。このときmutation testingは作業ツリーをその場で書き換えるので、終わるまでソースを編集しないでください。
 
 ```bash
 scripts/gate.sh src/controllers/gui/app.rs
 GATE_BASE=origin/main scripts/gate.sh src/controllers/gui/app.rs
+GATE_LOW=1 scripts/gate.sh src/controllers/gui/app.rs
 ```
 
 長時間の稼働でメモリが増え続けないことは、デーモンを1,000周期回すリーク検査で確かめます。100周期目と1,000周期目のRSSを比べ、5MBを超えて増えていれば失敗にします。macOSで測った値は、トレイなしで12.0MBから11.6MB、トレイありで73.4MBから29.0MBでした。所要時間は約17分なので、通常のテストとは分けて実行します。
 
 ```bash
 cargo test --release --test leak -- --ignored --nocapture
+```
+
+READMEの画像は、架空のデータから作り直します。`examples/demo_data.rs`がClaude Codeと同じ形のログを一時的なHOMEに書き、デーモンと同じ取り込み処理でDBに入れます。稼働中かどうかは最終更新からの経過時間で決まるため、データを作ったらすぐに画像を書き出してください。
+
+```bash
+cargo run --example demo_data -- /tmp/cumon-demo/data /tmp/cumon-demo/home
+CUMON_DEMO_DATA=/tmp/cumon-demo/data CUMON_DEMO_HOME=/tmp/cumon-demo/home cargo test --test readme_images -- --ignored
 ```
 
 ## ライセンス

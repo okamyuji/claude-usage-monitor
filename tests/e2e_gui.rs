@@ -817,3 +817,126 @@ mod memory_e2e {
         }
     }
 }
+
+mod calendar_e2e {
+    use super::*;
+
+    fn open_calendar(
+        env: &common::gui::GuiEnv,
+    ) -> egui_kittest::Harness<'static, claude_usage_monitor::controllers::gui::app::GuiController>
+    {
+        let mut h = env.harness();
+        h.get_by_label("カレンダー").click();
+        h.run();
+        assert_eq!(h.state().vm().tab, Tab::Calendar);
+        h
+    }
+
+    #[test]
+    fn calendar_tab_shows_week_legend_and_bands() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let h = open_calendar(&env);
+        h.get_by_label("2026年9/20〜9/26");
+        h.get_by_label("09/20(日)");
+        h.get_by_label("09/26(土)");
+        h.get_by_label("1 セッション");
+        h.get_by_label("app 1");
+        h.get_by_label_contains("設計の相談");
+        h.get_by_label("帯を押すと詳細を出します");
+    }
+
+    #[test]
+    fn calendar_color_by_and_week_navigation() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label("プロファイル別").click();
+        h.run();
+        h.get_by_label("default 1");
+        assert!(h.query_by_label("app 1").is_none());
+        h.get_by_label_contains("前週").click();
+        h.run();
+        h.get_by_label("2026年9/13〜9/19");
+        h.get_by_label("この週の記録はありません");
+        h.get_by_label("今週へ").click();
+        h.run();
+        h.get_by_label("2026年9/20〜9/26");
+    }
+
+    #[test]
+    fn headless_runs_are_hidden_until_checked() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        seed_session_with_turns(&env, "h1", "一括の要約", SessionKind::Headless, None);
+        let mut h = open_calendar(&env);
+        assert!(h.query_by_label_contains("一括の要約").is_none());
+        h.get_by_label("1 セッション");
+        h.get_by_label("ヘッドレスも出す（1件）").click();
+        h.run();
+        h.get_by_label_contains("一括の要約");
+        h.get_by_label("2 セッション");
+    }
+
+    #[test]
+    fn calendar_band_opens_detail_without_touching_dashboard_selection() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+        assert_eq!(h.state().calendar_selected(), Some("s1"));
+        h.get_by_label_contains("のターン");
+        h.get_by_label("ダッシュボード").click();
+        h.run();
+        assert_eq!(h.state().dash_selected(), None);
+        h.get_by_label("左の一覧からセッションを選んでください");
+        h.get_by_label("カレンダー").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+    }
+
+    #[test]
+    fn moving_week_clears_calendar_detail() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+        h.get_by_label_contains("前週").click();
+        h.run();
+        h.get_by_label("帯を押すと詳細を出します");
+        assert_eq!(h.state().calendar_selected(), None);
+    }
+
+    #[test]
+    fn headless_only_week_is_not_called_empty() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "h1", "一括の要約", SessionKind::Headless, None);
+        let h = open_calendar(&env);
+        h.get_by_label("0 セッション");
+        h.get_by_label("ヘッドレスも出す（1件）");
+        assert!(h.query_by_label("この週の記録はありません").is_none());
+    }
+
+    #[test]
+    fn calendar_renders_in_light_and_dark() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        for pref in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+            let mut h = env.harness();
+            claude_usage_monitor::views::theme::apply(&h.ctx);
+            h.ctx.set_theme(pref);
+            h.get_by_label("カレンダー").click();
+            h.run();
+            assert_eq!(
+                h.ctx.global_style().visuals.dark_mode,
+                pref == egui::ThemePreference::Dark
+            );
+            h.get_by_label_contains("設計の相談");
+            h.get_by_label("2026年9/20〜9/26");
+        }
+    }
+}

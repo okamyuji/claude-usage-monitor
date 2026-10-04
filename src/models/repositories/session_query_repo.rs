@@ -1,11 +1,13 @@
 //! セッション画面とログ再生の読み取り。
 
 use crate::models::domain::read_models::{
-    SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TurnRow,
+    CalendarTurn, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TimeRange, TurnRow,
 };
+use crate::models::domain::transcript::SessionKind;
 use crate::models::ports::{RepoError, SessionQueryRepo};
 use crate::models::repositories::dashboard_repo::{SESSION_SELECT, SessionTuple, session_row};
-use crate::models::repositories::db::{SqliteStore, parse_ts, query_rows, usage_of};
+use crate::models::repositories::db::{SqliteStore, parse_ts, query_rows, ts, usage_of};
+use chrono::{DateTime, Utc};
 use rusqlite::params;
 
 fn ids_json(ids: &[String]) -> Result<String, RepoError> {
@@ -68,6 +70,29 @@ fn subagent_row(t: SubagentTuple) -> SubagentRow {
     }
 }
 
+type CalendarTuple = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    i64,
+);
+
+fn calendar_row(t: CalendarTuple) -> Option<CalendarTurn> {
+    let (session_id, profile_name, kind, cwd, title, ts, tokens) = t;
+    Some(CalendarTurn {
+        session_id,
+        profile_name,
+        kind: SessionKind::parse(&kind)?,
+        cwd,
+        title,
+        ts: parse_ts(&ts)?,
+        tokens: tokens as u64,
+    })
+}
+
 impl SessionQueryRepo for SqliteStore {
     fn list_sessions(&self, f: &SessionFilter) -> Result<Vec<SessionRow>, RepoError> {
         let sql = format!(
@@ -98,14 +123,22 @@ impl SessionQueryRepo for SqliteStore {
         Ok(rows.into_iter().find_map(session_row))
     }
 
-    fn turns(&self, session_id: &str, limit: usize) -> Result<Vec<TurnRow>, RepoError> {
+    fn turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+        range: Option<TimeRange>,
+    ) -> Result<Vec<TurnRow>, RepoError> {
+        let (from, to) = range.map_or((None, None), |(f, t)| (Some(ts(f)), Some(ts(t))));
         let rows: Vec<TurnTuple> = self.with(|c| {
             query_rows(
                 c,
                 "SELECT agent_id, message_id, ts, model, kind, summary, input, output, cache_read, cache_write_5m, cache_write_1h FROM (
-                   SELECT *, id AS rid FROM turns WHERE session_id = ?1 ORDER BY ts DESC, id DESC LIMIT ?2
+                   SELECT *, id AS rid FROM turns
+                   WHERE session_id = ?1 AND (?3 IS NULL OR ts >= ?3) AND (?4 IS NULL OR ts <= ?4)
+                   ORDER BY ts DESC, id DESC LIMIT ?2
                  ) ORDER BY ts, rid",
-                params![session_id, limit as i64],
+                params![session_id, limit as i64, from, to],
             )
         })?;
         Ok(rows.into_iter().filter_map(turn_row).collect())
@@ -159,6 +192,28 @@ impl SessionQueryRepo for SqliteStore {
             )
         })?;
         Ok(rows.into_iter().next().map(|(j,)| j))
+    }
+
+    fn calendar_turns(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<CalendarTurn>, RepoError> {
+        // サブエージェントのターンは本体と時刻が入り混じるため、並べ替えはSQLで行う。
+        let rows: Vec<CalendarTuple> = self.with(|c| {
+            query_rows(
+                c,
+                "SELECT t.session_id, p.name, s.kind, s.cwd, COALESCE(s.name, s.first_prompt), t.ts,
+                        t.input + t.output + t.cache_read + t.cache_write_5m + t.cache_write_1h
+                 FROM turns t
+                 JOIN sessions s ON s.session_id = t.session_id
+                 JOIN profiles p ON p.id = s.profile_id
+                 WHERE t.ts >= ?1 AND t.ts < ?2
+                 ORDER BY t.session_id, t.ts",
+                params![ts(from), ts(to)],
+            )
+        })?;
+        Ok(rows.into_iter().filter_map(calendar_row).collect())
     }
 }
 
@@ -266,7 +321,7 @@ mod tests {
                 tokens(i as u64, 1),
             );
         }
-        let all = s.turns("s1", 100).unwrap();
+        let all = s.turns("s1", 100, None).unwrap();
         assert_eq!(
             all.iter()
                 .map(|t| t.message_id.as_str())
@@ -274,7 +329,7 @@ mod tests {
             ["m0", "m1", "m2", "m3", "m4"]
         );
         assert_eq!(all[4].usage.input, 4);
-        let newest = s.turns("s1", 2).unwrap();
+        let newest = s.turns("s1", 2, None).unwrap();
         assert_eq!(
             newest
                 .iter()
@@ -282,6 +337,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["m3", "m4"]
         );
+    }
+
+    #[test]
+    fn turns_in_a_range_reach_past_the_newest_limit() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "s1", SessionKind::Interactive, None, t0());
+        for i in 0..5 {
+            let at = t0() + Duration::seconds(i);
+            seed_turn(
+                &s,
+                "s1",
+                "",
+                &format!("m{i}"),
+                at,
+                None,
+                "text",
+                tokens(1, 1),
+            );
+        }
+        let range = Some((t0() + Duration::seconds(1), t0() + Duration::seconds(2)));
+        let ids: Vec<String> = s
+            .turns("s1", 2, range)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.message_id)
+            .collect();
+        assert_eq!(ids, ["m1", "m2"]);
     }
 
     #[test]
@@ -358,11 +440,90 @@ mod tests {
         seed_turn(&s, "s1", "", "m1", t0(), None, "prompt", tokens(0, 0));
         s.with(|c| c.execute("UPDATE turns SET input = X'00'", []))
             .unwrap();
-        assert!(s.turns("s1", 10).is_err());
+        assert!(s.turns("s1", 10, None).is_err());
         assert!(s.model_usage(&["s1".to_string()]).is_err());
         s.with(|c| c.execute("UPDATE turns SET input = 0, ts = 'bad'", []))
             .unwrap();
-        assert!(s.turns("s1", 10).unwrap().is_empty());
+        assert!(s.turns("s1", 10, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn calendar_turns_returns_range_sorted_by_session_then_time_with_subagents() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "b", SessionKind::Headless, None, t0());
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        let from = t0() - Duration::hours(1);
+        let to = t0();
+        let at = |m: i64| from + Duration::minutes(m);
+        seed_turn(&s, "b", "", "b1", at(5), None, "prompt", tokens(1, 2));
+        seed_turn(&s, "a", "agent-x", "a2", at(20), None, "text", tokens(3, 4));
+        seed_turn(&s, "a", "", "a1", at(10), None, "prompt", tokens(5, 6));
+        seed_turn(&s, "a", "", "a0", from, None, "prompt", tokens(0, 1));
+        seed_turn(&s, "a", "", "a9", to, None, "prompt", tokens(0, 1));
+        let got = s.calendar_turns(from, to).unwrap();
+        let keys: Vec<(&str, i64)> = got
+            .iter()
+            .map(|t| (t.session_id.as_str(), (t.ts - from).num_minutes()))
+            .collect();
+        assert_eq!(keys, vec![("a", 0), ("a", 10), ("a", 20), ("b", 5)]);
+        assert_eq!(got[2].tokens, 7);
+        assert_eq!(got[0].profile_name, "default");
+        assert_eq!(got[0].cwd.as_deref(), Some("/work/a"));
+        assert_eq!(got[0].title.as_deref(), Some("name-a"));
+        assert_eq!(
+            (got[0].kind, got[3].kind),
+            (SessionKind::Interactive, SessionKind::Headless)
+        );
+    }
+
+    #[test]
+    fn calendar_turns_sums_all_token_kinds() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        let u = crate::models::domain::pricing::TokenUsage {
+            input: 1,
+            output: 10,
+            cache_read: 100,
+            cache_write_5m: 1000,
+            cache_write_1h: 10000,
+        };
+        seed_turn(&s, "a", "", "a1", t0(), None, "prompt", u);
+        let got = s.calendar_turns(t0(), t0() + Duration::minutes(1)).unwrap();
+        assert_eq!(got[0].tokens, 11111);
+    }
+
+    #[test]
+    fn calendar_turns_falls_back_to_first_prompt_and_skips_broken_rows() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        s.with(|c| c.execute("UPDATE sessions SET name = NULL", []))
+            .unwrap();
+        seed_turn(&s, "a", "", "a1", t0(), None, "prompt", tokens(1, 1));
+        let got = s.calendar_turns(t0(), t0() + Duration::minutes(1)).unwrap();
+        assert_eq!(got[0].title.as_deref(), Some("prompt-a"));
+        assert!(
+            s.calendar_turns(t0() + Duration::minutes(1), t0() + Duration::minutes(2))
+                .unwrap()
+                .is_empty()
+        );
+        // 種別を読めない行は飛ばす。
+        s.with(|c| c.execute("UPDATE sessions SET kind = 'unknown'", []))
+            .unwrap();
+        assert!(
+            s.calendar_turns(t0(), t0() + Duration::minutes(1))
+                .unwrap()
+                .is_empty()
+        );
+        s.with(|c| c.execute("UPDATE sessions SET kind = 'interactive'", []))
+            .unwrap();
+        // 文字列比較で範囲に入るが日時として読めない行は飛ばす。
+        s.with(|c| c.execute("UPDATE turns SET ts = '2026-09-26T03:00:00.000Zx'", []))
+            .unwrap();
+        assert!(
+            s.calendar_turns(t0(), t0() + Duration::minutes(1))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

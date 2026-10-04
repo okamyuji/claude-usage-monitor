@@ -81,4 +81,18 @@ fn write_readme_images() {
     h.event(egui::Event::PointerGone);
     h.run();
     save(&mut h, &out, "dashboard-live-log.png");
+    h.get_by_label("カレンダー").click();
+    h.run();
+    // 架空データは曜日によらず7日分そろうよう、前の週に入れてある。
+    h.get_by_label_contains("前週").click();
+    h.run();
+    // 帯は説明の1行目にセッションの見出しを持つので、その文言で1本を選ぶ。
+    h.get_all_by_label_contains("トップページの表示を速くする")
+        .next()
+        .expect("カレンダーの帯")
+        .click();
+    h.run();
+    h.event(egui::Event::PointerGone);
+    h.run();
+    save(&mut h, &out, "calendar.png");
 }

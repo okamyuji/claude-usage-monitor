@@ -35,6 +35,7 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
         ui,
         forms,
         mid_h,
+        dash_ratio,
         acts,
         |ui, forms, acts| sessions::show(ui, vm, forms, acts),
         |ui, forms, acts| detail::show(ui, vm.detail.as_ref(), forms, acts),
@@ -55,12 +56,23 @@ fn filled_card(ui: &mut Ui, size: egui::Vec2, add: impl FnOnce(&mut Ui)) {
     });
 }
 
+/// ダッシュボードの分割比の場所。
+pub fn dash_ratio(f: &mut Forms) -> &mut f32 {
+    &mut f.split_ratio
+}
+
+/// カレンダーの分割比の場所。タブごとに持ち、片方のつまみでもう片方の幅が変わらないようにする。
+pub fn calendar_ratio(f: &mut Forms) -> &mut f32 {
+    &mut f.calendar_split
+}
+
 /// 中段を左右に分けて描く。境界のつまみをドラッグすると比率が変わり、ウィンドウの幅に比例して伸縮する。
 /// 左右の描画にも入力欄の状態を渡すため、クロージャは`forms`を引数で受け取る。
 pub fn split(
     ui: &mut Ui,
     forms: &mut Forms,
     height: f32,
+    ratio: fn(&mut Forms) -> &mut f32,
     acts: &mut Vec<Action>,
     left: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
     right: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
@@ -68,7 +80,7 @@ pub fn split(
     // 左、つまみ、右の間には部品の間隔が2つ入るので、その分を引いてから分ける。
     // 間隔を0にすると中の一覧や詳細にも0が引き継がれ、文言どうしが詰まって読めなくなるため、変えない。
     let avail = ui.available_width() - 2.0 * ui.spacing().item_spacing.x;
-    let (lw, rw) = split_widths(avail, forms.split_ratio);
+    let (lw, rw) = split_widths(avail, *ratio(forms));
     ui.horizontal_top(|ui| {
         filled_card(ui, vec2(lw, height), |ui| left(ui, forms, acts));
         let (rect, resp) = ui.allocate_exact_size(vec2(SPLITTER, height), Sense::drag());
@@ -84,7 +96,7 @@ pub fn split(
             egui::Stroke::new(1.0, line),
         );
         if resp.dragged() {
-            forms.split_ratio = drag_ratio(avail, lw, resp.drag_delta().x);
+            *ratio(forms) = drag_ratio(avail, lw, resp.drag_delta().x);
         }
         filled_card(ui, vec2(rw, height), |ui| right(ui, forms, acts));
     });

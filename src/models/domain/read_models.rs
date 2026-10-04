@@ -6,6 +6,9 @@ use crate::models::domain::transcript::SessionKind;
 use crate::models::domain::usage::{BreakdownRow, LimitWindow, Spend};
 use chrono::{DateTime, Utc};
 
+/// 両端を含む時刻の範囲（UTC）。
+pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
+
 /// プロファイルの最新の取得結果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LatestUsage {
@@ -218,4 +221,23 @@ mod tests {
             ("", None, None, 1000)
         );
     }
+}
+
+/// カレンダーの1ターン。帯を作るため、セッションの属性を行ごとに持つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarTurn {
+    /// セッションID。
+    pub session_id: String,
+    /// プロファイル名。
+    pub profile_name: String,
+    /// 種別。大量に並行するヘッドレス実行を既定で隠すのに使う。
+    pub kind: SessionKind,
+    /// 作業ディレクトリ。
+    pub cwd: Option<String>,
+    /// 名前。なければ最初の入力。
+    pub title: Option<String>,
+    /// 時刻。
+    pub ts: DateTime<Utc>,
+    /// Token数の合計（5種類）。
+    pub tokens: u64,
 }

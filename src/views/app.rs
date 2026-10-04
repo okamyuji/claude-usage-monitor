@@ -49,6 +49,7 @@ pub fn show_app(ui: &mut Ui, vm: &AppVm, forms: &mut Forms) -> Vec<Action> {
 fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
     match &vm.body {
         TabVm::Dashboard(d) => dashboard::show(ui, d, forms, acts),
+        TabVm::Calendar(v) => crate::views::tabs::calendar::show(ui, v, forms, acts),
         TabVm::Analytics(v) => {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -144,8 +145,7 @@ impl eframe::App for CumonApp {
         let acts = show_app(ui, vm, forms);
         self.ctl.handle_all(acts);
         // 5秒ごとの読み直しと経過時間の表示を進めるため、操作がなくても描き直す。再生中は間隔を短くする。
-        let playing = matches!(&self.ctl.vm().body, TabVm::Dashboard(d)
-            if d.detail.as_ref().and_then(|x| x.replay.as_ref()).is_some_and(|r| r.playing));
+        let playing = self.ctl.vm().replay_playing();
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(if playing {
                 50

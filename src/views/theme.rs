@@ -72,6 +72,26 @@ pub const DARK: Palette = Palette {
     track: Color32::from_rgb(0x21, 0x26, 0x2d),
 };
 
+/// カレンダーの帯の色（Tableau 10を元に、灰色を「その他」と見分けられる色へ替えたもの）。
+/// 帯は薄めた塗りと濃い枠線で描くので、ライトとダークで同じ表を使う。
+pub const SERIES: [Color32; 10] = [
+    Color32::from_rgb(0x4e, 0x79, 0xa7),
+    Color32::from_rgb(0xf2, 0x8e, 0x2b),
+    Color32::from_rgb(0xe1, 0x57, 0x59),
+    Color32::from_rgb(0x76, 0xb7, 0xb2),
+    Color32::from_rgb(0x59, 0xa1, 0x4f),
+    Color32::from_rgb(0xed, 0xc9, 0x48),
+    Color32::from_rgb(0xb0, 0x7a, 0xa1),
+    Color32::from_rgb(0xff, 0x9d, 0xa7),
+    Color32::from_rgb(0x9c, 0x75, 0x5f),
+    Color32::from_rgb(0x17, 0xbe, 0xcf),
+];
+
+/// 色の番号の色。`None`（その他）は弱い文字の色にする。
+pub fn series(c: Option<usize>, p: &Palette) -> Color32 {
+    c.map_or(p.weak, |i| SERIES[i % SERIES.len()])
+}
+
 /// 角丸。
 const RADIUS: u8 = 8;
 

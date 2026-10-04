@@ -8,6 +8,7 @@ use egui_phosphor::regular as icon;
 fn tab_icon(t: Tab) -> &'static str {
     match t {
         Tab::Dashboard => icon::SQUARES_FOUR,
+        Tab::Calendar => icon::CALENDAR_BLANK,
         Tab::Analytics => icon::CHART_BAR,
         Tab::Profiles => icon::USERS,
         Tab::Settings => icon::GEAR,

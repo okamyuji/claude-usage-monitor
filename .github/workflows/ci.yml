@@ -15,3 +15,42 @@ jobs:
       apt-packages: libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
   security:
     uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
+
+  # mainへのpushで、検査が通ったcommitにだけ版のタグを付ける。
+  tag:
+    needs: [ci, security]
+    permissions:
+      contents: write
+    uses: okamyuji/reusable-workflows/.github/workflows/semver-tag.yml@v1
+
+  # GITHUB_TOKENでpushしたタグは別のワークフローを起動しないため、同じワークフローの中でReleaseを作る。
+  release:
+    needs: tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Create releases for the new tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          # このpushで増えたcommitに付いたタグだけを対象にする。初回のpushなどで前のcommitが無いときはHEADのタグだけにする。
+          if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            tags=$(git tag --merged HEAD --no-merged "$BEFORE" --sort=v:refname | grep -E "$semver" || true)
+          else
+            tags=$(git tag --points-at HEAD | grep -E "$semver" || true)
+          fi
+          for tag in $tags; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              continue
+            fi
+            gh release create "$tag" --verify-tag --generate-notes --title "$tag"
+          done
