@@ -221,8 +221,10 @@ impl SessionQueryRepo for SqliteStore {
         let rows: Vec<(String, String, String)> = self.with(|c| {
             query_rows(
                 c,
-                // Claude Codeは同じ要約を別のuuidで2回書くことがあるので、時刻と本文が同じ行は1件にする。
-                "SELECT DISTINCT ts, kind, text FROM session_notes WHERE session_id = ?1 ORDER BY ts",
+                // Claude Codeは同じ要約を別のuuidで2回書くことがあるので、時刻と本文が同じ要約は1件にする。
+                // 圧縮は本文が毎回同じなので、uuidごとに数える。
+                "SELECT ts, kind, text FROM session_notes WHERE session_id = ?1
+                 GROUP BY ts, kind, text, CASE WHEN kind = 'compact' THEN uuid END ORDER BY ts",
                 params![session_id],
             )
         })?;
@@ -696,6 +698,42 @@ mod tests {
         note(&s, "n2", "a", t0(), NoteKind::Recap, "同じ");
         note(&s, "n3", "a", t0(), NoteKind::Recap, "違う");
         assert_eq!(s.notes("a").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn compacts_at_same_time_are_counted_separately() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        note(
+            &s,
+            "c1",
+            "a",
+            t0(),
+            NoteKind::Compact,
+            "Conversation compacted",
+        );
+        note(
+            &s,
+            "c2",
+            "a",
+            t0(),
+            NoteKind::Compact,
+            "Conversation compacted",
+        );
+        assert_eq!(s.notes("a").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn same_uuid_is_kept_for_each_session() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        seed_session(&s, "b", SessionKind::Interactive, None, t0());
+        note(&s, "n1", "a", t0(), NoteKind::Recap, "写された要約");
+        note(&s, "n1", "b", t0(), NoteKind::Recap, "写された要約");
+        assert_eq!(
+            (s.notes("a").unwrap().len(), s.notes("b").unwrap().len()),
+            (1, 1)
+        );
     }
 
     #[test]

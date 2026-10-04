@@ -32,9 +32,9 @@ CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#;
 
 // 取り込み位置を消すのは、V1までのJSONLにある要約を次の全体走査で読み直すため。取り込みは冪等なので重複しない。
+// 主キーにsession_idを含めるのは、再開したセッションのJSONLに前のセッションの要約が同じuuidで写されるため。
 const SCHEMA_V2: &str = r#"
-CREATE TABLE session_notes(uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL);
-CREATE INDEX session_notes_session ON session_notes(session_id, ts);
+CREATE TABLE session_notes(session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, uuid TEXT NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY(session_id, uuid));
 DELETE FROM ingest_offsets;
 "#;
 
@@ -141,6 +141,16 @@ pub(crate) fn usage_of(input: i64, output: i64, cache_read: i64, w5: i64, w1: i6
         cache_write_5m: w5 as u64,
         cache_write_1h: w1 as u64,
     }
+}
+
+/// V1のスキーマだけを当てたDBを作る。V2への移行を、取り込みと組み合わせて確かめるため。
+#[cfg(test)]
+pub(crate) fn create_v1(path: &Path) -> Connection {
+    let mut c = Connection::open(path).unwrap();
+    Migrations::from_slice(&[M::up(SCHEMA_V1)])
+        .to_latest(&mut c)
+        .unwrap();
+    c
 }
 
 #[cfg(test)]

@@ -16,26 +16,33 @@ pub struct SessionStats {
 }
 
 /// Claude Codeが利用者の発話として記録する、機械の出力の先頭。依頼として数えない。
-/// `<command-message>`は同じ操作の`<command-name>`と重なるので外す。
 const MACHINE_INPUTS: [&str; 6] = [
     "<task-notification>",
     "<bash-stdout>",
     "<bash-stderr>",
     "<local-command-stdout>",
     "<local-command-stderr>",
-    "<command-message>",
+    "[Request interrupted by user",
 ];
 
 fn is_request(summary: &str) -> bool {
     !MACHINE_INPUTS.iter().any(|m| summary.starts_with(m))
 }
 
-/// スラッシュコマンドは`<command-name>/x</command-name>`のように記録されるので、名前だけにする。
+fn tag<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+    let (_, rest) = s.split_once(&format!("<{name}>"))?;
+    rest.split_once(&format!("</{name}>"))
+        .map(|(v, _)| v.trim())
+}
+
+/// スラッシュコマンドは`<command-name>`と`<command-args>`のタグで記録される。
+/// 組み込みは`<command-name>`が先頭、スキルは`<command-message>`が先頭なので、位置によらず拾う。
 fn request_text(summary: &str) -> String {
-    summary
-        .strip_prefix("<command-name>")
-        .and_then(|r| r.split_once("</command-name>"))
-        .map_or_else(|| summary.to_string(), |(name, _)| name.to_string())
+    match (tag(summary, "command-name"), tag(summary, "command-args")) {
+        (Some(name), Some(args)) if !args.is_empty() => format!("{name} {args}"),
+        (Some(name), _) => name.to_string(),
+        _ => summary.to_string(),
+    }
 }
 
 /// 本体セッションの利用者の依頼（時刻、本文）を時刻順に返す。
@@ -141,13 +148,15 @@ mod tests {
             "<bash-stderr>x</bash-stderr>",
             "<local-command-stdout>x</local-command-stdout>",
             "<local-command-stderr>x</local-command-stderr>",
-            "<command-message>compact</command-message>",
+            "[Request interrupted by user]",
+            "[Request interrupted by user for tool use]",
         ] {
             assert!(!is_request(text), "{text}");
         }
         for text in [
             "直してください",
             "<command-name>/compact</command-name>",
+            "<command-message>claude-api</command-message> <command-name>/claude-api</command-name>",
             "<bash-input>ls</bash-input>",
             "<pasted_content id=\"1\">x</pasted_content>",
         ] {
@@ -175,16 +184,29 @@ mod tests {
     }
 
     #[test]
-    fn slash_command_shows_only_its_name() {
+    fn slash_command_shows_its_name_and_args() {
         assert_eq!(
             texts(&[
                 prompt(
                     0,
-                    "<command-name>/effort</command-name> <command-message>effort</command-message>"
+                    "<command-name>/effort</command-name> <command-message>effort</command-message> <command-args>high</command-args>"
                 ),
-                prompt(1, "<command-name>/x"),
+                prompt(
+                    1,
+                    "<command-message>claude-api</command-message> <command-name>/claude-api</command-name> <command-args>prompt-audit</command-args>"
+                ),
+                prompt(
+                    2,
+                    "<command-name>/model</command-name> <command-args></command-args>"
+                ),
+                prompt(3, "<command-name>/x"),
             ]),
-            ["/effort", "<command-name>/x"]
+            [
+                "/effort high",
+                "/claude-api prompt-audit",
+                "/model",
+                "<command-name>/x"
+            ]
         );
     }
 

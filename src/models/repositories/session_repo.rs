@@ -141,7 +141,7 @@ impl IngestRepo for SqliteStore {
         self.with(|c| {
             c.execute(
                 "INSERT INTO session_notes(uuid, session_id, ts, kind, text) VALUES(?1,?2,?3,?4,?5)
-                 ON CONFLICT(uuid) DO NOTHING",
+                 ON CONFLICT(session_id, uuid) DO NOTHING",
                 params![n.uuid, n.session_id, ts(n.ts), n.kind.as_str(), n.text],
             )
             .map(|_| ())
