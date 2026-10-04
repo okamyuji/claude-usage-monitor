@@ -35,6 +35,7 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
     });
     ui.separator();
     match d.tab {
+        DetailTab::Summary => {}
         DetailTab::Turns => turns(ui, d, acts),
         DetailTab::LiveLog => match &d.live {
             Some(v) => live(ui, v, forms, acts),

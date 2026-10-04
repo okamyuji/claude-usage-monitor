@@ -12,7 +12,8 @@ use crate::models::domain::pricing::{
 use crate::models::domain::read_models::{
     SessionFilter, SessionModelUsage, SessionRow, TimeRange, TurnRow,
 };
-use crate::models::domain::transcript::{SessionKind, one_line};
+use crate::models::domain::session_summary::stats;
+use crate::models::domain::transcript::{NoteKind, SessionKind, one_line};
 use crate::models::ports::RepoError;
 use chrono::{DateTime, FixedOffset, Utc};
 use std::collections::{HashMap, HashSet};
@@ -20,9 +21,14 @@ use std::collections::{HashMap, HashSet};
 /// 1セッションで読むターンの上限（spec 11章）。
 pub const TURN_LIMIT: usize = 1000;
 
+/// 概要の集計に読むターンの上限。ターン表の上限では長いセッションの数値が欠けるため別にする。
+pub const SUMMARY_TURN_LIMIT: usize = 100_000;
+
 /// 詳細の表示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DetailTab {
+    /// 概要。
+    Summary,
     /// ターン表。
     #[default]
     Turns,
@@ -118,6 +124,44 @@ pub struct SessionDetail {
     pub live: Option<LiveLogVm>,
     /// 再生。「再生」を表示しているときだけ入れる。
     pub replay: Option<ReplayVm>,
+    /// 概要。「概要」を表示しているときだけ作る。
+    pub summary: Option<SummaryVm>,
+}
+
+/// 概要のモデル表の1行。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelLine {
+    /// モデル。
+    pub model: String,
+    /// 要求数。
+    pub requests: String,
+    /// 入力。
+    pub input: String,
+    /// 出力。
+    pub output: String,
+    /// キャッシュ読込。
+    pub cache_read: String,
+    /// キャッシュ作成。
+    pub cache_write: String,
+    /// コスト。
+    pub cost: String,
+}
+
+/// 概要。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SummaryVm {
+    /// Claude Codeが書いた要約（時刻、本文）。時刻順。
+    pub recaps: Vec<(String, String)>,
+    /// 数値（名前、値）。
+    pub stats: Vec<(&'static str, String)>,
+    /// モデル表。
+    pub models: Vec<ModelLine>,
+    /// ツール表（ツール名、呼び出し数、エラー数）。
+    pub tools: Vec<(String, String, String)>,
+    /// 本体セッションの依頼（時刻、1行の要約）。時刻順。
+    pub prompts: Vec<(String, String)>,
+    /// ターンが上限に達し、直近の分だけで集計したか。
+    pub truncated: bool,
 }
 
 /// セッションの見出し。名前、最初の入力、IDの先頭の順に使う。
@@ -328,7 +372,11 @@ pub fn detail(
             now,
             deps.tz,
         ),
-        DetailTab::LiveLog | DetailTab::Replay => vec![],
+        DetailTab::Summary | DetailTab::LiveLog | DetailTab::Replay => vec![],
+    };
+    let summary = match tab {
+        DetailTab::Summary => Some(summary_vm(deps, &s, &usage, &models, names.len(), now)?),
+        _ => None,
     };
     Ok(Some(SessionDetail {
         session_id: s.session_id.clone(),
@@ -353,7 +401,95 @@ pub fn detail(
         tab,
         live: None,
         replay: None,
+        summary,
     }))
+}
+
+fn summary_vm(
+    deps: &GuiDeps,
+    s: &SessionRow,
+    usage: &[SessionModelUsage],
+    models: &[ModelInfo],
+    subagents: usize,
+    now: DateTime<Utc>,
+) -> Result<SummaryVm, RepoError> {
+    let id = s.session_id.as_str();
+    let turns = deps.sessions.turns(id, SUMMARY_TURN_LIMIT, None)?;
+    let notes = deps.sessions.notes(id)?;
+    let tools = deps.sessions.session_tools(id)?;
+    let st = stats(&turns);
+    let clock = |t| fmt_clock(t, now, deps.tz);
+    let (calls, errors) = tools
+        .iter()
+        .fold((0, 0), |a, t| (a.0 + t.calls, a.1 + t.errors));
+    let compacts = notes.iter().filter(|n| n.kind == NoteKind::Compact).count();
+    Ok(SummaryVm {
+        recaps: notes
+            .iter()
+            .filter(|n| n.kind == NoteKind::Recap)
+            .map(|n| (clock(n.ts), n.text.clone()))
+            .collect(),
+        stats: vec![
+            (
+                "期間",
+                format!(
+                    "{}〜{}（{}）",
+                    clock(s.started_at),
+                    clock(s.last_activity_at),
+                    fmt_duration(s.last_activity_at - s.started_at)
+                ),
+            ),
+            ("作業時間", fmt_duration(st.active)),
+            ("依頼", format!("{}件", st.prompts)),
+            ("API要求", format!("{}件", st.requests)),
+            (
+                "ツール",
+                if errors > 0 {
+                    format!("{calls}回（エラー{errors}回）")
+                } else {
+                    format!("{calls}回")
+                },
+            ),
+            ("圧縮", format!("{compacts}回")),
+            ("サブエージェント", format!("{subagents}件")),
+        ],
+        models: model_lines(&st.by_model, usage, models),
+        tools: tools
+            .into_iter()
+            .map(|t| (t.tool_name, t.calls.to_string(), t.errors.to_string()))
+            .collect(),
+        prompts: turns
+            .iter()
+            .filter(|t| t.agent_id.is_empty() && t.kind == "prompt")
+            .map(|t| (clock(t.ts), t.summary.clone()))
+            .collect(),
+        truncated: turns.len() >= SUMMARY_TURN_LIMIT,
+    })
+}
+
+fn model_lines(
+    by_model: &[(String, usize)],
+    usage: &[SessionModelUsage],
+    models: &[ModelInfo],
+) -> Vec<ModelLine> {
+    by_model
+        .iter()
+        .map(|(m, n)| {
+            let u = usage
+                .iter()
+                .filter(|x| x.model.as_deref() == Some(m.as_str()))
+                .fold(TokenUsage::default(), |a, x| a.plus(&x.usage));
+            ModelLine {
+                model: m.clone(),
+                requests: n.to_string(),
+                input: fmt_tokens(u.input),
+                output: fmt_tokens(u.output),
+                cache_read: fmt_tokens(u.cache_read),
+                cache_write: fmt_tokens(u.cache_write_5m + u.cache_write_1h),
+                cost: fmt_usd(cost_for(models, m, &u)),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -361,6 +497,7 @@ mod tests {
     use super::*;
     use crate::models::domain::pricing::seed_models;
     use crate::models::domain::records::SubagentRecord;
+    use crate::models::domain::transcript::NoteKind;
     use crate::models::ports::{IngestRepo, ModelRepo, ProfileRepo};
     use crate::test_support::{
         FakeCreds, FakeDaemon, FixedClock, gui_deps, seed_session, seed_turn, temp_store, tokens,
@@ -607,5 +744,152 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+    fn summary_deps() -> (tempfile::TempDir, tempfile::TempDir, GuiDeps) {
+        let (d, s) = temp_store();
+        let s = Arc::new(s);
+        s.seed_if_empty(&seed_models()).unwrap();
+        let at = |m: i64| now() + Duration::minutes(m);
+        seed_session(&s, "w", SessionKind::Interactive, None, at(30));
+        seed_session(&s, "empty", SessionKind::Interactive, None, at(0));
+        for (id, agent, m, model, kind) in [
+            ("p1", "", 0, None, "prompt"),
+            ("r1", "", 1, Some("claude-opus-5-5"), "text"),
+            ("r2", "", 2, Some("claude-opus-5-5"), "tool_use"),
+            ("r3", "", 3, Some("claude-opus-5-5"), "text"),
+            ("sp", "a1", 5, None, "prompt"),
+            ("p2", "", 30, None, "prompt"),
+        ] {
+            seed_turn(&s, "w", agent, id, at(m), model, kind, tokens(1_000, 10));
+        }
+        for (id, name) in [("t1", "Bash"), ("t2", "Bash")] {
+            s.upsert_tool_call(&crate::models::domain::records::ToolCallRecord {
+                tool_use_id: id.into(),
+                session_id: "w".into(),
+                agent_id: String::new(),
+                ts: at(2),
+                tool_name: name.into(),
+            })
+            .unwrap();
+        }
+        s.mark_tool_error("t2").unwrap();
+        for (uuid, m, kind, text) in [
+            ("n1", 4, NoteKind::Recap, "終わりました"),
+            ("n2", 6, NoteKind::Compact, ""),
+        ] {
+            s.upsert_note(&crate::models::domain::records::NoteRecord {
+                uuid: uuid.into(),
+                session_id: "w".into(),
+                ts: at(m),
+                kind,
+                text: text.into(),
+            })
+            .unwrap();
+        }
+        s.upsert_subagent(&SubagentRecord {
+            agent_id: "a1".into(),
+            session_id: "w".into(),
+            agent_type: Some("Explore".into()),
+            description: None,
+            parent_tool_use_id: None,
+            spawn_depth: Some(1),
+        })
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let deps = gui_deps(
+            s,
+            Arc::new(FixedClock::at(at(60))),
+            home.path(),
+            Arc::new(FakeCreds(HashMap::new())),
+            Arc::new(FakeDaemon::default()),
+        );
+        (d, home, deps)
+    }
+
+    fn stat<'a>(s: &'a SummaryVm, name: &str) -> &'a str {
+        s.stats
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_str())
+            .unwrap()
+    }
+
+    #[test]
+    fn summary_collects_recaps_stats_models_tools_and_prompts() {
+        let (_d, _h, deps) = summary_deps();
+        let d = detail(&deps, "w", &HashSet::new(), DetailTab::Summary, None)
+            .unwrap()
+            .unwrap();
+        let s = d.summary.expect("概要");
+        assert_eq!(
+            s.recaps.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
+            ["終わりました"]
+        );
+        assert_eq!(
+            s.stats.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            [
+                "期間",
+                "作業時間",
+                "依頼",
+                "API要求",
+                "ツール",
+                "圧縮",
+                "サブエージェント"
+            ]
+        );
+        assert_eq!(
+            [
+                stat(&s, "作業時間"),
+                stat(&s, "依頼"),
+                stat(&s, "API要求"),
+                stat(&s, "ツール"),
+                stat(&s, "圧縮"),
+                stat(&s, "サブエージェント")
+            ],
+            ["5分", "2件", "3件", "2回（エラー1回）", "1回", "1件"]
+        );
+        assert_eq!(s.models.len(), 1);
+        let m = &s.models[0];
+        assert_eq!(
+            (m.model.as_str(), m.requests.as_str(), m.input.as_str()),
+            ("claude-opus-5-5", "3", "3.00k")
+        );
+        assert_ne!(m.cost, "単価未登録");
+        assert_eq!(
+            s.tools,
+            [("Bash".to_string(), "2".to_string(), "1".to_string())]
+        );
+        assert_eq!(s.prompts.len(), 2);
+        assert!(!s.truncated);
+    }
+
+    #[test]
+    fn summary_of_empty_session_has_no_rows() {
+        let (_d, _h, deps) = summary_deps();
+        let d = detail(&deps, "empty", &HashSet::new(), DetailTab::Summary, None)
+            .unwrap()
+            .unwrap();
+        let s = d.summary.expect("概要");
+        assert!(s.recaps.is_empty() && s.models.is_empty() && s.tools.is_empty());
+        assert!(s.prompts.is_empty());
+        assert_eq!(
+            [stat(&s, "依頼"), stat(&s, "ツール"), stat(&s, "作業時間")],
+            ["0件", "0回", "0秒"]
+        );
+    }
+
+    #[test]
+    fn summary_is_built_only_for_summary_tab() {
+        let (_d, _h, deps) = summary_deps();
+        for tab in [DetailTab::Turns, DetailTab::LiveLog, DetailTab::Replay] {
+            let d = detail(&deps, "w", &HashSet::new(), tab, None)
+                .unwrap()
+                .unwrap();
+            assert!(d.summary.is_none(), "{tab:?}");
+        }
+        let d = detail(&deps, "w", &HashSet::new(), DetailTab::Summary, None)
+            .unwrap()
+            .unwrap();
+        assert!(d.turns.is_empty());
     }
 }

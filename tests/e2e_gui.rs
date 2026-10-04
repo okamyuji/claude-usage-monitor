@@ -885,6 +885,8 @@ mod calendar_e2e {
         let mut h = open_calendar(&env);
         h.get_by_label_contains("設計の相談").click();
         h.run();
+        h.get_by_label("ターン").click();
+        h.run();
         h.get_by_label("Read: src/main.rs");
         assert_eq!(h.state().calendar_selected(), Some("s1"));
         h.get_by_label_contains("のターン");
@@ -903,6 +905,8 @@ mod calendar_e2e {
         seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
         let mut h = open_calendar(&env);
         h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("ターン").click();
         h.run();
         h.get_by_label("Read: src/main.rs");
         h.get_by_label_contains("前週").click();
