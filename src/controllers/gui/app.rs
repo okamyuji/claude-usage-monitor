@@ -185,6 +185,18 @@ pub struct AppVm {
     pub notice: Option<String>,
 }
 
+impl AppVm {
+    /// 詳細の再生が進んでいるか。再生中は描き直しの間隔を短くする。
+    pub fn replay_playing(&self) -> bool {
+        let detail = match &self.body {
+            TabVm::Dashboard(d) => d.detail.as_ref(),
+            TabVm::Calendar(c) => c.detail.as_ref(),
+            _ => None,
+        };
+        matches!(detail.and_then(|d| d.replay.as_ref()), Some(r) if r.playing)
+    }
+}
+
 /// 入力欄と描画側で動かす値の状態。eguiの入力欄は`&mut`で値を書き換えるため、ViewModelと分けて可変で渡す。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Forms {
@@ -1050,6 +1062,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn replay_on_the_calendar_tab_counts_as_playing() {
+        use crate::controllers::gui::dashboard::replay::ReplayAction;
+        use crate::controllers::gui::dashboard::sessions::DetailTab;
+        use crate::models::domain::transcript::SessionKind;
+        use crate::test_support::{seed_session, seed_turn, tokens};
+        let (_d, _h, clock, s, mut c) = ctl(FakeDaemon::default());
+        let t = clock.now() - chrono::Duration::hours(1);
+        seed_session(&s, "a", SessionKind::Interactive, None, t);
+        seed_turn(&s, "a", "", "m1", t, None, "prompt", tokens(1, 1));
+        seed_turn(&s, "a", "", "m2", t, None, "text", tokens(1, 1));
+        c.handle(Action::SelectTab(Tab::Calendar));
+        c.handle(Action::Dash(DashAction::Select(
+            "a".into(),
+            DetailTab::Replay,
+        )));
+        assert!(!c.vm().replay_playing());
+        c.handle(Action::Dash(DashAction::Replay(ReplayAction::TogglePlay)));
+        assert!(c.vm().replay_playing());
+        c.handle(Action::SelectTab(Tab::Analytics));
+        assert!(!c.vm().replay_playing());
+        c.handle(Action::SelectTab(Tab::Dashboard));
+        c.handle(Action::Dash(DashAction::Select(
+            "a".into(),
+            DetailTab::Replay,
+        )));
+        c.handle(Action::Dash(DashAction::Replay(ReplayAction::TogglePlay)));
+        assert!(c.vm().replay_playing());
     }
 
     #[test]
