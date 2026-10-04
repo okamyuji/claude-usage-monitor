@@ -32,13 +32,23 @@ CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#;
 
 // 取り込み位置を消すのは、V1までのJSONLにある要約を次の全体走査で読み直すため。取り込みは冪等なので重複しない。
-// 主キーにsession_idを含めるのは、再開したセッションのJSONLに前のセッションの要約が同じuuidで写されるため。
 const SCHEMA_V2: &str = r#"
-CREATE TABLE session_notes(session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, uuid TEXT NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY(session_id, uuid));
+CREATE TABLE session_notes(uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL);
+CREATE INDEX session_notes_session ON session_notes(session_id, ts);
 DELETE FROM ingest_offsets;
 "#;
 
-const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2)];
+// 再開したセッションのJSONLには、前のセッションの要約が同じuuidで写される。uuidだけの主キーでは片方が捨てられるので、
+// 主キーに session_id を含めて表を作り直す。取り込み位置を消し、捨てられた要約を次の全体走査で読み直す。
+const SCHEMA_V3: &str = r#"
+CREATE TABLE session_notes_v3(session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, uuid TEXT NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY(session_id, uuid));
+INSERT INTO session_notes_v3(session_id, uuid, ts, kind, text) SELECT session_id, uuid, ts, kind, text FROM session_notes;
+DROP TABLE session_notes;
+ALTER TABLE session_notes_v3 RENAME TO session_notes;
+DELETE FROM ingest_offsets;
+"#;
+
+const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2), M::up(SCHEMA_V3)];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 /// SQLiteの保存先。`rusqlite::Connection`はスレッド間で共有できないため`Mutex`で包む。
@@ -264,5 +274,40 @@ mod tests {
             })
             .unwrap();
         assert_eq!(got, (0, "n".to_string(), 0));
+    }
+
+    #[test]
+    fn v3_keys_notes_by_session_and_uuid_keeping_rows_and_rereading_files() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("cumon.db");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            Migrations::from_slice(&[M::up(SCHEMA_V1), M::up(SCHEMA_V2)])
+                .to_latest(&mut c)
+                .unwrap();
+            c.execute_batch(
+                "INSERT INTO profiles(id, name, created_at) VALUES(1, 'p', 'x');
+                 INSERT INTO sessions(session_id, profile_id, kind, started_at, last_activity_at) VALUES('a', 1, 'interactive', 'x', 'x'), ('b', 1, 'interactive', 'x', 'x');
+                 INSERT INTO session_notes(uuid, session_id, ts, kind, text) VALUES('n1', 'a', 't', 'recap', 'V2の要約');
+                 INSERT INTO ingest_offsets(path, offset, size, mtime) VALUES('/a', 1, 1, 1);",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let got: (i64, String, i64) = s
+            .with(|c| {
+                // V3の後は、別のセッションが同じuuidの要約を持てる。
+                c.execute(
+                    "INSERT INTO session_notes(session_id, uuid, ts, kind, text) VALUES('b', 'n1', 't', 'recap', '写された要約')",
+                    [],
+                )?;
+                c.query_row(
+                    "SELECT (SELECT COUNT(*) FROM ingest_offsets), (SELECT text FROM session_notes WHERE session_id = 'a'), (SELECT user_version FROM pragma_user_version)",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(got, (0, "V2の要約".to_string(), 3));
     }
 }
