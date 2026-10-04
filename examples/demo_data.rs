@@ -96,7 +96,19 @@ fn week(cfg: &Path, now: DateTime<Utc>) {
             let start = base + Duration::minutes(100 * i as i64 + 20 * (back % 3));
             let sid = format!("w{back}-{i}");
             let turns = 6 + (back as usize + i) % 5;
-            let lines = session(&sid, proj, "cli", prompt, start, turns, 3);
+            let mut lines = session(&sid, proj, "cli", prompt, start, turns, 3);
+            if *proj == "web" {
+                // 帯を押した画像に概要の要約が写るよう、Claude Codeが書く要約と圧縮の行を足す。
+                let end = start + Duration::minutes(3 * turns as i64);
+                lines.push(note(
+                    &sid,
+                    proj,
+                    end,
+                    "compact_boundary",
+                    "Conversation compacted",
+                ));
+                lines.push(note(&sid, proj, end + Duration::minutes(1), "away_summary", "トップページの画像を遅延読み込みにし、表示までの時間を2.1秒から0.8秒に縮めました。次は、モバイルでの表示を確かめます。"));
+            }
             write(
                 &cfg.join(format!("projects/-home-you-src-{proj}/{sid}.jsonl")),
                 &lines,
@@ -262,6 +274,13 @@ fn session(
         });
     }
     lines
+}
+
+fn note(sid: &str, proj: &str, at: DateTime<Utc>, subtype: &str, content: &str) -> String {
+    format!(
+        r#"{{"type":"system","subtype":"{subtype}","content":"{content}","uuid":"{sid}-{subtype}","sessionId":"{sid}","cwd":"/home/you/src/{proj}","timestamp":"{t}"}}"#,
+        t = ts(at)
+    )
 }
 
 fn user(sid: &str, proj: &str, entry: &str, at: DateTime<Utc>, prompt: &str) -> String {
