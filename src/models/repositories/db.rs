@@ -45,6 +45,7 @@ CREATE TABLE session_notes_v3(session_id TEXT NOT NULL REFERENCES sessions(sessi
 INSERT INTO session_notes_v3(session_id, uuid, ts, kind, text) SELECT session_id, uuid, ts, kind, text FROM session_notes;
 DROP TABLE session_notes;
 ALTER TABLE session_notes_v3 RENAME TO session_notes;
+CREATE INDEX session_notes_session ON session_notes(session_id, ts);
 DELETE FROM ingest_offsets;
 "#;
 
@@ -309,5 +310,44 @@ mod tests {
             })
             .unwrap();
         assert_eq!(got, (0, "V2の要約".to_string(), 3));
+        let index: i64 = s
+            .with(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'session_notes_session'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(index, 1);
+    }
+
+    /// PRの途中の版は、V2で主キーを(session_id, uuid)にしていた。その版で作ったDBもV3で移ることを確かめる。
+    #[test]
+    fn v3_also_migrates_v2_tables_keyed_by_session_and_uuid() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("cumon.db");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            Migrations::from_slice(&[
+                M::up(SCHEMA_V1),
+                M::up(
+                    "CREATE TABLE session_notes(session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, uuid TEXT NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY(session_id, uuid));",
+                ),
+            ])
+            .to_latest(&mut c)
+            .unwrap();
+            c.execute_batch(
+                "INSERT INTO profiles(id, name, created_at) VALUES(1, 'p', 'x');
+                 INSERT INTO sessions(session_id, profile_id, kind, started_at, last_activity_at) VALUES('a', 1, 'interactive', 'x', 'x'), ('b', 1, 'interactive', 'x', 'x');
+                 INSERT INTO session_notes(session_id, uuid, ts, kind, text) VALUES('a', 'n1', 't', 'recap', '元'), ('b', 'n1', 't', 'recap', '写し');",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let rows: i64 = s
+            .with(|c| c.query_row("SELECT COUNT(*) FROM session_notes", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(rows, 2);
     }
 }
