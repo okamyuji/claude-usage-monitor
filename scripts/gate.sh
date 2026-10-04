@@ -36,19 +36,22 @@ if [ -n "${GATE_LOW:-}" ]; then
     run=(taskpolicy -b)
   fi
   # readme_imagesはwgpuでGPUを使い、負荷が大きいので外す。
-  cov_args=(--lib)
+  # 結合テストでしか検出できない変異もあるので、mutationもカバレッジと同じテストで検査する。
+  targets=(--lib)
   for t in "$root"/tests/*.rs; do
     name="$(basename "$t" .rs)"
-    [ "$name" = readme_images ] || cov_args+=(--test "$name")
+    [ "$name" = readme_images ] || targets+=(--test "$name")
   done
-  cov_args+=(-- --test-threads=1)
-  mut_args=(--in-place --timeout 300 -- --lib -- --test-threads=1)
+  cov_args=("${targets[@]}" -- --test-threads=1)
+  # cargo-mutantsは既定でCPU数の枠のjobserverを子のcargoに渡し、CARGO_BUILD_JOBSより優先されるため、jobserverを使わない。
+  mut_args=(--in-place --jobserver false --timeout 300 -- "${targets[@]}" -- --test-threads=1)
 fi
 
 "${run[@]}" cargo fmt --manifest-path "$manifest" --check
 "${run[@]}" cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
-# 前回の実行や別のtoolchainが残したprofrawが混ざると、集計が失敗するため先に消す。
-"${run[@]}" cargo llvm-cov clean --manifest-path "$manifest" --profraw-only
+# 前回の実行のprofrawや古いテストバイナリが残ると、集計が失敗したり、古い関数が0回として数えられたりする。
+# このクレートのビルド物ごと消す（依存クレートのビルドは残る）。
+"${run[@]}" cargo llvm-cov clean --manifest-path "$manifest" --workspace
 "${run[@]}" cargo llvm-cov --manifest-path "$manifest" --no-report "${cov_args[@]}"
 "${run[@]}" cargo llvm-cov report --manifest-path "$manifest" --json --output-path "$root/target/llvm-cov.json"
 python3 "$root/scripts/crap.py" "$root/target/llvm-cov.json" "$@"
