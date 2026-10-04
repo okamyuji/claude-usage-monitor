@@ -83,7 +83,7 @@ impl FileState<'_> {
                     self.repo.mark_tool_error(&r.tool_use_id)?;
                 }
             }
-            Event::Other => {}
+            Event::Note { .. } | Event::Other => {}
         }
         Ok(())
     }

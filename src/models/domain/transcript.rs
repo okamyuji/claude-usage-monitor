@@ -49,6 +49,37 @@ impl SessionKind {
     }
 }
 
+/// 要約の最大文字数。実測の最大は263字で、200字の`SUMMARY_CHARS`では切れるため別にする。
+pub const NOTE_CHARS: usize = 2000;
+
+/// `system`行のうち保存するもの。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteKind {
+    /// 離席中にClaude Codeが書く作業の要約（`away_summary`）。
+    Recap,
+    /// 会話の圧縮（`compact_boundary`）。
+    Compact,
+}
+
+impl NoteKind {
+    /// DB保存用の文字列。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoteKind::Recap => "recap",
+            NoteKind::Compact => "compact",
+        }
+    }
+
+    /// DBの文字列から戻す。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "recap" => Some(NoteKind::Recap),
+            "compact" => Some(NoteKind::Compact),
+            _ => None,
+        }
+    }
+}
+
 /// 行の種類によらず共通する項目。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LineMeta {
@@ -113,6 +144,13 @@ pub enum Event {
     UserPrompt(String),
     /// ツール結果。
     ToolResults(Vec<ToolResult>),
+    /// Claude Codeが書いた要約、または圧縮の印。
+    Note {
+        /// 種類。
+        kind: NoteKind,
+        /// 本文（1行に要約済み）。圧縮の印では空のこともある。
+        text: String,
+    },
     /// 集計に使わない行。
     Other,
 }
@@ -263,6 +301,21 @@ fn parse_user(v: &Value) -> Event {
     }
 }
 
+fn parse_system(v: &Value) -> Event {
+    let text = v.get("content").and_then(Value::as_str);
+    match (v.get("subtype").and_then(Value::as_str), text) {
+        (Some("away_summary"), Some(t)) => Event::Note {
+            kind: NoteKind::Recap,
+            text: one_line(t, NOTE_CHARS),
+        },
+        (Some("compact_boundary"), t) => Event::Note {
+            kind: NoteKind::Compact,
+            text: t.map(|t| one_line(t, NOTE_CHARS)).unwrap_or_default(),
+        },
+        _ => Event::Other,
+    }
+}
+
 /// 1行を解析する。JSONとして読めない行だけをエラーにし、項目の欠落は許容する。
 pub fn parse_line(line: &str) -> Result<ParsedLine, serde_json::Error> {
     let v: Value = serde_json::from_str(line)?;
@@ -278,6 +331,7 @@ pub fn parse_line(line: &str) -> Result<ParsedLine, serde_json::Error> {
     let event = match v.get("type").and_then(Value::as_str) {
         Some("assistant") => parse_assistant(&v),
         Some("user") => parse_user(&v),
+        Some("system") => parse_system(&v),
         _ => Event::Other,
     };
     Ok(ParsedLine { meta, event })
@@ -536,5 +590,81 @@ mod tests {
         }
         assert_eq!(SessionKind::Headless.as_str(), "headless");
         assert_eq!(SessionKind::parse("x"), None);
+    }
+    #[test]
+    fn system_away_summary_becomes_recap_note() {
+        let line = r#"{"type":"system","subtype":"away_summary","content":"作業は\n終わりました","uuid":"n1","sessionId":"s1","timestamp":"2026-10-04T03:27:16.359Z"}"#;
+        let pl = parse_line(line).unwrap();
+        assert_eq!(pl.meta.uuid.as_deref(), Some("n1"));
+        assert_eq!(
+            pl.event,
+            Event::Note {
+                kind: NoteKind::Recap,
+                text: "作業は 終わりました".into()
+            }
+        );
+    }
+
+    #[test]
+    fn system_compact_boundary_becomes_compact_note() {
+        let line = r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","uuid":"n2","sessionId":"s1"}"#;
+        assert_eq!(
+            parse_line(line).unwrap().event,
+            Event::Note {
+                kind: NoteKind::Compact,
+                text: "Conversation compacted".into()
+            }
+        );
+    }
+
+    #[test]
+    fn compact_boundary_without_content_still_counts() {
+        let line = r#"{"type":"system","subtype":"compact_boundary","uuid":"n3"}"#;
+        assert_eq!(
+            parse_line(line).unwrap().event,
+            Event::Note {
+                kind: NoteKind::Compact,
+                text: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn other_system_lines_and_broken_recaps_are_ignored() {
+        for line in [
+            r#"{"type":"system","subtype":"turn_duration","content":"x"}"#,
+            r#"{"type":"system","subtype":"away_summary","content":3}"#,
+            r#"{"type":"system","subtype":"away_summary"}"#,
+            r#"{"type":"system"}"#,
+        ] {
+            assert_eq!(parse_line(line).unwrap().event, Event::Other, "{line}");
+        }
+    }
+
+    #[test]
+    fn long_recap_is_cut_at_note_chars() {
+        let body = "あ".repeat(NOTE_CHARS + 5);
+        let line = json!({"type":"system","subtype":"away_summary","content":body}).to_string();
+        let Event::Note { text, .. } = parse_line(&line).unwrap().event else {
+            panic!("要約になっていない")
+        };
+        assert_eq!(text.chars().count(), NOTE_CHARS + 1);
+        let exact =
+            json!({"type":"system","subtype":"away_summary","content":"あ".repeat(NOTE_CHARS)})
+                .to_string();
+        let Event::Note { text, .. } = parse_line(&exact).unwrap().event else {
+            panic!("要約になっていない")
+        };
+        assert_eq!(text.chars().count(), NOTE_CHARS);
+    }
+
+    #[test]
+    fn note_kind_round_trips() {
+        for k in [NoteKind::Recap, NoteKind::Compact] {
+            assert_eq!(NoteKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(NoteKind::Recap.as_str(), "recap");
+        assert_eq!(NoteKind::Compact.as_str(), "compact");
+        assert_eq!(NoteKind::parse("x"), None);
     }
 }

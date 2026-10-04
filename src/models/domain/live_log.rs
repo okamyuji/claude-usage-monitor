@@ -125,7 +125,7 @@ pub fn lines_from_transcript(
                 )
             })
             .collect(),
-        Event::Other => vec![],
+        Event::Note { .. } | Event::Other => vec![],
     }
 }
 
