@@ -8,7 +8,7 @@ use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
 use crate::models::domain::read_models::{
     CalendarTurn, DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
-    SessionModelUsage, SessionRow, SubagentRow, ToolStat, TurnRow,
+    SessionModelUsage, SessionRow, SubagentRow, TimeRange, ToolStat, TurnRow,
 };
 use crate::models::domain::records::{
     FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
@@ -249,7 +249,13 @@ pub trait SessionQueryRepo: Send + Sync {
     /// 1件。
     fn session(&self, session_id: &str) -> Result<Option<SessionRow>, RepoError>;
     /// ターンを時刻順に返す。長いセッションでは新しい方から`limit`件だけを返す。
-    fn turns(&self, session_id: &str, limit: usize) -> Result<Vec<TurnRow>, RepoError>;
+    /// `range`を渡すと、その範囲（両端を含む）のターンだけを読む。
+    fn turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+        range: Option<TimeRange>,
+    ) -> Result<Vec<TurnRow>, RepoError>;
     /// セッション、エージェント、モデルごとの合計。
     fn model_usage(&self, session_ids: &[String]) -> Result<Vec<SessionModelUsage>, RepoError>;
     /// サブエージェント。

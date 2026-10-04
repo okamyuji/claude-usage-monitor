@@ -1,7 +1,5 @@
 //! カレンダータブの描画。上に週の操作と凡例、左に週間カレンダー、右に選んだセッションの詳細。
 use crate::controllers::gui::app::{Action, Forms};
-use crate::controllers::gui::dashboard::DashAction;
-use crate::controllers::gui::dashboard::sessions::DetailTab;
 use crate::controllers::gui::tabs::calendar::{BandVm, CalendarAction, CalendarVm, ColorBy};
 use crate::views::dashboard::{calendar_ratio, detail, split};
 use crate::views::layout::GAP;
@@ -36,7 +34,12 @@ pub fn show(ui: &mut Ui, vm: &CalendarVm, forms: &mut Forms, acts: &mut Vec<Acti
         acts,
         |ui, _, acts| grid(ui, vm, acts),
         |ui, forms, acts| match &vm.detail {
-            Some(d) => detail::show(ui, Some(d), forms, acts),
+            Some(d) => {
+                if let Some(l) = &vm.band_label {
+                    ui.label(RichText::new(l).color(pal(ui).accent));
+                }
+                detail::show(ui, Some(d), forms, acts)
+            }
             None => {
                 ui.label(RichText::new("帯を押すと詳細を出します").color(pal(ui).weak));
             }
@@ -150,8 +153,7 @@ fn grid(ui: &mut Ui, vm: &CalendarVm, acts: &mut Vec<Action>) {
                 }
                 for b in &d.bands {
                     let r = band_rect(b, x_of(i), col, y_of);
-                    let selected = vm.selected.as_deref() == Some(b.session_id.as_str());
-                    band(ui, &painter, b, r, selected, i, acts);
+                    band(ui, &painter, b, r, i, acts);
                 }
             }
             if let Some((day, min)) = vm.now {
@@ -175,15 +177,7 @@ fn band_rect(b: &BandVm, x: f32, col: f32, y_of: impl Fn(u32) -> f32) -> Rect {
     )
 }
 
-fn band(
-    ui: &mut Ui,
-    painter: &Painter,
-    b: &BandVm,
-    r: Rect,
-    selected: bool,
-    day: usize,
-    acts: &mut Vec<Action>,
-) {
+fn band(ui: &mut Ui, painter: &Painter, b: &BandVm, r: Rect, day: usize, acts: &mut Vec<Action>) {
     let color = series(b.color, pal(ui));
     let id = ui.id().with(("band", day, &b.session_id, b.start));
     let resp = ui.interact(r, id, Sense::click());
@@ -191,12 +185,12 @@ fn band(
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &b.tooltip));
     let fill = if resp.hovered() { 0.55 } else { 0.35 };
     painter.rect_filled(r, 3.0, color.gamma_multiply(fill));
-    let width = if selected { 2.5 } else { 1.0 };
+    let width = if b.selected { 2.5 } else { 1.0 };
     painter.rect_stroke(r, 3.0, Stroke::new(width, color), StrokeKind::Inside);
     if resp.clicked() {
-        acts.push(Action::Dash(DashAction::Select(
+        acts.push(Action::Calendar(CalendarAction::SelectBand(
             b.session_id.clone(),
-            DetailTab::Turns,
+            b.seg_start,
         )));
     }
     resp.on_hover_text(&b.tooltip);

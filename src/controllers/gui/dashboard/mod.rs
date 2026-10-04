@@ -16,6 +16,7 @@ use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayState};
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail, SessionItem};
 use crate::controllers::gui::dashboard::trend::{TrendRange, TrendsVm};
+use crate::models::domain::read_models::TimeRange;
 use crate::models::domain::transcript::SessionKind;
 use crate::models::ports::RepoError;
 use std::collections::HashSet;
@@ -51,6 +52,8 @@ pub struct DashboardState {
     pub replay: ReplayState,
     /// 推移の範囲。
     pub trend_range: TrendRange,
+    /// ターン一覧を絞る範囲。カレンダーの帯を選んだときだけ入る。
+    pub range: Option<TimeRange>,
 }
 
 impl Default for DashboardState {
@@ -65,6 +68,7 @@ impl Default for DashboardState {
             detail_tab: DetailTab::Turns,
             replay: ReplayState::default(),
             trend_range: TrendRange::Hours5,
+            range: None,
         }
     }
 }
@@ -163,7 +167,7 @@ pub fn selected_detail(
     st: &DashboardState,
 ) -> Result<Option<SessionDetail>, RepoError> {
     let mut detail = match &st.selected {
-        Some(id) => sessions::detail(deps, id, &st.expanded, st.detail_tab)?,
+        Some(id) => sessions::detail(deps, id, &st.expanded, st.detail_tab, st.range)?,
         None => None,
     };
     if let Some(d) = detail.as_mut().filter(|d| d.tab == DetailTab::Replay) {

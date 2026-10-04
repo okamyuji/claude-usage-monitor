@@ -838,8 +838,8 @@ mod calendar_e2e {
         seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
         let h = open_calendar(&env);
         h.get_by_label("2026年9/20〜9/26");
-        h.get_by_label("日 9/20");
-        h.get_by_label("土 9/26");
+        h.get_by_label("09/20(日)");
+        h.get_by_label("09/26(土)");
         h.get_by_label("1 セッション");
         h.get_by_label("app 1");
         h.get_by_label_contains("設計の相談");
@@ -887,6 +887,7 @@ mod calendar_e2e {
         h.run();
         h.get_by_label("Read: src/main.rs");
         assert_eq!(h.state().calendar_selected(), Some("s1"));
+        h.get_by_label_contains("のターン");
         h.get_by_label("ダッシュボード").click();
         h.run();
         assert_eq!(h.state().dash_selected(), None);

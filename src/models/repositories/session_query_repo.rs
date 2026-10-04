@@ -1,7 +1,7 @@
 //! セッション画面とログ再生の読み取り。
 
 use crate::models::domain::read_models::{
-    CalendarTurn, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TurnRow,
+    CalendarTurn, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TimeRange, TurnRow,
 };
 use crate::models::domain::transcript::SessionKind;
 use crate::models::ports::{RepoError, SessionQueryRepo};
@@ -123,14 +123,22 @@ impl SessionQueryRepo for SqliteStore {
         Ok(rows.into_iter().find_map(session_row))
     }
 
-    fn turns(&self, session_id: &str, limit: usize) -> Result<Vec<TurnRow>, RepoError> {
+    fn turns(
+        &self,
+        session_id: &str,
+        limit: usize,
+        range: Option<TimeRange>,
+    ) -> Result<Vec<TurnRow>, RepoError> {
+        let (from, to) = range.map_or((None, None), |(f, t)| (Some(ts(f)), Some(ts(t))));
         let rows: Vec<TurnTuple> = self.with(|c| {
             query_rows(
                 c,
                 "SELECT agent_id, message_id, ts, model, kind, summary, input, output, cache_read, cache_write_5m, cache_write_1h FROM (
-                   SELECT *, id AS rid FROM turns WHERE session_id = ?1 ORDER BY ts DESC, id DESC LIMIT ?2
+                   SELECT *, id AS rid FROM turns
+                   WHERE session_id = ?1 AND (?3 IS NULL OR ts >= ?3) AND (?4 IS NULL OR ts <= ?4)
+                   ORDER BY ts DESC, id DESC LIMIT ?2
                  ) ORDER BY ts, rid",
-                params![session_id, limit as i64],
+                params![session_id, limit as i64, from, to],
             )
         })?;
         Ok(rows.into_iter().filter_map(turn_row).collect())
@@ -313,7 +321,7 @@ mod tests {
                 tokens(i as u64, 1),
             );
         }
-        let all = s.turns("s1", 100).unwrap();
+        let all = s.turns("s1", 100, None).unwrap();
         assert_eq!(
             all.iter()
                 .map(|t| t.message_id.as_str())
@@ -321,7 +329,7 @@ mod tests {
             ["m0", "m1", "m2", "m3", "m4"]
         );
         assert_eq!(all[4].usage.input, 4);
-        let newest = s.turns("s1", 2).unwrap();
+        let newest = s.turns("s1", 2, None).unwrap();
         assert_eq!(
             newest
                 .iter()
@@ -329,6 +337,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["m3", "m4"]
         );
+    }
+
+    #[test]
+    fn turns_in_a_range_reach_past_the_newest_limit() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "s1", SessionKind::Interactive, None, t0());
+        for i in 0..5 {
+            let at = t0() + Duration::seconds(i);
+            seed_turn(
+                &s,
+                "s1",
+                "",
+                &format!("m{i}"),
+                at,
+                None,
+                "text",
+                tokens(1, 1),
+            );
+        }
+        let range = Some((t0() + Duration::seconds(1), t0() + Duration::seconds(2)));
+        let ids: Vec<String> = s
+            .turns("s1", 2, range)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.message_id)
+            .collect();
+        assert_eq!(ids, ["m1", "m2"]);
     }
 
     #[test]
@@ -405,11 +440,11 @@ mod tests {
         seed_turn(&s, "s1", "", "m1", t0(), None, "prompt", tokens(0, 0));
         s.with(|c| c.execute("UPDATE turns SET input = X'00'", []))
             .unwrap();
-        assert!(s.turns("s1", 10).is_err());
+        assert!(s.turns("s1", 10, None).is_err());
         assert!(s.model_usage(&["s1".to_string()]).is_err());
         s.with(|c| c.execute("UPDATE turns SET input = 0, ts = 'bad'", []))
             .unwrap();
-        assert!(s.turns("s1", 10).unwrap().is_empty());
+        assert!(s.turns("s1", 10, None).unwrap().is_empty());
     }
 
     #[test]

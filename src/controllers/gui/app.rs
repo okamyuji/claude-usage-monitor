@@ -1044,7 +1044,10 @@ mod tests {
                 panic!("カレンダーのViewModelではありません")
             };
             if v.title.contains("9/27") {
-                assert!(v.detail.is_none() && v.selected.is_none(), "k={k}");
+                assert!(
+                    v.detail.is_none() && c.calendar_selected().is_none(),
+                    "k={k}"
+                );
             }
         }
     }

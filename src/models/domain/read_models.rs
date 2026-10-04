@@ -6,6 +6,9 @@ use crate::models::domain::transcript::SessionKind;
 use crate::models::domain::usage::{BreakdownRow, LimitWindow, Spend};
 use chrono::{DateTime, Utc};
 
+/// 両端を含む時刻の範囲（UTC）。
+pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
+
 /// プロファイルの最新の取得結果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LatestUsage {

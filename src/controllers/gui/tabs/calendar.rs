@@ -1,13 +1,15 @@
 //! カレンダータブ。週のセッションを帯にし、日ごとに列を割り当てる。選択と詳細はダッシュボードと別に持つ。
 use crate::controllers::gui::app::GuiDeps;
-use crate::controllers::gui::dashboard::sessions::SessionDetail;
-use crate::controllers::gui::dashboard::{DashboardState, selected_detail};
+use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail};
+use crate::controllers::gui::dashboard::{
+    DashAction, DashboardState, handle as dash_handle, selected_detail,
+};
 use crate::models::domain::calendar::{
     BUCKETS, DAY_MINUTES, Ranked, Segment, assign_lanes, buckets, local_midnight, project_label,
     rank_labels, segments, split_by_day, week_start,
 };
 use crate::models::domain::display::{fmt_duration, fmt_tokens};
-use crate::models::domain::read_models::CalendarTurn;
+use crate::models::domain::read_models::{CalendarTurn, TimeRange};
 use crate::models::domain::transcript::{SessionKind, one_line};
 use crate::models::ports::RepoError;
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, Utc};
@@ -46,12 +48,14 @@ pub struct CalendarState {
     pub show_headless: bool,
     /// 直前に表示した週の初日。時計で週が変わったことを知るために持つ。
     pub shown_week: Option<NaiveDate>,
+    /// 選んだ帯（セッションと帯の始まり）。終わりは描くたびに今の帯から決める。
+    pub band: Option<(String, DateTime<Utc>)>,
     /// 選択、詳細の表示、再生の状態。ダッシュボードの選択と混ざらないよう別に持つ。
     pub sel: DashboardState,
 }
 
 /// カレンダーの操作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CalendarAction {
     /// 前の週。
     PrevWeek,
@@ -63,6 +67,8 @@ pub enum CalendarAction {
     SetColorBy(ColorBy),
     /// ヘッドレス実行の表示を切り替える。
     ToggleHeadless,
+    /// 帯を選ぶ。セッションと帯の始まり。
+    SelectBand(String, DateTime<Utc>),
 }
 
 /// 操作を状態に反映する。
@@ -79,6 +85,10 @@ pub fn handle(st: &mut CalendarState, a: CalendarAction) {
                 clear_selection(st);
             }
         }
+        CalendarAction::SelectBand(id, start) => {
+            st.band = Some((id.clone(), start));
+            dash_handle(&mut st.sel, DashAction::Select(id, DetailTab::Turns));
+        }
     }
 }
 
@@ -94,6 +104,7 @@ pub fn sync_week(st: &mut CalendarState, today: NaiveDate) {
 /// 選択を外し、再生も止める。詳細が消えた後も再生が進み、読み直しが続くのを防ぐため。
 fn clear_selection(st: &mut CalendarState) {
     st.sel.selected = None;
+    st.band = None;
     st.sel.replay.playing = false;
 }
 
@@ -122,12 +133,16 @@ pub struct BandVm {
     pub color: Option<usize>,
     /// マウスを載せたときの説明。1行目はセッションの見出し。
     pub tooltip: String,
+    /// 帯の始まり（UTC）。日をまたぐ帯は、どちらの列も同じ値を持つ。押したときに帯を指す。
+    pub seg_start: DateTime<Utc>,
+    /// 選んだ帯か。
+    pub selected: bool,
 }
 
 /// 1日の列。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DayVm {
-    /// 見出し（「日 9/27」）。
+    /// 見出し（「09/27(日)」）。
     pub label: String,
     /// 今日か。
     pub today: bool,
@@ -169,10 +184,10 @@ pub struct CalendarVm {
     pub legend: Vec<LegendItem>,
     /// 今週なら、今の日と分。
     pub now: Option<(usize, u32)>,
-    /// 選んだセッション。
-    pub selected: Option<String>,
     /// 選んだセッションの詳細。
     pub detail: Option<SessionDetail>,
+    /// 選んだ帯の範囲の見出し（「09/26(土) 11:00〜11:20 のターン」）。
+    pub band_label: Option<String>,
 }
 
 /// カレンダーのViewModelを作る。
@@ -208,7 +223,22 @@ pub fn build(
     let ranked = rank_labels(&counts);
     let colors: HashMap<&str, Option<usize>> =
         ranked.iter().map(|r| (r.label.as_str(), r.color)).collect();
-    let bands = week_bands(&groups, from, deps.tz, |t| colors[label_of(t).as_str()]);
+    // ダッシュボード側の操作で選択が別のセッションに変わったときは、古い帯を使わない。
+    let picked = st
+        .band
+        .as_ref()
+        .filter(|(id, _)| st.sel.selected.as_deref() == Some(id.as_str()))
+        .map(|(id, s)| (id.as_str(), *s));
+    let (bands, range) = week_bands(&groups, from, deps.tz, picked, |t| {
+        colors[label_of(t).as_str()]
+    });
+    // 範囲は保存せず、今の帯から毎回決める。帯が伸びたとき一覧も伸びるようにするため。
+    let sel = DashboardState {
+        range,
+        ..st.sel.clone()
+    };
+    let detail = selected_detail(deps, &sel)?;
+    let on_turns = detail.as_ref().is_some_and(|d| d.tab == DetailTab::Turns);
     let ts: Vec<DateTime<Utc>> = groups.iter().flat_map(|g| g.iter().map(|t| t.ts)).collect();
     let this_week = st.weeks_back == 0;
     let end = start + Duration::days(6);
@@ -237,8 +267,9 @@ pub fn build(
             let m = (now - from).num_minutes();
             ((m / DAY_MINUTES) as usize, (m % DAY_MINUTES) as u32)
         }),
-        selected: st.sel.selected.clone(),
-        detail: selected_detail(deps, &st.sel)?,
+        detail,
+        // ライブログと再生は範囲で絞らないので、範囲を名乗らない。
+        band_label: range.filter(|_| on_turns).map(|r| band_label(r, deps.tz)),
     })
 }
 
@@ -269,13 +300,19 @@ fn week_bands(
     groups: &[&[CalendarTurn]],
     from: DateTime<Utc>,
     tz: FixedOffset,
+    picked: Option<(&str, DateTime<Utc>)>,
     color_of: impl Fn(&CalendarTurn) -> Option<usize>,
-) -> Vec<Vec<BandVm>> {
+) -> (Vec<Vec<BandVm>>, Option<TimeRange>) {
     let mut bands: Vec<Vec<BandVm>> = vec![Vec::new(); 7];
+    let mut range = None;
     for g in groups {
         let pts: Vec<(DateTime<Utc>, u64)> = g.iter().map(|t| (t.ts, t.tokens)).collect();
         for seg in segments(&pts) {
             let tip = tooltip(&g[0], &seg, tz);
+            let selected = picked == Some((g[0].session_id.as_str(), seg.start));
+            if selected {
+                range = Some((seg.start, seg.end));
+            }
             for d in split_by_day(seg.start, seg.end, from) {
                 bands[d.day].push(BandVm {
                     session_id: g[0].session_id.clone(),
@@ -285,6 +322,8 @@ fn week_bands(
                     lanes: 1,
                     color: color_of(&g[0]),
                     tooltip: tip.clone(),
+                    seg_start: seg.start,
+                    selected,
                 });
             }
         }
@@ -295,7 +334,22 @@ fn week_bands(
             (b.lane, b.lanes) = (lane, lanes);
         }
     }
-    bands
+    (bands, range)
+}
+
+/// 選んだ帯の見出し。終わりが別の日なら、終わりにも日付を付ける。
+fn band_label((s, e): TimeRange, tz: FixedOffset) -> String {
+    let (s, e) = (s.with_timezone(&tz), e.with_timezone(&tz));
+    let end = if s.date_naive() == e.date_naive() {
+        e.format("%H:%M").to_string()
+    } else {
+        format!("{} {}", day_label(e.date_naive()), e.format("%H:%M"))
+    };
+    format!(
+        "{} {}〜{end} のターン",
+        day_label(s.date_naive()),
+        s.format("%H:%M")
+    )
 }
 
 /// 日の列を作る。濃さは週の10分あたりの最大のターン数で割る。
@@ -313,13 +367,19 @@ fn days(
         .map(|(i, (bands, c))| {
             let date = start + Duration::days(i as i64);
             DayVm {
-                label: format!("{} {}/{}", WEEKDAYS[i], date.month(), date.day()),
+                label: day_label(date),
                 today: today == Some(date),
                 density: c.iter().map(|&n| n as f32 / max).collect(),
                 bands,
             }
         })
         .collect()
+}
+
+/// 日の見出し（「09/27(日)」）。
+fn day_label(d: NaiveDate) -> String {
+    let w = WEEKDAYS[d.weekday().num_days_from_sunday() as usize];
+    format!("{:02}/{:02}({w})", d.month(), d.day())
 }
 
 /// 帯の説明。1行目に見出しを置くのは、画面の部品名（アクセシビリティ）にも使うため。
@@ -395,8 +455,8 @@ mod tests {
         let (_d, _h, _s, deps) = setup();
         let vm = build(&deps, &CalendarState::default(), deps.clock.now()).unwrap();
         assert_eq!(vm.days.len(), 7);
-        assert_eq!(vm.days[0].label, "日 9/20");
-        assert_eq!(vm.days[6].label, "土 9/26");
+        assert_eq!(vm.days[0].label, "09/20(日)");
+        assert_eq!(vm.days[6].label, "09/26(土)");
         assert!(vm.days[6].today && !vm.days[5].today);
         assert_eq!(vm.title, "2026年9/20〜9/26");
         assert_eq!((vm.session_count, vm.can_next), (0, false));
@@ -404,7 +464,7 @@ mod tests {
         assert!(vm.days.iter().all(|d| d.bands.is_empty()
             && d.density.len() == 144
             && d.density.iter().all(|v| *v == 0.0)));
-        assert!(vm.legend.is_empty() && vm.detail.is_none() && vm.selected.is_none());
+        assert!(vm.legend.is_empty() && vm.detail.is_none());
         assert_eq!(vm.color_by, ColorBy::Project);
     }
 
@@ -748,6 +808,151 @@ mod tests {
         );
     }
 
+    /// 9/26 9:00、9:01、11:00 JST。2時間空くので帯は2本になる。
+    fn seed_two_bands(s: &SqliteStore) -> TimeRange {
+        seed_session(s, "a", SessionKind::Interactive, None, now());
+        let t1 = now() - Duration::hours(3);
+        seed_turn(s, "a", "", "m1", t1, None, "prompt", tokens(1, 1));
+        let t2 = t1 + Duration::minutes(1);
+        seed_turn(s, "a", "", "m2", t2, None, "text", tokens(1, 1));
+        let t3 = now() - Duration::hours(1);
+        seed_turn(s, "a", "", "m3", t3, None, "prompt", tokens(1, 1));
+        (t1, t3)
+    }
+
+    #[test]
+    fn selected_band_shows_only_its_turns() {
+        let (_d, _h, s, deps) = setup();
+        let (t1, _) = seed_two_bands(&s);
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        let d = vm.detail.unwrap();
+        assert_eq!((d.session_id.as_str(), d.turns.len()), ("a", 2));
+        assert_eq!(
+            vm.band_label.as_deref(),
+            Some("09/26(土) 09:00〜09:01 のターン")
+        );
+        let picked: Vec<(u32, bool)> = vm.days[6]
+            .bands
+            .iter()
+            .map(|b| (b.start, b.selected))
+            .collect();
+        assert_eq!(picked, vec![(540, true), (660, false)]);
+        assert!(
+            vm.days[6]
+                .bands
+                .iter()
+                .all(|b| b.seg_start != t1 || b.start == 540)
+        );
+        handle(&mut st, CalendarAction::PrevWeek);
+        assert_eq!((st.band, st.sel.selected), (None, None));
+    }
+
+    #[test]
+    fn selecting_a_band_of_the_same_session_switches_the_turns() {
+        let (_d, _h, s, deps) = setup();
+        let (t1, t3) = seed_two_bands(&s);
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t3));
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        assert_eq!(
+            vm.band_label.as_deref(),
+            Some("09/26(土) 11:00〜11:00 のターン")
+        );
+        assert_eq!(vm.detail.unwrap().turns.len(), 1);
+    }
+
+    #[test]
+    fn selected_band_follows_new_turns() {
+        let (_d, _h, s, deps) = setup();
+        let (_, t3) = seed_two_bands(&s);
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t3));
+        let t4 = t3 + Duration::minutes(5);
+        seed_turn(&s, "a", "", "m4", t4, None, "text", tokens(1, 1));
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        assert_eq!(
+            vm.band_label.as_deref(),
+            Some("09/26(土) 11:00〜11:05 のターン")
+        );
+        assert_eq!(vm.detail.unwrap().turns.len(), 2);
+    }
+
+    #[test]
+    fn band_range_is_not_claimed_outside_the_turns_tab() {
+        let (_d, _h, s, deps) = setup();
+        let (t1, _) = seed_two_bands(&s);
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
+        dash_handle(&mut st.sel, DashAction::SetDetailTab(DetailTab::LiveLog));
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        assert_eq!(vm.band_label, None);
+    }
+
+    #[test]
+    fn band_of_another_session_is_ignored() {
+        let (_d, _h, s, deps) = setup();
+        let (t1, _) = seed_two_bands(&s);
+        seed_session(&s, "b", SessionKind::Interactive, None, now());
+        seed_turn(&s, "b", "", "b1", t1, None, "prompt", tokens(1, 1));
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
+        dash_handle(
+            &mut st.sel,
+            DashAction::Select("b".into(), DetailTab::Turns),
+        );
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        assert_eq!(vm.band_label, None);
+        assert!(vm.days[6].bands.iter().all(|b| !b.selected));
+    }
+
+    #[test]
+    fn band_over_midnight_is_one_range_with_both_dates() {
+        let (_d, _h, s, deps) = setup();
+        seed_session(&s, "a", SessionKind::Interactive, None, now());
+        // 金 9/25 23:50 JST と 土 9/26 0:10 JST。
+        let t = Utc.with_ymd_and_hms(2026, 9, 25, 14, 50, 0).unwrap();
+        seed_turn(&s, "a", "", "m1", t, None, "prompt", tokens(1, 1));
+        let m = t + Duration::minutes(10);
+        seed_turn(&s, "a", "", "m2", m, None, "text", tokens(1, 1));
+        let u = t + Duration::minutes(20);
+        seed_turn(&s, "a", "", "m3", u, None, "text", tokens(1, 1));
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("a".into(), t));
+        let vm = build(&deps, &st, deps.clock.now()).unwrap();
+        assert_eq!(
+            vm.band_label.as_deref(),
+            Some("09/25(金) 23:50〜09/26(土) 00:10 のターン")
+        );
+        assert!(vm.days[5].bands[0].selected && vm.days[6].bands[0].selected);
+        assert_eq!(vm.detail.unwrap().turns.len(), 3);
+    }
+
+    #[test]
+    fn hiding_headless_and_week_rollover_drop_the_band() {
+        let mut st = CalendarState {
+            show_headless: true,
+            ..Default::default()
+        };
+        handle(&mut st, CalendarAction::SelectBand("a".into(), now()));
+        handle(&mut st, CalendarAction::ToggleHeadless);
+        assert_eq!(st.band, None);
+        handle(&mut st, CalendarAction::SelectBand("a".into(), now()));
+        sync_week(&mut st, NaiveDate::from_ymd_opt(2026, 9, 26).unwrap());
+        sync_week(&mut st, NaiveDate::from_ymd_opt(2026, 9, 27).unwrap());
+        assert_eq!(st.band, None);
+    }
+
+    #[test]
+    fn day_label_pads_month_and_day() {
+        assert_eq!(
+            day_label(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()),
+            "10/01(木)"
+        );
+    }
+
     #[test]
     fn selection_builds_detail() {
         let (_d, _h, s, deps) = setup();
@@ -768,7 +973,6 @@ mod tests {
             DashAction::Select("a".into(), DetailTab::Turns),
         );
         let vm = build(&deps, &st, deps.clock.now()).unwrap();
-        assert_eq!(vm.selected.as_deref(), Some("a"));
         assert_eq!(vm.detail.unwrap().session_id, "a");
     }
 
