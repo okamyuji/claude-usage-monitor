@@ -32,6 +32,13 @@ Rust 1.98以上が必要です。リポジトリを取得してから、次の�
 cargo install --path .
 ```
 
+macOSで、ログイン時の自動起動を有効にしたまま入れ直す場合は、続けて次のコマンドを実行します。`cargo install`はバイナリを同じファイルのまま書き換えるため、そのまま再起動すると、macOSが署名の検査でデーモンを止めます。ファイルを置き直してから、デーモンを再起動してください。
+
+```bash
+cp ~/.cargo/bin/cumon ~/.cargo/bin/cumon.new && mv -f ~/.cargo/bin/cumon.new ~/.cargo/bin/cumon
+launchctl kickstart -k gui/$(id -u)/claude-usage-monitor
+```
+
 ## 使い方
 
 常駐デーモンを起動すると、使用量の取得とセッションの記録を始めます。
@@ -98,11 +105,12 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ```
 
-変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。
+変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。`GATE_LOW=1`を付けると、ビルドとテストを1本ずつ、macOSのバックグラウンドの優先度で動かします。時間はかかりますが、マシンが重くなりません。このときmutation testingは作業ツリーをその場で書き換えるので、終わるまでソースを編集しないでください。
 
 ```bash
 scripts/gate.sh src/controllers/gui/app.rs
 GATE_BASE=origin/main scripts/gate.sh src/controllers/gui/app.rs
+GATE_LOW=1 scripts/gate.sh src/controllers/gui/app.rs
 ```
 
 長時間の稼働でメモリが増え続けないことは、デーモンを1,000周期回すリーク検査で確かめます。100周期目と1,000周期目のRSSを比べ、5MBを超えて増えていれば失敗にします。macOSで測った値は、トレイなしで12.0MBから11.6MB、トレイありで73.4MBから29.0MBでした。所要時間は約17分なので、通常のテストとは分けて実行します。

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 変更したファイルに品質ゲートをかける。各タスクの完了条件を、同じ基準のコマンド1つで確かめるため。
-# 使い方: [GATE_BASE=<コミット>] scripts/gate.sh src/models/domain/usage.rs [...]
+# 使い方: [GATE_BASE=<コミット>] [GATE_LOW=1] scripts/gate.sh src/models/domain/usage.rs [...]
 # mutationは、GATE_BASE（既定はHEAD）からの差分で変わった行だけを検査する。
 # 全ファイルを毎回検査すると1,000件を超えて約7時間かかり、結果が出る前にコミットが進むため。
 set -euo pipefail
@@ -24,10 +24,33 @@ done
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
 
-cargo fmt --manifest-path "$manifest" --check
-cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
-cargo llvm-cov --manifest-path "$manifest" --no-report
-cargo llvm-cov report --manifest-path "$manifest" --json --output-path "$root/target/llvm-cov.json"
+# GATE_LOW=1 は、並列のビルドとmutationでmacOSのWindowServerが固まったため、時間より負荷を優先する。
+# ビルドとテストを1本ずつ、バックグラウンドの優先度（CPUとディスクI/O）で動かす。
+# mutationは作業ツリーをその場で書き換えるので、終わるまでソースを編集しない。
+run=()
+cov_args=()
+mut_args=(--timeout 300 --jobs 2)
+if [ -n "${GATE_LOW:-}" ]; then
+  export CARGO_BUILD_JOBS=1
+  if command -v taskpolicy >/dev/null; then
+    run=(taskpolicy -b)
+  fi
+  # readme_imagesはwgpuでGPUを使い、負荷が大きいので外す。
+  cov_args=(--lib)
+  for t in "$root"/tests/*.rs; do
+    name="$(basename "$t" .rs)"
+    [ "$name" = readme_images ] || cov_args+=(--test "$name")
+  done
+  cov_args+=(-- --test-threads=1)
+  mut_args=(--in-place --timeout 300 -- --lib -- --test-threads=1)
+fi
+
+"${run[@]}" cargo fmt --manifest-path "$manifest" --check
+"${run[@]}" cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
+# 前回の実行や別のtoolchainが残したprofrawが混ざると、集計が失敗するため先に消す。
+"${run[@]}" cargo llvm-cov clean --manifest-path "$manifest" --profraw-only
+"${run[@]}" cargo llvm-cov --manifest-path "$manifest" --no-report "${cov_args[@]}"
+"${run[@]}" cargo llvm-cov report --manifest-path "$manifest" --json --output-path "$root/target/llvm-cov.json"
 python3 "$root/scripts/crap.py" "$root/target/llvm-cov.json" "$@"
 
 mutant_files=()
@@ -51,6 +74,12 @@ if ! git -C "$root" rev-parse --verify --quiet "${base}^{commit}" >/dev/null; th
 fi
 diff_file="$root/target/gate.diff"
 git -C "$root" diff "$base" -- "${mutant_files[@]}" > "$diff_file"
+# 未追跡の新しいファイルはgit diffに出ず、検査されないまま合格になるため、全行を追加として足す。
+for f in "${mutant_files[@]}"; do
+  if ! git -C "$root" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+    git -C "$root" diff --no-index -- /dev/null "$f" >> "$diff_file" || true
+  fi
+done
 if [ ! -s "$diff_file" ]; then
   echo "mutation: $base からの変更行なし"
   exit 0
@@ -58,7 +87,8 @@ fi
 # 終了コード3はタイムアウトだけが出た場合。ループの終了条件を壊す変異は無限ループになり、タイムアウトで検出されるので合格とする。
 # 生存（コード2）とその他の失敗は不合格のまま返す。
 status=0
-cargo mutants -d "$root" --in-diff "$diff_file" --timeout 300 --jobs 2 || status=$?
+# 低負荷のmutationは--in-placeで、依存を含めた4GBほどの複製と全体の再ビルドを避ける。
+"${run[@]}" cargo mutants -d "$root" --in-diff "$diff_file" "${mut_args[@]}" || status=$?
 if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
   exit "$status"
 fi
