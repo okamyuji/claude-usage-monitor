@@ -221,7 +221,8 @@ impl SessionQueryRepo for SqliteStore {
         let rows: Vec<(String, String, String)> = self.with(|c| {
             query_rows(
                 c,
-                "SELECT ts, kind, text FROM session_notes WHERE session_id = ?1 ORDER BY ts",
+                // Claude Codeは同じ要約を別のuuidで2回書くことがあるので、時刻と本文が同じ行は1件にする。
+                "SELECT DISTINCT ts, kind, text FROM session_notes WHERE session_id = ?1 ORDER BY ts",
                 params![session_id],
             )
         })?;
@@ -685,6 +686,16 @@ mod tests {
             ]
         );
         assert!(s.session_tools("none").unwrap().is_empty());
+    }
+
+    #[test]
+    fn notes_with_same_time_and_text_are_shown_once() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        note(&s, "n1", "a", t0(), NoteKind::Recap, "同じ");
+        note(&s, "n2", "a", t0(), NoteKind::Recap, "同じ");
+        note(&s, "n3", "a", t0(), NoteKind::Recap, "違う");
+        assert_eq!(s.notes("a").unwrap().len(), 2);
     }
 
     #[test]

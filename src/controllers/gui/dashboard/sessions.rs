@@ -12,7 +12,7 @@ use crate::models::domain::pricing::{
 use crate::models::domain::read_models::{
     SessionFilter, SessionModelUsage, SessionRow, TimeRange, TurnRow,
 };
-use crate::models::domain::session_summary::stats;
+use crate::models::domain::session_summary::{requests, stats};
 use crate::models::domain::transcript::{NoteKind, SessionKind, one_line};
 use crate::models::ports::RepoError;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -418,6 +418,10 @@ fn summary_vm(
     let notes = deps.sessions.notes(id)?;
     let tools = deps.sessions.session_tools(id)?;
     let st = stats(&turns);
+    let prompts: Vec<(String, String)> = requests(&turns)
+        .into_iter()
+        .map(|(t, text)| (fmt_clock(t, now, deps.tz), text))
+        .collect();
     let clock = |t| fmt_clock(t, now, deps.tz);
     let (calls, errors) = tools
         .iter()
@@ -440,7 +444,7 @@ fn summary_vm(
                 ),
             ),
             ("作業時間", fmt_duration(st.active)),
-            ("依頼", format!("{}件", st.prompts)),
+            ("依頼", format!("{}件", prompts.len())),
             ("API要求", format!("{}件", st.requests)),
             (
                 "ツール",
@@ -458,11 +462,7 @@ fn summary_vm(
             .into_iter()
             .map(|t| (t.tool_name, t.calls.to_string(), t.errors.to_string()))
             .collect(),
-        prompts: turns
-            .iter()
-            .filter(|t| t.agent_id.is_empty() && t.kind == "prompt")
-            .map(|t| (clock(t.ts), t.summary.clone()))
-            .collect(),
+        prompts,
         truncated: turns.len() >= SUMMARY_TURN_LIMIT,
     })
 }
@@ -773,6 +773,33 @@ mod tests {
             .unwrap();
         }
         s.mark_tool_error("t2").unwrap();
+        for (id, text) in [
+            ("c1", "<command-name>/effort</command-name>"),
+            ("c2", "<command-name>/effort</command-name>"),
+        ] {
+            s.upsert_turn(&crate::models::domain::records::TurnRecord {
+                session_id: "w".into(),
+                agent_id: String::new(),
+                message_id: id.into(),
+                ts: at(30),
+                model: None,
+                kind: "prompt".into(),
+                summary: text.into(),
+                usage: TokenUsage::default(),
+            })
+            .unwrap();
+        }
+        s.upsert_turn(&crate::models::domain::records::TurnRecord {
+            session_id: "w".into(),
+            agent_id: String::new(),
+            message_id: "tn".into(),
+            ts: at(30),
+            model: None,
+            kind: "prompt".into(),
+            summary: "<task-notification> done".into(),
+            usage: TokenUsage::default(),
+        })
+        .unwrap();
         for (uuid, m, kind, text) in [
             ("n1", 4, NoteKind::Recap, "終わりました"),
             ("n2", 6, NoteKind::Compact, ""),
@@ -846,7 +873,7 @@ mod tests {
                 stat(&s, "圧縮"),
                 stat(&s, "サブエージェント")
             ],
-            ["5分", "2件", "3件", "2回（エラー1回）", "1回", "1件"]
+            ["5分", "3件", "3件", "2回（エラー1回）", "1回", "1件"]
         );
         assert_eq!(s.models.len(), 1);
         let m = &s.models[0];
@@ -859,7 +886,10 @@ mod tests {
             s.tools,
             [("Bash".to_string(), "2".to_string(), "1".to_string())]
         );
-        assert_eq!(s.prompts.len(), 2);
+        assert_eq!(
+            s.prompts.iter().map(|p| p.1.as_str()).collect::<Vec<_>>(),
+            ["summary-p1", "summary-p2", "/effort"]
+        );
         assert!(!s.truncated);
     }
 

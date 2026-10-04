@@ -3,7 +3,7 @@ use crate::controllers::gui::app::{Action, Forms};
 use crate::controllers::gui::dashboard::DashAction;
 use crate::controllers::gui::dashboard::live_log::{LiveAction, LiveLogVm};
 use crate::controllers::gui::dashboard::replay::{ReplayAction, ReplayVm};
-use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail};
+use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionDetail, SummaryVm};
 use crate::models::domain::display::help as h;
 use crate::models::domain::live_log::LiveKind;
 use crate::views::layout::flex_columns;
@@ -23,6 +23,7 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
     totals(ui, d);
     ui.horizontal(|ui| {
         for (tab, ic, text) in [
+            (DetailTab::Summary, icon::NOTE, "概要"),
             (DetailTab::Turns, icon::LIST, "ターン"),
             (DetailTab::LiveLog, icon::TERMINAL, "ライブログ"),
             (DetailTab::Replay, icon::PLAY, "再生"),
@@ -35,7 +36,11 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
     });
     ui.separator();
     match d.tab {
-        DetailTab::Summary => {}
+        DetailTab::Summary => {
+            if let Some(s) = &d.summary {
+                summary(ui, s);
+            }
+        }
         DetailTab::Turns => turns(ui, d, acts),
         DetailTab::LiveLog => match &d.live {
             Some(v) => live(ui, v, forms, acts),
@@ -53,6 +58,126 @@ pub fn show(ui: &mut Ui, d: Option<&SessionDetail>, forms: &mut Forms, acts: &mu
             }
         },
     }
+}
+
+fn summary(ui: &mut Ui, s: &SummaryVm) {
+    let p = pal(ui);
+    egui::ScrollArea::vertical()
+        .id_salt("summary")
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            ui.label(RichText::new("要約").strong());
+            if s.recaps.is_empty() {
+                ui.label(
+                    RichText::new(
+                        "Claude Codeの要約はありません。離席中に書かれた要約だけを出します",
+                    )
+                    .color(p.weak),
+                );
+            }
+            timed_lines(ui, &s.recaps);
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                for (name, value) in &s.stats {
+                    ui.label(RichText::new(*name).small().color(p.weak));
+                    ui.label(RichText::new(value).strong());
+                    ui.add_space(8.0);
+                }
+            });
+            if s.truncated {
+                ui.label(
+                    RichText::new("直近10万件のターンから集計しています")
+                        .small()
+                        .color(p.warn),
+                );
+            }
+            ui.add_space(8.0);
+            let models: Vec<[&str; 7]> = s
+                .models
+                .iter()
+                .map(|m| {
+                    [
+                        &m.model,
+                        &m.requests,
+                        &m.input,
+                        &m.output,
+                        &m.cache_read,
+                        &m.cache_write,
+                        &m.cost,
+                    ]
+                    .map(String::as_str)
+                })
+                .collect();
+            table(
+                ui,
+                "summary_models",
+                [
+                    "モデル",
+                    "要求",
+                    "入力",
+                    "出力",
+                    "キャッシュ読込",
+                    "キャッシュ作成",
+                    "コスト",
+                ],
+                &models,
+            );
+            ui.add_space(8.0);
+            let tools: Vec<[&str; 3]> = s
+                .tools
+                .iter()
+                .map(|(n, c, e)| [n.as_str(), c.as_str(), e.as_str()])
+                .collect();
+            table(
+                ui,
+                "summary_tools",
+                ["ツール名", "呼び出し", "エラー"],
+                &tools,
+            );
+            ui.add_space(8.0);
+            ui.label(RichText::new("依頼の一覧").strong());
+            timed_lines(ui, &s.prompts);
+        });
+}
+
+fn timed_lines(ui: &mut Ui, lines: &[(String, String)]) {
+    let p = pal(ui);
+    for (t, text) in lines {
+        // 時刻と本文を横に並べると、折り返しの幅が時刻の分だけ大きく見積もられ、区画が窓からはみ出す。
+        // 1つのラベルにまとめ、区画の幅で折り返す。
+        let mut job = egui::text::LayoutJob::default();
+        for part in [
+            RichText::new(format!("{t}  ")).monospace().color(p.weak),
+            RichText::new(text),
+        ] {
+            part.append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        }
+        ui.add(egui::Label::new(job).wrap());
+    }
+}
+
+fn table<const N: usize>(ui: &mut Ui, id: &str, head: [&str; N], rows: &[[&str; N]]) {
+    let p = pal(ui);
+    // モデル表は7列あり、詳細の区画より広くなる。表だけを横に送り、区画が窓からはみ出さないようにする。
+    egui::ScrollArea::horizontal().id_salt(id).show(ui, |ui| {
+        egui::Grid::new(id).striped(true).show(ui, |ui| {
+            for h in head {
+                ui.label(RichText::new(h).small().color(p.weak));
+            }
+            ui.end_row();
+            for r in rows {
+                for v in r {
+                    ui.label(*v);
+                }
+                ui.end_row();
+            }
+        });
+    });
 }
 
 fn totals(ui: &mut Ui, d: &SessionDetail) {
