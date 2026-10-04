@@ -6,6 +6,8 @@ Claude CodeのToken使用量、レート制限、セッションの動きを、�
 
 ![詳細にライブログを開いたダッシュボード](docs/images/dashboard-live-log.png)
 
+![帯を押して範囲のターンを開いたカレンダー](docs/images/calendar.png)
+
 ## 特徴
 
 - ダッシュボードの1画面で、使用率のカード、稼働中のセッション、選んだセッションの詳細、使用率の推移をまとめて確認できます。
@@ -136,6 +138,13 @@ GATE_LOW=1 scripts/gate.sh src/controllers/gui/app.rs
 
 ```bash
 cargo test --release --test leak -- --ignored --nocapture
+```
+
+READMEの画像は、架空のデータから作り直します。`examples/demo_data.rs`がClaude Codeと同じ形のログを一時的なHOMEに書き、デーモンと同じ取り込み処理でDBに入れます。稼働中かどうかは最終更新からの経過時間で決まるため、データを作ったらすぐに画像を書き出してください。
+
+```bash
+cargo run --example demo_data -- /tmp/cumon-demo/data /tmp/cumon-demo/home
+CUMON_DEMO_DATA=/tmp/cumon-demo/data CUMON_DEMO_HOME=/tmp/cumon-demo/home cargo test --test readme_images -- --ignored
 ```
 
 ## ライセンス
