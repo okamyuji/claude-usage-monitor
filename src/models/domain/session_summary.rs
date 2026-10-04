@@ -36,12 +36,24 @@ fn tag<'a>(s: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// スラッシュコマンドは`<command-name>`と`<command-args>`のタグで記録される。
-/// 組み込みは`<command-name>`が先頭、スキルは`<command-message>`が先頭なので、位置によらず拾う。
+/// 組み込みは`<command-name>`が先頭、スキルは`<command-message>`が先頭なので、どちらで始まる行も拾う。
+/// 本文の途中に貼られたタグはコマンドではないので拾わない。
 fn request_text(summary: &str) -> String {
-    match (tag(summary, "command-name"), tag(summary, "command-args")) {
-        (Some(name), Some(args)) if !args.is_empty() => format!("{name} {args}"),
-        (Some(name), _) => name.to_string(),
-        _ => summary.to_string(),
+    let is_command = ["<command-name>", "<command-message>"]
+        .iter()
+        .any(|t| summary.starts_with(t));
+    let Some(name) = tag(summary, "command-name").filter(|_| is_command) else {
+        return summary.to_string();
+    };
+    // 依頼は200字で切って保存されるので、長い引数は閉じタグを失う。その場合は残りをすべて引数にする。
+    let args = tag(summary, "command-args").or_else(|| {
+        summary
+            .split_once("<command-args>")
+            .map(|(_, rest)| rest.trim())
+    });
+    match args {
+        Some(a) if !a.is_empty() => format!("{name} {a}"),
+        _ => name.to_string(),
     }
 }
 
@@ -208,6 +220,21 @@ mod tests {
                 "<command-name>/x"
             ]
         );
+    }
+
+    #[test]
+    fn args_cut_at_summary_limit_keep_their_head() {
+        let cut = "<command-message>p</command-message> <command-name>/p</command-name> <command-args>bin/report.js に --json を足して";
+        assert_eq!(
+            texts(&[prompt(0, cut)]),
+            ["/p bin/report.js に --json を足して"]
+        );
+    }
+
+    #[test]
+    fn command_tag_inside_plain_text_is_not_a_command() {
+        let text = "このログの <command-name>/x</command-name> が出る理由を教えて";
+        assert_eq!(texts(&[prompt(0, text)]), [text]);
     }
 
     #[test]
