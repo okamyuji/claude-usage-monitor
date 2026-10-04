@@ -760,7 +760,16 @@ mod tests {
             ("sp", "a1", 5, None, "prompt"),
             ("p2", "", 30, None, "prompt"),
         ] {
-            seed_turn(&s, "w", agent, id, at(m), model, kind, tokens(1_000, 10));
+            // モデルのない依頼のTokenはモデル表に入らないことを確かめるため、応答と違う値にする。
+            let usage = match model {
+                Some(_) => TokenUsage {
+                    cache_write_5m: 100,
+                    cache_write_1h: 20,
+                    ..tokens(1_000, 10)
+                },
+                None => tokens(7, 0),
+            };
+            seed_turn(&s, "w", agent, id, at(m), model, kind, usage);
         }
         for (id, name) in [("t1", "Bash"), ("t2", "Bash")] {
             s.upsert_tool_call(&crate::models::domain::records::ToolCallRecord {
@@ -803,6 +812,7 @@ mod tests {
         for (uuid, m, kind, text) in [
             ("n1", 4, NoteKind::Recap, "終わりました"),
             ("n2", 6, NoteKind::Compact, ""),
+            ("n4", 7, NoteKind::Recap, "続きも終わりました"),
         ] {
             s.upsert_note(&crate::models::domain::records::NoteRecord {
                 uuid: uuid.into(),
@@ -850,7 +860,7 @@ mod tests {
         let s = d.summary.expect("概要");
         assert_eq!(
             s.recaps.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
-            ["終わりました"]
+            ["終わりました", "続きも終わりました"]
         );
         assert_eq!(
             s.stats.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
@@ -878,8 +888,13 @@ mod tests {
         assert_eq!(s.models.len(), 1);
         let m = &s.models[0];
         assert_eq!(
-            (m.model.as_str(), m.requests.as_str(), m.input.as_str()),
-            ("claude-opus-5-5", "3", "3.00k")
+            (
+                m.model.as_str(),
+                m.requests.as_str(),
+                m.input.as_str(),
+                m.cache_write.as_str()
+            ),
+            ("claude-opus-5-5", "3", "3.00k", "360")
         );
         assert_ne!(m.cost, "単価未登録");
         assert_eq!(
