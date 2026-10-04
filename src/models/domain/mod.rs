@@ -13,6 +13,7 @@ pub mod projection;
 pub mod read_models;
 pub mod records;
 pub mod session_id;
+pub mod session_summary;
 pub mod settings;
 pub mod transcript;
 pub mod usage;
