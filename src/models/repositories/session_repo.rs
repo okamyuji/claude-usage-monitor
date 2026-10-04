@@ -3,7 +3,7 @@
 //! 同じ行を再度読んでも結果が変わらないように、すべての書き込みを冪等なUPSERTにする。
 //! ファイルが縮んで先頭から読み直した場合にTokenを二重に数えないため。
 use crate::models::domain::records::{
-    FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
+    FileOffset, JobRecord, NoteRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
 };
 use crate::models::ports::{IngestRepo, RepoError};
 use crate::models::repositories::db::{SqliteStore, ts};
@@ -132,6 +132,17 @@ impl IngestRepo for SqliteStore {
             c.execute(
                 "UPDATE tool_calls SET is_error = 1 WHERE tool_use_id = ?1",
                 [tool_use_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    fn upsert_note(&self, n: &NoteRecord) -> Result<(), RepoError> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO session_notes(uuid, session_id, ts, kind, text) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(uuid) DO NOTHING",
+                params![n.uuid, n.session_id, ts(n.ts), n.kind.as_str(), n.text],
             )
             .map(|_| ())
         })

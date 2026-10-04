@@ -1,9 +1,10 @@
 //! セッション画面とログ再生の読み取り。
 
 use crate::models::domain::read_models::{
-    CalendarTurn, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TimeRange, TurnRow,
+    CalendarTurn, NoteRow, SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TimeRange,
+    ToolStat, TurnRow,
 };
-use crate::models::domain::transcript::SessionKind;
+use crate::models::domain::transcript::{NoteKind, SessionKind};
 use crate::models::ports::{RepoError, SessionQueryRepo};
 use crate::models::repositories::dashboard_repo::{SESSION_SELECT, SessionTuple, session_row};
 use crate::models::repositories::db::{SqliteStore, parse_ts, query_rows, ts, usage_of};
@@ -215,16 +216,56 @@ impl SessionQueryRepo for SqliteStore {
         })?;
         Ok(rows.into_iter().filter_map(calendar_row).collect())
     }
+
+    fn notes(&self, session_id: &str) -> Result<Vec<NoteRow>, RepoError> {
+        let rows: Vec<(String, String, String)> = self.with(|c| {
+            query_rows(
+                c,
+                "SELECT ts, kind, text FROM session_notes WHERE session_id = ?1 ORDER BY ts",
+                params![session_id],
+            )
+        })?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(t, k, text)| {
+                Some(NoteRow {
+                    ts: parse_ts(&t)?,
+                    kind: NoteKind::parse(&k)?,
+                    text,
+                })
+            })
+            .collect())
+    }
+
+    fn session_tools(&self, session_id: &str) -> Result<Vec<ToolStat>, RepoError> {
+        let rows: Vec<(String, i64, i64)> = self.with(|c| {
+            query_rows(
+                c,
+                "SELECT tool_name, COUNT(*), SUM(is_error) FROM tool_calls WHERE session_id = ?1
+                 GROUP BY tool_name ORDER BY COUNT(*) DESC, tool_name",
+                params![session_id],
+            )
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(tool_name, calls, errors)| ToolStat {
+                tool_name,
+                calls,
+                errors,
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::models::domain::read_models::SessionFilter;
-    use crate::models::domain::records::SubagentRecord;
-    use crate::models::domain::transcript::SessionKind;
+    use crate::models::domain::records::{NoteRecord, SubagentRecord, ToolCallRecord};
+    use crate::models::domain::transcript::{NoteKind, SessionKind};
     use crate::models::ports::{IngestRepo, SessionQueryRepo};
+    use crate::models::repositories::db::{SqliteStore, ts};
     use crate::test_support::{seed_session, seed_turn, temp_store, tokens};
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
 
     fn t0() -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 26, 3, 0, 0).unwrap()
@@ -546,5 +587,113 @@ mod tests {
         .unwrap();
         assert_eq!(s.job_id("js").unwrap().as_deref(), Some("j1"));
         assert_eq!(s.job_id("none").unwrap(), None);
+    }
+    fn note(s: &SqliteStore, uuid: &str, sid: &str, at: DateTime<Utc>, kind: NoteKind, text: &str) {
+        s.upsert_note(&NoteRecord {
+            uuid: uuid.into(),
+            session_id: sid.into(),
+            ts: at,
+            kind,
+            text: text.into(),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn notes_are_time_ordered_per_session_and_idempotent() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        seed_session(&s, "b", SessionKind::Interactive, None, t0());
+        note(
+            &s,
+            "n2",
+            "a",
+            t0() + Duration::minutes(5),
+            NoteKind::Compact,
+            "",
+        );
+        note(&s, "n1", "a", t0(), NoteKind::Recap, "最初");
+        note(&s, "n1", "a", t0(), NoteKind::Recap, "二度目");
+        note(&s, "n3", "b", t0(), NoteKind::Recap, "別");
+        let got: Vec<_> = s
+            .notes("a")
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.ts, n.kind, n.text))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (t0(), NoteKind::Recap, "最初".to_string()),
+                (
+                    t0() + Duration::minutes(5),
+                    NoteKind::Compact,
+                    String::new()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn notes_skip_rows_with_unknown_kind_or_broken_time() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        s.with(|c| {
+            c.execute(
+                "INSERT INTO session_notes(uuid, session_id, ts, kind, text) VALUES('x','a',?1,'zzz','t'), ('y','a','bad','recap','t')",
+                [ts(t0())],
+            )
+        })
+        .unwrap();
+        assert!(s.notes("a").unwrap().is_empty());
+    }
+
+    #[test]
+    fn session_tools_counts_only_that_session() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        seed_session(&s, "b", SessionKind::Interactive, None, t0());
+        for (id, sid, name) in [
+            ("t1", "a", "Read"),
+            ("t2", "a", "Bash"),
+            ("t3", "a", "Bash"),
+            ("t4", "b", "Bash"),
+            ("t5", "a", "Edit"),
+        ] {
+            s.upsert_tool_call(&ToolCallRecord {
+                tool_use_id: id.into(),
+                session_id: sid.into(),
+                agent_id: String::new(),
+                ts: t0(),
+                tool_name: name.into(),
+            })
+            .unwrap();
+        }
+        s.mark_tool_error("t3").unwrap();
+        let got: Vec<_> = s
+            .session_tools("a")
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.tool_name, t.calls, t.errors))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Bash".to_string(), 2, 1),
+                ("Edit".into(), 1, 0),
+                ("Read".into(), 1, 0)
+            ]
+        );
+        assert!(s.session_tools("none").unwrap().is_empty());
+    }
+
+    #[test]
+    fn notes_are_deleted_with_their_session() {
+        let (_d, s) = temp_store();
+        seed_session(&s, "a", SessionKind::Interactive, None, t0());
+        note(&s, "n1", "a", t0(), NoteKind::Recap, "x");
+        s.with(|c| c.execute("DELETE FROM sessions WHERE session_id='a'", []))
+            .unwrap();
+        assert!(s.notes("a").unwrap().is_empty());
     }
 }

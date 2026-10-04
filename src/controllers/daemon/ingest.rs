@@ -5,7 +5,7 @@
 use crate::models::domain::pricing::TokenUsage;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::records::{
-    FetchLogEntry, FetchResult, FileOffset, JobRecord, SessionUpsert, SubagentRecord,
+    FetchLogEntry, FetchResult, FileOffset, JobRecord, NoteRecord, SessionUpsert, SubagentRecord,
     ToolCallRecord, TurnRecord,
 };
 use crate::models::domain::transcript::{Block, Event, ParsedLine, SessionKind, parse_line};
@@ -83,7 +83,19 @@ impl FileState<'_> {
                     self.repo.mark_tool_error(&r.tool_use_id)?;
                 }
             }
-            Event::Note { .. } | Event::Other => {}
+            Event::Note { kind, text } => {
+                // uuidがない行は一意キーを作れず、読み直しで重複するため保存しない。
+                if let Some(uuid) = &pl.meta.uuid {
+                    self.repo.upsert_note(&NoteRecord {
+                        uuid: uuid.clone(),
+                        session_id: sid.clone(),
+                        ts: at,
+                        kind: *kind,
+                        text: text.clone(),
+                    })?;
+                }
+            }
+            Event::Other => {}
         }
         Ok(())
     }
@@ -405,7 +417,8 @@ impl Ingestor {
 mod tests {
     use super::*;
     use crate::models::domain::profile::Profile;
-    use crate::models::ports::ProfileRepo;
+    use crate::models::domain::transcript::NoteKind;
+    use crate::models::ports::{ProfileRepo, SessionQueryRepo};
     use crate::test_support::{FixedClock, temp_store};
     use chrono::{TimeZone, Utc};
     use std::io::Write;
@@ -821,5 +834,46 @@ mod tests {
         write(&cfg.join("projects/-w/s1.jsonl"), &[A1, "{broken"]);
         let r = e.ingestor.scan_all(&e.profile, &cfg).unwrap();
         assert_eq!((r.files_read, r.malformed), (1, 1));
+    }
+    #[test]
+    fn ingest_saves_recaps_and_compacts_once_even_from_subagent_files() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let main = cfg.join("projects/-w/s1.jsonl");
+        write(
+            &main,
+            &[
+                U1,
+                r#"{"type":"system","subtype":"away_summary","content":"本体の要約","uuid":"n1","sessionId":"s1","timestamp":"2026-09-26T00:00:10.000Z"}"#,
+                r#"{"type":"system","subtype":"away_summary","content":"uuidなし","sessionId":"s1","timestamp":"2026-09-26T00:00:11.000Z"}"#,
+                r#"{"type":"system","subtype":"compact_boundary","uuid":"n2","sessionId":"s1","timestamp":"2026-09-26T00:00:20.000Z"}"#,
+            ],
+        );
+        write(
+            &cfg.join("projects/-w/s1/subagents/agent-a1.jsonl"),
+            &[
+                r#"{"type":"system","subtype":"away_summary","content":"サブの要約","uuid":"n3","sessionId":"s1","agentId":"a1","timestamp":"2026-09-26T00:00:30.000Z"}"#,
+            ],
+        );
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        e.store
+            .with(|c| c.execute("DELETE FROM ingest_offsets", []))
+            .unwrap();
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        let got: Vec<_> = e
+            .store
+            .notes("s1")
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.kind, n.text))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (NoteKind::Recap, "本体の要約".to_string()),
+                (NoteKind::Compact, String::new()),
+                (NoteKind::Recap, "サブの要約".into())
+            ]
+        );
     }
 }

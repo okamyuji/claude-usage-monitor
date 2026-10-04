@@ -2,7 +2,7 @@
 //!
 //! DBの行の形をcontrollersへ渡すための型で、書き込み用の`records.rs`とは分ける。読み取りの列を増やしても取り込み側に影響させないため。
 use crate::models::domain::pricing::TokenUsage;
-use crate::models::domain::transcript::SessionKind;
+use crate::models::domain::transcript::{NoteKind, SessionKind};
 use crate::models::domain::usage::{BreakdownRow, LimitWindow, Spend};
 use chrono::{DateTime, Utc};
 
@@ -152,6 +152,17 @@ pub struct TurnRow {
     pub summary: String,
     /// Token数。
     pub usage: TokenUsage,
+}
+
+/// セッションの要約、または圧縮の印。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteRow {
+    /// 時刻。
+    pub ts: DateTime<Utc>,
+    /// 種類。
+    pub kind: NoteKind,
+    /// 本文。
+    pub text: String,
 }
 
 /// 分析画面の集計の軸。

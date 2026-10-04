@@ -31,7 +31,14 @@ CREATE TABLE models(model_prefix TEXT PRIMARY KEY, display_name TEXT NOT NULL, i
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#;
 
-const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_V1)];
+// 取り込み位置を消すのは、V1までのJSONLにある要約を次の全体走査で読み直すため。取り込みは冪等なので重複しない。
+const SCHEMA_V2: &str = r#"
+CREATE TABLE session_notes(uuid TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE, ts TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL);
+CREATE INDEX session_notes_session ON session_notes(session_id, ts);
+DELETE FROM ingest_offsets;
+"#;
+
+const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2)];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 /// SQLiteの保存先。`rusqlite::Connection`はスレッド間で共有できないため`Mutex`で包む。
@@ -219,5 +226,33 @@ mod tests {
             SqliteStore::open(&d.path().join("f/cumon.db")),
             Err(RepoError::Storage(_))
         ));
+    }
+    #[test]
+    fn v2_adds_notes_and_clears_offsets_without_touching_sessions() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("cumon.db");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            Migrations::from_slice(&[M::up(SCHEMA_V1)])
+                .to_latest(&mut c)
+                .unwrap();
+            c.execute_batch(
+                "INSERT INTO ingest_offsets(path, offset, size, mtime) VALUES('/a', 1, 1, 1);
+                 INSERT INTO profiles(id, name, created_at) VALUES(1, 'p', 'x');
+                 INSERT INTO sessions(session_id, profile_id, kind, name, started_at, last_activity_at) VALUES('s', 1, 'interactive', 'n', 'x', 'x');",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let got: (i64, String, i64) = s
+            .with(|c| {
+                c.query_row(
+                    "SELECT (SELECT COUNT(*) FROM ingest_offsets), (SELECT name FROM sessions), (SELECT COUNT(*) FROM session_notes)",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(got, (0, "n".to_string(), 0));
     }
 }

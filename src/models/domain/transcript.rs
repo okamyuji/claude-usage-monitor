@@ -52,6 +52,8 @@ impl SessionKind {
 /// 要約の最大文字数。実測の最大は263字で、200字の`SUMMARY_CHARS`では切れるため別にする。
 pub const NOTE_CHARS: usize = 2000;
 
+const RECAP_HINT: &str = "(disable recaps in /config)";
+
 /// `system`行のうち保存するもの。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKind {
@@ -306,7 +308,11 @@ fn parse_system(v: &Value) -> Event {
     match (v.get("subtype").and_then(Value::as_str), text) {
         (Some("away_summary"), Some(t)) => Event::Note {
             kind: NoteKind::Recap,
-            text: one_line(t, NOTE_CHARS),
+            // Claude Codeは要約の末尾に設定の案内を足すことがある。作業の要約ではないので外す。
+            text: one_line(
+                t.trim_end().trim_end_matches(RECAP_HINT).trim_end(),
+                NOTE_CHARS,
+            ),
         },
         (Some("compact_boundary"), t) => Event::Note {
             kind: NoteKind::Compact,
@@ -666,5 +672,16 @@ mod tests {
         assert_eq!(NoteKind::Recap.as_str(), "recap");
         assert_eq!(NoteKind::Compact.as_str(), "compact");
         assert_eq!(NoteKind::parse("x"), None);
+    }
+    #[test]
+    fn recap_drops_trailing_config_hint() {
+        let line = r#"{"type":"system","subtype":"away_summary","content":"作業は終わりました。 (disable recaps in /config)"}"#;
+        assert_eq!(
+            parse_line(line).unwrap().event,
+            Event::Note {
+                kind: NoteKind::Recap,
+                text: "作業は終わりました。".into()
+            }
+        );
     }
 }

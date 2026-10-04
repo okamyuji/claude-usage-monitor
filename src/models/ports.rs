@@ -7,11 +7,12 @@ use crate::models::domain::pricing::ModelInfo;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::projection::Sample;
 use crate::models::domain::read_models::{
-    CalendarTurn, DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, RunRow, SessionFilter,
-    SessionModelUsage, SessionRow, SubagentRow, TimeRange, ToolStat, TurnRow,
+    CalendarTurn, DaemonStat, DailyUsage, GroupBy, GroupUsage, LatestUsage, NoteRow, RunRow,
+    SessionFilter, SessionModelUsage, SessionRow, SubagentRow, TimeRange, ToolStat, TurnRow,
 };
 use crate::models::domain::records::{
-    FetchLogEntry, FileOffset, JobRecord, SessionUpsert, SubagentRecord, ToolCallRecord, TurnRecord,
+    FetchLogEntry, FileOffset, JobRecord, NoteRecord, SessionUpsert, SubagentRecord,
+    ToolCallRecord, TurnRecord,
 };
 use crate::models::domain::settings::Settings;
 use crate::models::domain::usage::UsageSnapshot;
@@ -220,6 +221,8 @@ pub trait IngestRepo: Send + Sync {
     fn upsert_tool_call(&self, c: &ToolCallRecord) -> Result<(), RepoError>;
     /// ツール呼び出しをエラーとして記録する。
     fn mark_tool_error(&self, tool_use_id: &str) -> Result<(), RepoError>;
+    /// 要約か圧縮の印を追加する。同じ`uuid`が再来しても何もしない。
+    fn upsert_note(&self, n: &NoteRecord) -> Result<(), RepoError>;
     /// サブエージェントを追加または更新する。
     fn upsert_subagent(&self, s: &SubagentRecord) -> Result<(), RepoError>;
     /// ジョブを追加または更新する。
@@ -268,6 +271,10 @@ pub trait SessionQueryRepo: Send + Sync {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<CalendarTurn>, RepoError>;
+    /// セッションの要約と圧縮の印を時刻順に返す。
+    fn notes(&self, session_id: &str) -> Result<Vec<NoteRow>, RepoError>;
+    /// セッションのツールごとの呼び出し回数とエラー回数を、回数の多い順（同数は名前順）に返す。
+    fn session_tools(&self, session_id: &str) -> Result<Vec<ToolStat>, RepoError>;
 }
 
 /// 分析画面と推移画面の読み取り。
