@@ -2,7 +2,7 @@
 //!
 //! controllersがSQLの列を知らずに済むよう、repositoriesとの受け渡しはこの型で行う。
 use crate::models::domain::pricing::TokenUsage;
-use crate::models::domain::transcript::SessionKind;
+use crate::models::domain::transcript::{NoteKind, SessionKind};
 use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 
@@ -65,6 +65,21 @@ pub struct TurnRecord {
     pub summary: String,
     /// Token数。
     pub usage: TokenUsage,
+}
+
+/// Claude Codeが書いた要約、または圧縮の印1件。`uuid`で一意。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteRecord {
+    /// 行のuuid。
+    pub uuid: String,
+    /// セッションID。サブエージェントの行でも親のID。
+    pub session_id: String,
+    /// 時刻。
+    pub ts: DateTime<Utc>,
+    /// 種類。
+    pub kind: NoteKind,
+    /// 本文。
+    pub text: String,
 }
 
 /// ツール呼び出し1件。

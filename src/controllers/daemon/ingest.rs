@@ -5,7 +5,7 @@
 use crate::models::domain::pricing::TokenUsage;
 use crate::models::domain::profile::Profile;
 use crate::models::domain::records::{
-    FetchLogEntry, FetchResult, FileOffset, JobRecord, SessionUpsert, SubagentRecord,
+    FetchLogEntry, FetchResult, FileOffset, JobRecord, NoteRecord, SessionUpsert, SubagentRecord,
     ToolCallRecord, TurnRecord,
 };
 use crate::models::domain::transcript::{Block, Event, ParsedLine, SessionKind, parse_line};
@@ -81,6 +81,18 @@ impl FileState<'_> {
             Event::ToolResults(rs) => {
                 for r in rs.iter().filter(|r| r.is_error) {
                     self.repo.mark_tool_error(&r.tool_use_id)?;
+                }
+            }
+            Event::Note { kind, text } => {
+                // uuidがない行は一意キーを作れず、読み直しで重複するため保存しない。
+                if let Some(uuid) = &pl.meta.uuid {
+                    self.repo.upsert_note(&NoteRecord {
+                        uuid: uuid.clone(),
+                        session_id: sid.clone(),
+                        ts: at,
+                        kind: *kind,
+                        text: text.clone(),
+                    })?;
                 }
             }
             Event::Other => {}
@@ -405,7 +417,8 @@ impl Ingestor {
 mod tests {
     use super::*;
     use crate::models::domain::profile::Profile;
-    use crate::models::ports::ProfileRepo;
+    use crate::models::domain::transcript::NoteKind;
+    use crate::models::ports::{ProfileRepo, SessionQueryRepo};
     use crate::test_support::{FixedClock, temp_store};
     use chrono::{TimeZone, Utc};
     use std::io::Write;
@@ -821,5 +834,130 @@ mod tests {
         write(&cfg.join("projects/-w/s1.jsonl"), &[A1, "{broken"]);
         let r = e.ingestor.scan_all(&e.profile, &cfg).unwrap();
         assert_eq!((r.files_read, r.malformed), (1, 1));
+    }
+    #[test]
+    fn recap_copied_into_a_resumed_session_is_kept_for_both() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        for sid in ["a", "b"] {
+            write(
+                &cfg.join(format!("projects/-w/{sid}.jsonl")),
+                &[&format!(
+                    r#"{{"type":"system","subtype":"away_summary","content":"写された要約","uuid":"n1","sessionId":"{sid}","timestamp":"2026-09-26T00:00:10.000Z"}}"#
+                )],
+            );
+        }
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(
+            (
+                e.store.notes("a").unwrap().len(),
+                e.store.notes("b").unwrap().len()
+            ),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn v1_database_reads_old_recaps_on_next_scan_and_keeps_sessions() {
+        let d = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let cfg = home.path().join(".claude");
+        let file = cfg.join("projects/-w/s1.jsonl");
+        write(
+            &file,
+            &[
+                U1,
+                r#"{"type":"system","subtype":"away_summary","content":"V1の頃の要約","uuid":"n1","sessionId":"s1","timestamp":"2026-09-26T00:00:10.000Z"}"#,
+            ],
+        );
+        let size = std::fs::metadata(&file).unwrap().len();
+        let db = d.path().join("cumon.db");
+        // V1のデーモンがファイルの末尾まで読み終えた状態を作る。
+        crate::models::repositories::db::create_v1(&db)
+            .execute_batch(&format!(
+                "INSERT INTO profiles(id, name, is_active, created_at) VALUES(1, 'default', 1, 'x');
+                 INSERT INTO sessions(session_id, profile_id, kind, name, first_prompt, started_at, last_activity_at)
+                   VALUES('s1', 1, 'headless', '名前', 'コミットしてください', '2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z');
+                 INSERT INTO turns(session_id, agent_id, message_id, ts, kind, summary, input, output, cache_read, cache_write_5m, cache_write_1h)
+                   VALUES('s1', '', 'u1', '2026-09-26T00:00:00.000Z', 'prompt', 'コミットしてください', 0, 0, 0, 0, 0);
+                 INSERT INTO ingest_offsets(path, offset, size, mtime) VALUES('{}', {size}, {size}, 0);",
+                file.display()
+            ))
+            .unwrap();
+        let store = Arc::new(crate::models::repositories::db::SqliteStore::open(&db).unwrap());
+        let profile = store.ensure_default().unwrap();
+        let ingestor = Ingestor::new(
+            store.clone(),
+            store.clone(),
+            Arc::new(AliveOnly(42)),
+            Arc::new(FixedClock::at(
+                Utc.with_ymd_and_hms(2026, 9, 26, 0, 1, 0).unwrap(),
+            )),
+            chrono::Duration::days(90),
+        );
+        ingestor.scan_all(&profile, &cfg).unwrap();
+        let texts: Vec<_> = store
+            .notes("s1")
+            .unwrap()
+            .into_iter()
+            .map(|n| n.text)
+            .collect();
+        assert_eq!(texts, ["V1の頃の要約"]);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM turns"), 1);
+        let kept: (String, String) = store
+            .with(|c| {
+                c.query_row(
+                    "SELECT name, first_prompt FROM sessions WHERE session_id = 's1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            kept,
+            ("名前".to_string(), "コミットしてください".to_string())
+        );
+    }
+
+    #[test]
+    fn ingest_saves_recaps_and_compacts_once_even_from_subagent_files() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let main = cfg.join("projects/-w/s1.jsonl");
+        write(
+            &main,
+            &[
+                U1,
+                r#"{"type":"system","subtype":"away_summary","content":"本体の要約","uuid":"n1","sessionId":"s1","timestamp":"2026-09-26T00:00:10.000Z"}"#,
+                r#"{"type":"system","subtype":"away_summary","content":"uuidなし","sessionId":"s1","timestamp":"2026-09-26T00:00:11.000Z"}"#,
+                r#"{"type":"system","subtype":"compact_boundary","uuid":"n2","sessionId":"s1","timestamp":"2026-09-26T00:00:20.000Z"}"#,
+            ],
+        );
+        write(
+            &cfg.join("projects/-w/s1/subagents/agent-a1.jsonl"),
+            &[
+                r#"{"type":"system","subtype":"away_summary","content":"サブの要約","uuid":"n3","sessionId":"s1","agentId":"a1","timestamp":"2026-09-26T00:00:30.000Z"}"#,
+            ],
+        );
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        e.store
+            .with(|c| c.execute("DELETE FROM ingest_offsets", []))
+            .unwrap();
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        let got: Vec<_> = e
+            .store
+            .notes("s1")
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.kind, n.text))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (NoteKind::Recap, "本体の要約".to_string()),
+                (NoteKind::Compact, String::new()),
+                (NoteKind::Recap, "サブの要約".into())
+            ]
+        );
     }
 }

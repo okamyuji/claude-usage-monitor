@@ -87,7 +87,7 @@ pub fn handle(st: &mut CalendarState, a: CalendarAction) {
         }
         CalendarAction::SelectBand(id, start) => {
             st.band = Some((id.clone(), start));
-            dash_handle(&mut st.sel, DashAction::Select(id, DetailTab::Turns));
+            dash_handle(&mut st.sel, DashAction::Select(id, DetailTab::Summary));
         }
     }
 }
@@ -826,6 +826,7 @@ mod tests {
         let (t1, _) = seed_two_bands(&s);
         let mut st = CalendarState::default();
         handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
+        dash_handle(&mut st.sel, DashAction::SetDetailTab(DetailTab::Turns));
         let vm = build(&deps, &st, deps.clock.now()).unwrap();
         let d = vm.detail.unwrap();
         assert_eq!((d.session_id.as_str(), d.turns.len()), ("a", 2));
@@ -856,6 +857,7 @@ mod tests {
         let mut st = CalendarState::default();
         handle(&mut st, CalendarAction::SelectBand("a".into(), t1));
         handle(&mut st, CalendarAction::SelectBand("a".into(), t3));
+        dash_handle(&mut st.sel, DashAction::SetDetailTab(DetailTab::Turns));
         let vm = build(&deps, &st, deps.clock.now()).unwrap();
         assert_eq!(
             vm.band_label.as_deref(),
@@ -870,6 +872,7 @@ mod tests {
         let (_, t3) = seed_two_bands(&s);
         let mut st = CalendarState::default();
         handle(&mut st, CalendarAction::SelectBand("a".into(), t3));
+        dash_handle(&mut st.sel, DashAction::SetDetailTab(DetailTab::Turns));
         let t4 = t3 + Duration::minutes(5);
         seed_turn(&s, "a", "", "m4", t4, None, "text", tokens(1, 1));
         let vm = build(&deps, &st, deps.clock.now()).unwrap();
@@ -921,6 +924,7 @@ mod tests {
         seed_turn(&s, "a", "", "m3", u, None, "text", tokens(1, 1));
         let mut st = CalendarState::default();
         handle(&mut st, CalendarAction::SelectBand("a".into(), t));
+        dash_handle(&mut st.sel, DashAction::SetDetailTab(DetailTab::Turns));
         let vm = build(&deps, &st, deps.clock.now()).unwrap();
         assert_eq!(
             vm.band_label.as_deref(),
@@ -997,5 +1001,11 @@ mod tests {
         assert_eq!(st.color_by, ColorBy::Profile);
         assert_eq!(ColorBy::Project.label(), "プロジェクト別");
         assert_eq!(ColorBy::Profile.label(), "プロファイル別");
+    }
+    #[test]
+    fn selecting_a_band_opens_summary() {
+        let mut st = CalendarState::default();
+        handle(&mut st, CalendarAction::SelectBand("b".into(), now()));
+        assert_eq!(st.sel.detail_tab, DetailTab::Summary);
     }
 }

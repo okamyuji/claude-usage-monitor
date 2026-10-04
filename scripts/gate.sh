@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 変更したファイルに品質ゲートをかける。各タスクの完了条件を、同じ基準のコマンド1つで確かめるため。
-# 使い方: [GATE_BASE=<コミット>] [GATE_LOW=1] scripts/gate.sh src/models/domain/usage.rs [...]
+# 使い方: [GATE_BASE=<コミット>] [GATE_LOW=1] [GATE_NO_MUTANTS=1] scripts/gate.sh src/models/domain/usage.rs [...]
 # mutationは、GATE_BASE（既定はHEAD）からの差分で変わった行だけを検査する。
 # 全ファイルを毎回検査すると1,000件を超えて約7時間かかり、結果が出る前にコミットが進むため。
 set -euo pipefail
@@ -55,6 +55,11 @@ fi
 "${run[@]}" cargo llvm-cov --manifest-path "$manifest" --no-report "${cov_args[@]}"
 "${run[@]}" cargo llvm-cov report --manifest-path "$manifest" --json --output-path "$root/target/llvm-cov.json"
 python3 "$root/scripts/crap.py" "$root/target/llvm-cov.json" "$@"
+# mutationは数十分かかるので、途中のタスクでは飛ばし、最後にまとめて検査できるようにする。
+if [ -n "${GATE_NO_MUTANTS:-}" ]; then
+  echo "mutation: GATE_NO_MUTANTSのため省略"
+  exit 0
+fi
 
 mutant_files=()
 for f in "$@"; do

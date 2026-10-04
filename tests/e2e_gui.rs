@@ -885,6 +885,8 @@ mod calendar_e2e {
         let mut h = open_calendar(&env);
         h.get_by_label_contains("設計の相談").click();
         h.run();
+        h.get_by_label("ターン").click();
+        h.run();
         h.get_by_label("Read: src/main.rs");
         assert_eq!(h.state().calendar_selected(), Some("s1"));
         h.get_by_label_contains("のターン");
@@ -898,11 +900,42 @@ mod calendar_e2e {
     }
 
     #[test]
+    fn calendar_band_opens_summary_with_recap() {
+        use claude_usage_monitor::models::domain::records::NoteRecord;
+        use claude_usage_monitor::models::domain::transcript::NoteKind;
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        seed_session_with_turns(&env, "s2", "別の作業", SessionKind::Interactive, None);
+        env.store
+            .upsert_note(&NoteRecord {
+                uuid: "n1".into(),
+                session_id: "s1".into(),
+                ts: now(),
+                kind: NoteKind::Recap,
+                text: "トップページを速くしました".into(),
+            })
+            .unwrap();
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("要約");
+        h.get_by_label_contains("トップページを速くしました");
+        h.get_by_label("依頼");
+        h.get_by_label("依頼の一覧");
+        h.get_by_label("ツール名");
+        h.get_by_label_contains("別の作業").click();
+        h.run();
+        h.get_by_label_contains("Claude Codeの要約はありません");
+    }
+
+    #[test]
     fn moving_week_clears_calendar_detail() {
         let env = gui_env(now());
         seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
         let mut h = open_calendar(&env);
         h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("ターン").click();
         h.run();
         h.get_by_label("Read: src/main.rs");
         h.get_by_label_contains("前週").click();
