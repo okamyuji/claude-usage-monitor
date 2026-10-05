@@ -22,13 +22,25 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
         filters(ui, vm, forms, acts);
     }
     ui.separator();
-    egui::ScrollArea::vertical()
-        .id_salt("session_list")
-        .auto_shrink([false, false])
-        .show(ui, |ui| match vm.mode {
-            ListMode::Active => active(ui, vm, acts),
-            ListMode::History => history(ui, vm, acts),
-        });
+    ui.scope(|ui| {
+        // 浮動のスクロールバーは右端に寄ると帯だけが現れ、行のボタンと見分けにくい。溝の見える常設の形にする。
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+        egui::ScrollArea::vertical()
+            .id_salt("session_list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match vm.mode {
+                ListMode::Active => active(ui, vm, acts),
+                ListMode::History => history(ui, vm, acts),
+            });
+    });
+}
+
+/// 見出しのⓘ。終了の操作がある稼働中の表示でだけ、サブエージェントを止められない理由も出す。
+fn list_help(mode: ListMode) -> &'static str {
+    match mode {
+        ListMode::Active => h::ACTIVE_RUNS,
+        ListMode::History => h::RUN_KIND,
+    }
 }
 
 fn header(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
@@ -43,7 +55,7 @@ fn header(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
                 acts.push(Action::Dash(DashAction::SetListMode(m)));
             }
         }
-        help(ui, h::RUN_KIND);
+        help(ui, list_help(vm.mode));
     });
 }
 
@@ -90,25 +102,30 @@ fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
         if r.memory.as_ref().is_some_and(|m| m.desktop) {
             badge(ui, "Desktop", p.accent, p.accent_soft);
         }
-        let title =
-            RichText::new(&r.title)
-                .strong()
-                .color(if selected { p.accent } else { p.text });
-        let resp = ui.add(egui::Label::new(title).truncate().sense(Sense::click()));
-        if resp.clicked() {
-            acts.push(Action::Dash(DashAction::Select(
-                r.session_id.clone(),
-                DetailTab::LiveLog,
-            )));
-        }
-        if let Some(m) = &r.memory {
-            resp.context_menu(|ui| {
-                if ui.button("終了してメモリを解放").clicked() {
-                    acts.push(Action::Memory(MemAction::Ask(m.exit.clone())));
-                    ui.close();
+        // ボタンを先に右端へ置き、残りの幅で題名を省略する。題名を先に置くと、省略した題名が幅を使い切ってボタンが枠の外に出る。
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(m) = &r.memory
+                && ui.small_button("プロセスを終了").clicked()
+            {
+                acts.push(Action::Memory(MemAction::Ask(m.exit.clone())));
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title = RichText::new(&r.title).strong().color(if selected {
+                    p.accent
+                } else {
+                    p.text
+                });
+                if ui
+                    .add(egui::Label::new(title).truncate().sense(Sense::click()))
+                    .clicked()
+                {
+                    acts.push(Action::Dash(DashAction::Select(
+                        r.session_id.clone(),
+                        DetailTab::LiveLog,
+                    )));
                 }
             });
-        }
+        });
     });
     let context = format!("コンテキスト {}", r.context);
     let meta: Vec<&str> = [
@@ -257,7 +274,94 @@ fn history_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controllers::gui::dashboard::memory::{ConfirmExit, SessionMemory};
+    use crate::models::domain::memory::{Target, Victim};
     use crate::views::theme::LIGHT;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    type RowState = (RunItem, Vec<Action>);
+
+    fn item(memory: Option<SessionMemory>, depth: u8) -> RunItem {
+        RunItem {
+            session_id: "s1".into(),
+            kind: if depth == 0 {
+                RunKind::Headless
+            } else {
+                RunKind::Subagent
+            },
+            state: "ツール実行中".into(),
+            title: "設計の相談".into(),
+            project: "p".into(),
+            context: "10%".into(),
+            elapsed: "5分".into(),
+            tokens: "1k".into(),
+            cost: "$0.10".into(),
+            detail: None,
+            depth,
+            memory,
+        }
+    }
+
+    fn mem() -> SessionMemory {
+        SessionMemory {
+            text: "400MB".into(),
+            desktop: false,
+            exit: ConfirmExit {
+                victim: Victim {
+                    pid: 4242,
+                    start_time: 1,
+                    target: Target::TerminalSession,
+                },
+                title: "設計の相談".into(),
+                memory: "400MB".into(),
+                resume: None,
+            },
+        }
+    }
+
+    fn row(it: RunItem) -> Harness<'static, RowState> {
+        Harness::new_ui_state(
+            |ui, s: &mut RowState| run_row(ui, &s.0, false, &mut s.1),
+            (it, Vec::new()),
+        )
+    }
+
+    #[test]
+    fn exit_button_asks_for_confirmation() {
+        let mut h = row(item(Some(mem()), 0));
+        h.get_by_label("プロセスを終了").click();
+        h.run();
+        assert_eq!(h.state().1, [Action::Memory(MemAction::Ask(mem().exit))]);
+    }
+
+    #[test]
+    fn rows_without_a_process_have_no_exit_button() {
+        for it in [item(None, 0), item(None, 1)] {
+            let h = row(it);
+            assert!(h.query_by_label("プロセスを終了").is_none());
+        }
+    }
+
+    #[test]
+    fn clicking_the_title_selects_the_run() {
+        let mut h = row(item(Some(mem()), 0));
+        h.get_by_label("設計の相談").click();
+        h.run();
+        assert_eq!(
+            h.state().1,
+            [Action::Dash(DashAction::Select(
+                "s1".into(),
+                DetailTab::LiveLog
+            ))]
+        );
+    }
+
+    #[test]
+    fn list_help_mentions_subagents_only_for_active_runs() {
+        assert_eq!(list_help(ListMode::Active), h::ACTIVE_RUNS);
+        assert_eq!(list_help(ListMode::History), h::RUN_KIND);
+    }
 
     #[test]
     fn badge_colors_by_kind_and_state() {
