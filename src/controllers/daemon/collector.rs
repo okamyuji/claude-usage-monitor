@@ -98,10 +98,11 @@ impl UsageCollector {
         let now = self.deps.clock.now();
         let mut report = TickReport::default();
         for p in self.deps.profiles.list()? {
+            // 使用量APIは約2分に1回を超えると429を返す。取得間隔の120秒で次の周期を1回飛ばせるよう、初期値を180秒にする。
             let backoff = self
                 .backoffs
                 .entry(p.id)
-                .or_insert_with(|| Backoff::new(Duration::seconds(60), Duration::seconds(600)));
+                .or_insert_with(|| Backoff::new(Duration::seconds(180), Duration::seconds(600)));
             if !backoff.ready(now) {
                 report.skipped += 1;
                 continue;
@@ -274,10 +275,12 @@ mod tests {
             e.store.recent(&format!("usage:{default_id}"), 1).unwrap()[0].http_status,
             Some(429)
         );
-        e.clock.advance(Duration::seconds(30));
+        e.clock.advance(Duration::seconds(120));
         let r = e.collector.tick().unwrap();
         assert_eq!((r.skipped, r.failed), (1, 1));
-        e.clock.advance(Duration::seconds(30));
+        e.clock.advance(Duration::seconds(59));
+        assert_eq!(e.collector.tick().unwrap().skipped, 1);
+        e.clock.advance(Duration::seconds(1));
         assert_eq!(e.collector.tick().unwrap().skipped, 0);
     }
 

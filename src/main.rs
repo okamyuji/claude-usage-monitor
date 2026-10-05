@@ -366,11 +366,12 @@ fn run_daemon(
     );
     let (stop_tx, catalog_thread) = spawn_catalog_thread(catalog);
     let (_watcher, rx) = start_watcher(&store.list()?, &p.home)?;
+    let defaults = DaemonSettings::default();
     let settings = DaemonSettings {
-        usage_interval: Duration::from_secs(interval_secs.unwrap_or(60)),
+        usage_interval: interval_secs.map_or(defaults.usage_interval, Duration::from_secs),
         follow_settings: interval_secs.is_none(),
         max_usage_ticks: max_ticks,
-        ..DaemonSettings::default()
+        ..defaults
     };
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut daemon = build_daemon(p, store.clone(), settings)?;

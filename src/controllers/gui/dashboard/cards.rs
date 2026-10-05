@@ -80,7 +80,7 @@ fn card(
         }
         (_, Some(l)) if l.result == FetchResult::Failed => Some(l.message),
         (None, _) => {
-            Some("まだ取得していません。デーモンが起動すると60秒以内に表示されます".to_string())
+            Some("まだ取得していません。デーモンが起動すると2分以内に表示されます".to_string())
         }
         _ => None,
     };
@@ -247,9 +247,9 @@ mod tests {
     fn value_is_marked_stale_only_after_twice_the_interval() {
         let (_d, _h, s, c, deps) = setup();
         rising_usage(&s);
-        // 最新の取得は now()。既定の取得間隔は60秒なので、境界は120秒。
+        // 最新の取得は now()。既定の取得間隔は120秒なので、境界は240秒。
         let mut elapsed = 0;
-        for (secs, stale) in [(100, false), (120, false), (121, true)] {
+        for (secs, stale) in [(200, false), (240, false), (241, true)] {
             c.advance(Duration::seconds(secs - elapsed));
             elapsed = secs;
             let fetched = cards(&deps).unwrap()[0].fetched.clone();
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(cs.len(), 1);
         assert_eq!(
             cs[0].problem.as_deref(),
-            Some("まだ取得していません。デーモンが起動すると60秒以内に表示されます")
+            Some("まだ取得していません。デーモンが起動すると2分以内に表示されます")
         );
         assert!(cs[0].limits.is_empty());
     }
