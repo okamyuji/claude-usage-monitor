@@ -69,12 +69,11 @@ fn spawn_shell_then_exec_claude() -> Sleeper {
     let dir = tempfile::tempdir().unwrap();
     let exe = dir.path().join("claude");
     std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
-    let script = format!(
-        "sleep 1; exec '{}' --ignored --exact {SLEEPER}",
-        exe.display()
-    );
+    // パスはスクリプトに埋め込まず位置引数で渡す。一時ディレクトリの名前に引用符が入っても壊れないため。
     let child = Command::new("/bin/sh")
-        .args(["-c", &script])
+        .args(["-c", r#"sleep 1; exec "$1" --ignored --exact "$2""#, "sh"])
+        .arg(&exe)
+        .arg(SLEEPER)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
