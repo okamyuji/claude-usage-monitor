@@ -46,7 +46,7 @@ mod tests {
     fn saved_values_load_back_and_overwrite() {
         let (_d, s) = temp_store();
         let a = Settings {
-            usage_interval_secs: 90,
+            usage_interval_secs: 150,
             theme: Theme::Dark,
             ..Settings::default()
         };

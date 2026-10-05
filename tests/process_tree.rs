@@ -62,6 +62,25 @@ fn spawn_claude() -> Sleeper {
     panic!("起動できません");
 }
 
+/// シェルとして起動し、1秒後に同じpidのまま`claude`の複製へexecする子。シェルがforkしてからexecするまでの間に一覧を取った場合を再現する。
+#[cfg(unix)]
+fn spawn_shell_then_exec_claude() -> Sleeper {
+    let _g = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("claude");
+    std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+    // パスはスクリプトに埋め込まず位置引数で渡す。一時ディレクトリの名前に引用符が入っても壊れないため。
+    let child = Command::new("/bin/sh")
+        .args(["-c", r#"sleep 1; exec "$1" --ignored --exact "$2""#, "sh"])
+        .arg(&exe)
+        .arg(SLEEPER)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    Sleeper { child, _dir: dir }
+}
+
 #[derive(Default)]
 struct Recorder(Mutex<Vec<(u32, Target)>>);
 
@@ -92,6 +111,31 @@ fn snapshot_has_child_pid_parent_start_time_and_path() {
     assert!(e.start_time > 0);
     assert!(e.rss > 0);
     assert_eq!(e.exe.unwrap().file_stem().unwrap(), "claude");
+}
+
+#[cfg(unix)]
+#[test]
+fn path_seen_before_exec_is_replaced_after_exec() {
+    let s = spawn_shell_then_exec_claude();
+    let tree = SysProcessTree::new(Arc::new(Recorder::default()));
+    let before = find(&tree, s.child.id());
+    assert_ne!(before.exe.unwrap().file_stem().unwrap(), "claude");
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let e = find(&tree, s.child.id());
+        if e.exe
+            .as_ref()
+            .is_some_and(|p| p.file_stem().unwrap() == "claude")
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < until,
+            "exec後もパスが古いままです: {:?}",
+            e.exe
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

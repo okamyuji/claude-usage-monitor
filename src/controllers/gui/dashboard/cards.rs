@@ -62,6 +62,9 @@ pub fn cards(deps: &GuiDeps) -> Result<Vec<ProfileCard>, RepoError> {
         .collect()
 }
 
+/// 429を1回受けると、最後の成功から次の取得まで取得間隔の3倍が空く。取得の前に全体走査が入って遅れる分の余裕を足す。
+const RATE_LIMIT_GRACE_SECS: i64 = 60;
+
 fn card(
     deps: &GuiDeps,
     p: &Profile,
@@ -74,13 +77,20 @@ fn card(
         .recent(&format!("usage:{}", p.id), 1)?
         .into_iter()
         .next();
+    let rate_limit_quiet =
+        Duration::seconds(3 * settings.usage_interval_secs as i64 + RATE_LIMIT_GRACE_SECS);
     let problem = match (&latest, last_log) {
         (_, Some(l)) if l.result == FetchResult::Failed && l.http_status == Some(401) => {
             Some("トークン期限切れ。このプロファイルでclaudeを一度起動してください".to_string())
         }
+        (Some(u), Some(l))
+            if l.http_status == Some(429) && now - u.fetched_at <= rate_limit_quiet =>
+        {
+            None
+        }
         (_, Some(l)) if l.result == FetchResult::Failed => Some(l.message),
         (None, _) => {
-            Some("まだ取得していません。デーモンが起動すると60秒以内に表示されます".to_string())
+            Some("まだ取得していません。デーモンが起動すると2分以内に表示されます".to_string())
         }
         _ => None,
     };
@@ -182,7 +192,7 @@ mod tests {
     use crate::models::domain::pricing::seed_models;
     use crate::models::domain::records::FetchLogEntry;
     use crate::models::domain::usage::parse_usage;
-    use crate::models::ports::{FetchLogRepo, ModelRepo, ProfileRepo, UsageRepo};
+    use crate::models::ports::{FetchLogRepo, ModelRepo, ProfileRepo, UsageApiError, UsageRepo};
     use crate::models::repositories::db::SqliteStore;
     use crate::test_support::{FakeCreds, FakeDaemon, FixedClock, gui_deps, temp_store};
     use chrono::TimeZone;
@@ -227,6 +237,71 @@ mod tests {
         }
     }
 
+    fn log_rate_limited(s: &SqliteStore, at: DateTime<Utc>) {
+        let id = s.ensure_default().unwrap().id;
+        s.log(&FetchLogEntry {
+            target: format!("usage:{id}"),
+            at,
+            result: FetchResult::Failed,
+            http_status: Some(429),
+            message: UsageApiError::RateLimited.to_string(),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn single_rate_limit_is_not_shown_while_the_value_is_recent() {
+        let (_d, _h, s, c, deps) = setup();
+        rising_usage(&s);
+        log_rate_limited(&s, now() + Duration::seconds(120));
+        c.advance(Duration::seconds(360));
+        assert_eq!(cards(&deps).unwrap()[0].problem, None);
+        c.advance(Duration::seconds(60));
+        assert_eq!(cards(&deps).unwrap()[0].problem, None, "420秒は抑止する");
+    }
+
+    #[test]
+    fn rate_limit_message_appears_once_the_value_is_old() {
+        let (_d, _h, s, c, deps) = setup();
+        rising_usage(&s);
+        log_rate_limited(&s, now() + Duration::seconds(120));
+        log_rate_limited(&s, now() + Duration::seconds(360));
+        c.advance(Duration::seconds(421));
+        assert_eq!(
+            cards(&deps).unwrap()[0].problem.as_deref(),
+            Some("取得回数の上限に達しました")
+        );
+    }
+
+    #[test]
+    fn rate_limit_without_any_value_is_shown() {
+        let (_d, _h, s, _c, deps) = setup();
+        log_rate_limited(&s, now());
+        assert_eq!(
+            cards(&deps).unwrap()[0].problem.as_deref(),
+            Some("取得回数の上限に達しました")
+        );
+    }
+
+    #[test]
+    fn other_failures_are_shown_even_while_the_value_is_recent() {
+        let (_d, _h, s, _c, deps) = setup();
+        rising_usage(&s);
+        let id = s.ensure_default().unwrap().id;
+        s.log(&FetchLogEntry {
+            target: format!("usage:{id}"),
+            at: now(),
+            result: FetchResult::Failed,
+            http_status: Some(503),
+            message: "使用量APIがHTTP 503を返しました".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            cards(&deps).unwrap()[0].problem.as_deref(),
+            Some("使用量APIがHTTP 503を返しました")
+        );
+    }
+
     #[test]
     fn successful_last_fetch_shows_no_problem() {
         let (_d, _h, s, _c, deps) = setup();
@@ -247,9 +322,9 @@ mod tests {
     fn value_is_marked_stale_only_after_twice_the_interval() {
         let (_d, _h, s, c, deps) = setup();
         rising_usage(&s);
-        // 最新の取得は now()。既定の取得間隔は60秒なので、境界は120秒。
+        // 最新の取得は now()。既定の取得間隔は120秒なので、境界は240秒。
         let mut elapsed = 0;
-        for (secs, stale) in [(100, false), (120, false), (121, true)] {
+        for (secs, stale) in [(200, false), (240, false), (241, true)] {
             c.advance(Duration::seconds(secs - elapsed));
             elapsed = secs;
             let fetched = cards(&deps).unwrap()[0].fetched.clone();
@@ -265,7 +340,7 @@ mod tests {
         assert_eq!(cs.len(), 1);
         assert_eq!(
             cs[0].problem.as_deref(),
-            Some("まだ取得していません。デーモンが起動すると60秒以内に表示されます")
+            Some("まだ取得していません。デーモンが起動すると2分以内に表示されます")
         );
         assert!(cs[0].limits.is_empty());
     }

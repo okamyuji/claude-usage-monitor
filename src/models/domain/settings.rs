@@ -36,7 +36,7 @@ impl Theme {
 /// 設定値。既定値はspecの値にする。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
-    /// 使用量の取得間隔（秒）。APIへの負荷と鮮度の釣り合いから30〜600に限る。
+    /// 使用量の取得間隔（秒）。使用量APIは約2分に1回を超えると429を返すため、120〜600に限る。
     pub usage_interval_secs: u64,
     /// 通知と推移グラフの横線に使う閾値（%）。
     pub notify_threshold_percent: f64,
@@ -53,7 +53,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            usage_interval_secs: 60,
+            usage_interval_secs: 120,
             notify_threshold_percent: 80.0,
             retention_days: 90,
             headless_active_secs: 120,
@@ -92,7 +92,7 @@ impl Settings {
         check(
             "取得間隔（秒）",
             self.usage_interval_secs as f64,
-            30.0,
+            120.0,
             600.0,
         )?;
         check("通知閾値（%）", self.notify_threshold_percent, 1.0, 100.0)?;
@@ -184,7 +184,7 @@ mod tests {
                 s.job_active_mins,
                 s.theme
             ),
-            (60, 80.0, 90, 120, 10, Theme::System)
+            (120, 80.0, 90, 120, 10, Theme::System)
         );
         assert!(s.validate().is_ok());
     }
@@ -193,7 +193,7 @@ mod tests {
     fn validate_reports_the_field_out_of_range() {
         let cases = [
             Settings {
-                usage_interval_secs: 29,
+                usage_interval_secs: 119,
                 ..Settings::default()
             },
             Settings {
@@ -222,7 +222,7 @@ mod tests {
             .map(|s| s.validate().unwrap_err().to_string())
             .collect();
         assert!(
-            names[0].contains("取得間隔") && names[0].contains("30〜600"),
+            names[0].contains("取得間隔") && names[0].contains("120〜600"),
             "{names:?}"
         );
         assert!(names[1].contains("取得間隔"));
@@ -232,11 +232,19 @@ mod tests {
         assert!(names[5].contains("ジョブ"));
         assert!(
             Settings {
-                usage_interval_secs: 30,
+                usage_interval_secs: 120,
                 notify_threshold_percent: 100.0,
                 retention_days: 3650,
                 headless_active_secs: 3600,
                 job_active_mins: 1,
+                ..Settings::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            Settings {
+                usage_interval_secs: 600,
                 ..Settings::default()
             }
             .validate()
@@ -247,7 +255,7 @@ mod tests {
     #[test]
     fn pairs_round_trip() {
         let s = Settings {
-            usage_interval_secs: 120,
+            usage_interval_secs: 300,
             notify_threshold_percent: 90.0,
             retention_days: 30,
             headless_active_secs: 300,
@@ -263,6 +271,14 @@ mod tests {
     }
 
     #[test]
+    fn stored_old_default_falls_back_to_new_default() {
+        let old = Settings::from_pairs(&pairs(&[("usage_interval_secs", "60")]));
+        assert_eq!(old.usage_interval_secs, 120);
+        let kept = Settings::from_pairs(&pairs(&[("usage_interval_secs", "300")]));
+        assert_eq!(kept.usage_interval_secs, 300);
+    }
+
+    #[test]
     fn broken_or_unknown_values_fall_back_per_field() {
         let s = Settings::from_pairs(&pairs(&[
             ("usage_interval_secs", "abc"),
@@ -271,7 +287,7 @@ mod tests {
             ("theme", "purple"),
             ("unknown_key", "1"),
         ]));
-        assert_eq!(s.usage_interval_secs, 60);
+        assert_eq!(s.usage_interval_secs, 120);
         assert_eq!(s.notify_threshold_percent, 80.0);
         assert_eq!(s.retention_days, 30);
         assert_eq!(s.theme, Theme::System);

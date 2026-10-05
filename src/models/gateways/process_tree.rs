@@ -6,11 +6,13 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, Signal, System, UpdateKind};
 
-/// 取る項目を最小にする。全プロセスを5秒ごとに取るため。実行パスはpidが再利用されると`sysinfo`が取り直す。
+/// 取る項目を最小にする。全プロセスを5秒ごとに取るため。
+/// 実行パスは毎回取り直す。シェルがforkしてからexecするまでの間に一覧を取ると、子のパスがシェルのまま残り、claudeのセッションと結び付かなくなるため。
+/// 811プロセスで取り直しの有無による時間の差はなかった（どちらも約41ms）。
 fn kind() -> ProcessRefreshKind {
     ProcessRefreshKind::nothing()
         .with_memory()
-        .with_exe(UpdateKind::OnlyIfNotSet)
+        .with_exe(UpdateKind::Always)
 }
 
 fn entry(pid: &Pid, p: &Process) -> ProcEntry {

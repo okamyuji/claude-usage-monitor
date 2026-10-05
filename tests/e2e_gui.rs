@@ -651,14 +651,12 @@ mod memory_e2e {
     }
 
     fn open_exit_dialog(h: &mut egui_kittest::Harness<'static, GuiController>) {
-        h.get_by_label("設計の相談").click_secondary();
-        h.run();
-        h.get_by_label("終了してメモリを解放").click();
+        h.get_by_label("プロセスを終了").click();
         h.run();
     }
 
     #[test]
-    fn row_shows_memory_and_right_click_requests_exit_after_confirm() {
+    fn row_shows_memory_and_exit_button_requests_exit_after_confirm() {
         let env = setup();
         let mut h = env.harness();
         h.get_by_label_contains("500MB");
@@ -747,7 +745,7 @@ mod memory_e2e {
     }
 
     #[test]
-    fn subagent_row_has_no_exit_menu() {
+    fn subagent_row_has_no_exit_button() {
         use claude_usage_monitor::models::domain::pricing::TokenUsage;
         let env = setup();
         env.store
@@ -762,11 +760,14 @@ mod memory_e2e {
                 usage: TokenUsage::default(),
             })
             .unwrap();
-        let mut h = env.harness();
+        let h = env.harness();
         let sub = "go-reviewer「メモリ機能のレビュー」";
-        h.get_by_label(sub).click_secondary();
-        h.run();
-        assert!(h.query_by_label("終了してメモリを解放").is_none());
+        h.get_by_label(sub);
+        assert_eq!(
+            h.get_all_by_label("プロセスを終了").count(),
+            1,
+            "親の行だけ"
+        );
         match &h.state().vm().body {
             TabVm::Dashboard(d) => {
                 let row = d.active.iter().find(|r| r.title == sub).unwrap();

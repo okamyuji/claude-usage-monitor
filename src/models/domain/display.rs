@@ -35,6 +35,8 @@ pub mod help {
     pub const SPEND: &str = "プランの枠を超えた分の従量課金の使用額と上限です";
     /// 種別。
     pub const RUN_KIND: &str = "対話は画面で操作中のセッション、ヘッドレスはSDKやclaude -pの実行、ジョブはバックグラウンドジョブです";
+    /// 稼働中の一覧の種別。サブエージェントは親のプロセスの中で動くので、行ごとの終了ボタンを出せない理由も書く。
+    pub const ACTIVE_RUNS: &str = "対話は画面で操作中のセッション、ヘッドレスはSDKやclaude -pの実行、ジョブはバックグラウンドジョブです。サブエージェントは親のセッションのプロセスの中で動くため、1体だけを終了することはできません";
     /// デーモンのメモリ。
     pub const RSS: &str =
         "デーモンが使っている物理メモリです。右肩上がりが続く場合はリークを疑います";
@@ -179,6 +181,13 @@ pub fn projection_text(p: &Projection, now: DateTime<Utc>, tz: FixedOffset) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_runs_help_explains_subagents_cannot_be_stopped_alone() {
+        assert!(help::ACTIVE_RUNS.starts_with(help::RUN_KIND));
+        assert!(help::ACTIVE_RUNS.contains("サブエージェント"));
+        assert!(help::ACTIVE_RUNS.contains("終了"));
+    }
 
     #[test]
     fn ratio_is_none_only_for_zero_denominator() {
