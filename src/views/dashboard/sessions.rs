@@ -23,8 +23,10 @@ pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Act
     }
     ui.separator();
     ui.scope(|ui| {
-        // 浮動のスクロールバーは右端に寄ると帯だけが現れ、行のボタンと見分けにくい。溝の見える常設の形にする。
+        // 浮動のスクロールバーは右端に寄ると帯だけが現れ、行のボタンと見分けにくい。溝の見える常設の形にする。溝は extreme_bg_color で塗られ、カード背景と同色で見えないため、溝の色を差し替える。
         ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+        let track = pal(ui).track;
+        ui.visuals_mut().extreme_bg_color = track;
         egui::ScrollArea::vertical()
             .id_salt("session_list")
             .auto_shrink([false, false])

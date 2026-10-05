@@ -361,6 +361,10 @@ mod tests {
     use std::collections::HashMap;
     use std::collections::HashSet;
 
+    use std::io::Write;
+    use std::sync::Mutex;
+    use std::sync::mpsc::sync_channel;
+
     #[test]
     fn default_usage_interval_is_two_minutes() {
         assert_eq!(
@@ -368,9 +372,6 @@ mod tests {
             Duration::from_secs(120)
         );
     }
-    use std::io::Write;
-    use std::sync::Mutex;
-    use std::sync::mpsc::sync_channel;
 
     #[test]
     fn runs_until_max_ticks_ingesting_and_collecting() {
