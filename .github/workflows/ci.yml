@@ -9,25 +9,25 @@ permissions:
 
 jobs:
   ci:
-    uses: okamyuji/reusable-workflows/.github/workflows/rust-ci.yml@v1
+    uses: okamyuji/reusable-workflows/.github/workflows/rust-ci.yml@test/ubuntu-26.04
     with:
       # トレイ（tray-icon）とメニュー（muda）がLinuxでGTK、libxdo、AppIndicatorを使う。
       apt-packages: libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
   security:
-    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
+    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@test/ubuntu-26.04
 
   # mainへのpushで、検査が通ったcommitにだけ版のタグを付ける。
   tag:
     needs: [ci, security]
     permissions:
       contents: write
-    uses: okamyuji/reusable-workflows/.github/workflows/semver-tag.yml@v1
+    uses: okamyuji/reusable-workflows/.github/workflows/semver-tag.yml@test/ubuntu-26.04
 
   # GITHUB_TOKENでpushしたタグは別のワークフローを起動しないため、同じワークフローの中でReleaseを作る。
   release:
     needs: tag
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
