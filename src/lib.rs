@@ -4,6 +4,9 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(test)]
+#[path = "../build/version.rs"]
+mod build_version;
 pub mod controllers;
 pub mod models;
 #[cfg(test)]
