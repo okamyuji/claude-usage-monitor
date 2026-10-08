@@ -80,7 +80,11 @@ fn card(
     let rate_limit_quiet =
         Duration::seconds(3 * settings.usage_interval_secs as i64 + RATE_LIMIT_GRACE_SECS);
     let problem = match (&latest, last_log) {
-        (_, Some(l)) if l.result == FetchResult::Failed && l.http_status == Some(401) => {
+        // Claude Codeを使わない時間はトークンが約8時間で切れ、次にclaudeが動くまで更新されない。
+        // その間は最後の値を「N分前の値」として出し、Claude Codeのstatuslineと同じくエラーにしない。
+        // ponytail: サーバが失効させた401も同じく隠れる。古さの表示だけが手がかりになる。
+        (Some(_), Some(l)) if l.result == FetchResult::Failed && l.http_status == Some(401) => None,
+        (None, Some(l)) if l.result == FetchResult::Failed && l.http_status == Some(401) => {
             Some("トークン期限切れ。このプロファイルでclaudeを一度起動してください".to_string())
         }
         (Some(u), Some(l))
@@ -366,26 +370,39 @@ mod tests {
         assert_eq!(card.spend.as_deref(), Some("$18.50 / $100.00"));
     }
 
+    fn log_expired(s: &SqliteStore, at: DateTime<Utc>) {
+        let id = s.ensure_default().unwrap().id;
+        s.log(&FetchLogEntry {
+            target: format!("usage:{id}"),
+            at,
+            result: FetchResult::Failed,
+            http_status: Some(401),
+            message: "トークンの期限が切れています".into(),
+        })
+        .unwrap();
+    }
+
     #[test]
-    fn stale_value_and_401_are_explained() {
+    fn expired_token_without_any_value_is_shown() {
+        let (_d, _h, s, _c, deps) = setup();
+        log_expired(&s, now());
+        assert_eq!(
+            cards(&deps).unwrap()[0].problem.as_deref(),
+            Some("トークン期限切れ。このプロファイルでclaudeを一度起動してください")
+        );
+    }
+
+    #[test]
+    fn expired_token_keeps_the_last_value_as_stale_without_error() {
         let (_d, _h, s, clock, deps) = setup();
         rising_usage(&s);
         clock.advance(Duration::minutes(10));
         let p = s.ensure_default().unwrap();
-        s.log(&FetchLogEntry {
-            target: format!("usage:{}", p.id),
-            at: now() + Duration::minutes(9),
-            result: FetchResult::Failed,
-            http_status: Some(401),
-            message: "トークンが無効です".into(),
-        })
-        .unwrap();
+        log_expired(&s, now() + Duration::minutes(9));
         let card = &cards(&deps).unwrap()[0];
         assert_eq!(card.fetched, "10分前の値");
-        assert_eq!(
-            card.problem.as_deref(),
-            Some("トークン期限切れ。このプロファイルでclaudeを一度起動してください")
-        );
+        assert_eq!(card.problem, None);
+        assert_eq!(card.limits[0].percent, "30%");
         s.log(&FetchLogEntry {
             target: format!("usage:{}", p.id),
             at: now() + Duration::minutes(10),

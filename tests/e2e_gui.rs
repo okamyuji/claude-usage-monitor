@@ -167,10 +167,7 @@ fn cards_show_limits_remaining_and_projection() {
     h.get_by_label("使用中");
 }
 
-#[test]
-fn token_expired_is_shown_on_401() {
-    let env = gui_env(now());
-    record_rising_usage(&env);
+fn log_expired(env: &common::gui::GuiEnv) {
     let p = env.store.ensure_default().unwrap();
     env.store
         .log(&FetchLogEntry {
@@ -181,8 +178,24 @@ fn token_expired_is_shown_on_401() {
             message: String::new(),
         })
         .unwrap();
+}
+
+#[test]
+fn token_expired_is_shown_on_401_before_any_value() {
+    let env = gui_env(now());
+    log_expired(&env);
     let h = env.harness();
     h.get_by_label_contains("トークン期限切れ");
+}
+
+#[test]
+fn token_expired_keeps_the_last_value_without_error() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    log_expired(&env);
+    let h = env.harness();
+    h.get_by_label("30%");
+    assert!(h.query_by_label_contains("トークン期限切れ").is_none());
 }
 
 #[test]
