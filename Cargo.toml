@@ -46,3 +46,13 @@ chrono = "0.4.45"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 # wgpuとsnapshotは、README用の画像を画面外で描くtests/readme_images.rsだけが使う。
 egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
+
+# AppKitの呼び出しは主スレッドでしか動かず、標準のテストランナーは別スレッドで走らせるため。
+[[test]]
+name = "about_icon"
+harness = false
