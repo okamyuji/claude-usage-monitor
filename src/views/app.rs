@@ -124,18 +124,30 @@ pub fn apply_theme(ctx: &egui::Context, t: Theme) {
 pub struct CumonApp {
     ctl: GuiController,
     theme: Theme,
+    #[cfg(target_os = "macos")]
+    about_icon_pending: bool,
 }
 
 impl CumonApp {
     /// controllerを受け取って作る。
     pub fn new(ctl: GuiController) -> Self {
         let theme = ctl.vm().theme;
-        Self { ctl, theme }
+        Self {
+            ctl,
+            theme,
+            #[cfg(target_os = "macos")]
+            about_icon_pending: true,
+        }
     }
 }
 
 impl eframe::App for CumonApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // eframeはmacOSでアプリのアイコンを各フレームのuiより前に1回だけ登録するため、最初のフレームで付け替える。
+        #[cfg(target_os = "macos")]
+        if std::mem::take(&mut self.about_icon_pending) {
+            crate::views::about_icon::name_app_icon_for_about();
+        }
         self.ctl.tick();
         if self.ctl.vm().theme != self.theme {
             self.theme = self.ctl.vm().theme;
