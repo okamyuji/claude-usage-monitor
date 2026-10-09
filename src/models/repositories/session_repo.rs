@@ -148,6 +148,16 @@ impl IngestRepo for SqliteStore {
         })
     }
 
+    fn set_ai_title(&self, session_id: &str, title: &str) -> Result<(), RepoError> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE sessions SET ai_title = ?2 WHERE session_id = ?1",
+                params![session_id, title],
+            )
+            .map(|_| ())
+        })
+    }
+
     fn upsert_subagent(&self, s: &SubagentRecord) -> Result<(), RepoError> {
         self.with(|c| {
             c.execute(

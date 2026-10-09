@@ -49,7 +49,31 @@ CREATE INDEX session_notes_session ON session_notes(session_id, ts);
 DELETE FROM ingest_offsets;
 "#;
 
-const MIGRATIONS_SLICE: &[M<'_>] = &[M::up(SCHEMA_V1), M::up(SCHEMA_V2), M::up(SCHEMA_V3)];
+// 時刻のない行（`ai-title`など）を読んだ時刻で、V3までは最終活動時刻が全体走査の時刻へ進んでいた。
+// 残っている記録の最後の時刻（記録がなければ開始時刻）まで戻す。取り込み位置を消し、次の全体走査で
+// JSONLの実際の最後の時刻まで上げ直すとともに題名を読み直す。
+const SCHEMA_V4: &str = r#"
+ALTER TABLE sessions ADD COLUMN ai_title TEXT;
+WITH last(session_id, ts) AS (
+  SELECT session_id, MAX(ts) FROM (
+    SELECT session_id, ts FROM turns
+    UNION ALL SELECT session_id, ts FROM tool_calls
+    UNION ALL SELECT session_id, ts FROM session_notes)
+  GROUP BY session_id),
+floor(session_id, ts) AS (
+  SELECT s.session_id, MAX(s.started_at, COALESCE(l.ts, s.started_at))
+  FROM sessions s LEFT JOIN last l ON l.session_id = s.session_id)
+UPDATE sessions SET last_activity_at = floor.ts FROM floor
+WHERE floor.session_id = sessions.session_id AND sessions.last_activity_at > floor.ts;
+DELETE FROM ingest_offsets;
+"#;
+
+const MIGRATIONS_SLICE: &[M<'_>] = &[
+    M::up(SCHEMA_V1),
+    M::up(SCHEMA_V2),
+    M::up(SCHEMA_V3),
+    M::up(SCHEMA_V4),
+];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 /// SQLiteの保存先。`rusqlite::Connection`はスレッド間で共有できないため`Mutex`で包む。
@@ -309,7 +333,10 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(got, (0, "V2の要約".to_string(), 3));
+        assert_eq!(
+            got,
+            (0, "V2の要約".to_string(), MIGRATIONS_SLICE.len() as i64)
+        );
         let index: i64 = s
             .with(|c| {
                 c.query_row(
@@ -320,6 +347,63 @@ mod tests {
             })
             .unwrap();
         assert_eq!(index, 1);
+    }
+
+    #[test]
+    fn v4_adds_ai_title_restores_last_activity_from_records_and_rereads_files() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("cumon.db");
+        {
+            let mut c = Connection::open(&path).unwrap();
+            Migrations::from_slice(&MIGRATIONS_SLICE[..3])
+                .to_latest(&mut c)
+                .unwrap();
+            c.execute_batch(
+                "INSERT INTO profiles(id, name, created_at) VALUES(1, 'p', 'x');
+                 INSERT INTO sessions(session_id, profile_id, kind, started_at, last_activity_at) VALUES
+                   ('turn', 1, 'interactive', '2026-09-01T00:00:00Z', '2026-10-04T18:49:17Z'),
+                   ('tool', 1, 'interactive', '2026-09-01T00:00:00Z', '2026-10-04T18:49:17Z'),
+                   ('note', 1, 'interactive', '2026-09-01T00:00:00Z', '2026-10-04T18:49:17Z'),
+                   ('fine', 1, 'interactive', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z'),
+                   ('none', 1, 'interactive', '2026-09-01T00:00:00Z', '2026-10-04T18:49:17Z');
+                 INSERT INTO turns(session_id, message_id, ts, kind, summary, input, output, cache_read, cache_write_5m, cache_write_1h) VALUES
+                   ('turn', 'm1', '2026-09-02T00:00:00Z', 'prompt', '', 0, 0, 0, 0, 0),
+                   ('turn', 'm2', '2026-09-03T00:00:00Z', 'prompt', '', 0, 0, 0, 0, 0),
+                   ('tool', 'm3', '2026-09-02T00:00:00Z', 'prompt', '', 0, 0, 0, 0, 0),
+                   ('fine', 'm4', '2026-09-02T00:00:00Z', 'prompt', '', 0, 0, 0, 0, 0);
+                 INSERT INTO tool_calls(tool_use_id, session_id, ts, tool_name) VALUES('t1', 'tool', '2026-09-04T00:00:00Z', 'Bash');
+                 INSERT INTO session_notes(session_id, uuid, ts, kind, text) VALUES('note', 'n1', '2026-09-05T00:00:00Z', 'recap', '要約');
+                 INSERT INTO ingest_offsets(path, offset, size, mtime) VALUES('/a', 1, 1, 1);",
+            )
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let got: Vec<(String, String)> = s
+            .with(|c| {
+                c.prepare("SELECT session_id, last_activity_at FROM sessions ORDER BY session_id")?
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect()
+            })
+            .unwrap();
+        let want = [
+            ("fine", "2026-09-02T00:00:00Z"),
+            ("none", "2026-09-01T00:00:00Z"),
+            ("note", "2026-09-05T00:00:00Z"),
+            ("tool", "2026-09-04T00:00:00Z"),
+            ("turn", "2026-09-03T00:00:00Z"),
+        ]
+        .map(|(a, b)| (a.to_string(), b.to_string()));
+        assert_eq!(got, want);
+        let after: (i64, Option<String>, i64) = s
+            .with(|c| {
+                c.query_row(
+                    "SELECT (SELECT COUNT(*) FROM ingest_offsets), (SELECT ai_title FROM sessions WHERE session_id = 'turn'), (SELECT user_version FROM pragma_user_version)",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+            })
+            .unwrap();
+        assert_eq!(after, (0, None, 4));
     }
 
     /// PRの途中の版は、V2で主キーを(session_id, uuid)にしていた。その版で作ったDBもV3で移ることを確かめる。

@@ -57,7 +57,6 @@ struct FileState<'a> {
     sessions: HashMap<String, SessionUpsert>,
     repo: &'a dyn IngestRepo,
     cutoff: DateTime<Utc>,
-    now: DateTime<Utc>,
 }
 
 impl FileState<'_> {
@@ -65,7 +64,13 @@ impl FileState<'_> {
         let Some(sid) = pl.meta.session_id.clone() else {
             return Ok(());
         };
-        let at = pl.meta.timestamp.unwrap_or(self.now);
+        if let Event::Title(t) = &pl.event {
+            return self.repo.set_ai_title(&sid, t);
+        }
+        // 時刻のない行（`last-prompt`など）を読んだ時刻で数えると、読み直しのたびに最終活動時刻が進む。
+        let Some(at) = pl.meta.timestamp else {
+            return Ok(());
+        };
         if at < self.cutoff {
             return Ok(());
         }
@@ -95,7 +100,7 @@ impl FileState<'_> {
                     })?;
                 }
             }
-            Event::Other => {}
+            Event::Title(_) | Event::Other => {}
         }
         Ok(())
     }
@@ -294,7 +299,6 @@ impl Ingestor {
             sessions: HashMap::new(),
             repo: self.repo.as_ref(),
             cutoff: now - self.retention,
-            now,
         };
         let mut first_err: Option<RepoError> = None;
         let mut malformed = 0;
@@ -590,6 +594,7 @@ mod tests {
             (prompt, "turns"),
             (tool_error, "tool_calls"),
             (prompt, "sessions"),
+            (TITLE, "sessions"),
         ] {
             let e = env();
             let cfg = e.home.path().join(".claude");
@@ -917,6 +922,55 @@ mod tests {
             kept,
             ("名前".to_string(), "コミットしてください".to_string())
         );
+    }
+
+    const TITLE: &str = r#"{"type":"ai-title","aiTitle":"コミットの依頼","sessionId":"s1"}"#;
+
+    #[test]
+    fn lines_without_timestamp_leave_session_period_alone() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let last_prompt = r#"{"type":"last-prompt","leafUuid":"u1","sessionId":"s1"}"#;
+        write(
+            &cfg.join("projects/-w/s1.jsonl"),
+            &[U1, A1, TITLE, last_prompt],
+        );
+        write(
+            &cfg.join("projects/-w/s2.jsonl"),
+            &[r#"{"type":"ai-title","aiTitle":"行のない題名","sessionId":"s2"}"#],
+        );
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(
+            session_col(&e.store, "started_at"),
+            "2026-09-26T00:00:00.000Z"
+        );
+        assert_eq!(
+            session_col(&e.store, "last_activity_at"),
+            "2026-09-26T00:00:01.000Z"
+        );
+        assert_eq!(
+            count(
+                &e.store,
+                "SELECT COUNT(*) FROM sessions WHERE session_id = 's2'"
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn ai_title_is_saved_and_replaced_by_a_later_title() {
+        let e = env();
+        let cfg = e.home.path().join(".claude");
+        let path = cfg.join("projects/-w/s1.jsonl");
+        write(&path, &[U1, TITLE]);
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "ai_title"), "コミットの依頼");
+        write(
+            &path,
+            &[r#"{"type":"ai-title","aiTitle":"新しい題名","sessionId":"s1"}"#],
+        );
+        e.ingestor.scan_all(&e.profile, &cfg).unwrap();
+        assert_eq!(session_col(&e.store, "ai_title"), "新しい題名");
     }
 
     #[test]

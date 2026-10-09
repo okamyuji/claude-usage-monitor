@@ -153,6 +153,8 @@ pub enum Event {
         /// 本文（1行に要約済み）。圧縮の印では空のこともある。
         text: String,
     },
+    /// Claude Codeが最初の依頼から付けたセッションの題名（`ai-title`）。行に時刻はない。
+    Title(String),
     /// 集計に使わない行。
     Other,
 }
@@ -338,6 +340,10 @@ pub fn parse_line(line: &str) -> Result<ParsedLine, serde_json::Error> {
         Some("assistant") => parse_assistant(&v),
         Some("user") => parse_user(&v),
         Some("system") => parse_system(&v),
+        Some("ai-title") => match v.get("aiTitle").and_then(Value::as_str) {
+            Some(t) if !t.trim().is_empty() => Event::Title(one_line(t, SUMMARY_CHARS)),
+            _ => Event::Other,
+        },
         _ => Event::Other,
     };
     Ok(ParsedLine { meta, event })
@@ -673,6 +679,30 @@ mod tests {
         assert_eq!(NoteKind::Compact.as_str(), "compact");
         assert_eq!(NoteKind::parse("x"), None);
     }
+    #[test]
+    fn ai_title_becomes_title_in_one_line() {
+        let line = r#"{"type":"ai-title","aiTitle":"削除した\nモデルの確認","sessionId":"s1"}"#;
+        let pl = parse_line(line).unwrap();
+        assert_eq!(pl.meta.session_id.as_deref(), Some("s1"));
+        assert_eq!(pl.event, Event::Title("削除した モデルの確認".into()));
+        let long = json!({"type":"ai-title","aiTitle":"あ".repeat(SUMMARY_CHARS + 1)}).to_string();
+        let Event::Title(t) = parse_line(&long).unwrap().event else {
+            panic!("題名になっていない")
+        };
+        assert_eq!(t.chars().count(), SUMMARY_CHARS + 1);
+    }
+
+    #[test]
+    fn ai_title_without_text_is_ignored() {
+        for line in [
+            r#"{"type":"ai-title"}"#,
+            r#"{"type":"ai-title","aiTitle":3}"#,
+            r#"{"type":"ai-title","aiTitle":"  "}"#,
+        ] {
+            assert_eq!(parse_line(line).unwrap().event, Event::Other, "{line}");
+        }
+    }
+
     #[test]
     fn recap_drops_trailing_config_hint() {
         let line = r#"{"type":"system","subtype":"away_summary","content":"作業は終わりました。 (disable recaps in /config)"}"#;

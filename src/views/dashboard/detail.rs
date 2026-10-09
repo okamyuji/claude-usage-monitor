@@ -70,9 +70,20 @@ fn summary(ui: &mut Ui, s: &SummaryVm) {
             if s.recaps.is_empty() {
                 ui.label(
                     RichText::new(
-                        "Claude Codeの要約はありません。離席中に書かれた要約だけを出します",
+                        "離席中の要約はありません。Claude Codeは端末を3分以上離れたときだけ要約を書きます",
                     )
                     .color(p.weak),
+                );
+            }
+            if let Some(t) = &s.title {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("題名").small().color(p.weak));
+                    ui.label(t);
+                });
+                ui.label(
+                    RichText::new("Claude Codeが最初の依頼から自動で付けた題名です")
+                        .small()
+                        .color(p.weak),
                 );
             }
             timed_lines(ui, &s.recaps);

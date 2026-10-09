@@ -223,6 +223,8 @@ pub trait IngestRepo: Send + Sync {
     fn mark_tool_error(&self, tool_use_id: &str) -> Result<(), RepoError>;
     /// 要約か圧縮の印を追加する。同じ`uuid`が再来しても何もしない。
     fn upsert_note(&self, n: &NoteRecord) -> Result<(), RepoError>;
+    /// Claude Codeが付けた題名を保存する。セッション行がまだなければ何もしない。
+    fn set_ai_title(&self, session_id: &str, title: &str) -> Result<(), RepoError>;
     /// サブエージェントを追加または更新する。
     fn upsert_subagent(&self, s: &SubagentRecord) -> Result<(), RepoError>;
     /// ジョブを追加または更新する。
