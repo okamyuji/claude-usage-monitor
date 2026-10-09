@@ -53,6 +53,8 @@ pub struct SessionRow {
     pub last_context_tokens: u64,
     /// サブエージェントを含むターン数。
     pub turn_count: i64,
+    /// Claude Codeが最初の依頼から付けた題名。
+    pub ai_title: Option<String>,
 }
 
 /// ジョブの進捗。

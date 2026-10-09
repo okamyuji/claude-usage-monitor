@@ -929,6 +929,9 @@ mod calendar_e2e {
                 text: "トップページを速くしました".into(),
             })
             .unwrap();
+        for id in ["s1", "s2"] {
+            env.store.set_ai_title(id, &format!("{id}の題名")).unwrap();
+        }
         let mut h = open_calendar(&env);
         h.get_by_label_contains("設計の相談").click();
         h.run();
@@ -937,9 +940,11 @@ mod calendar_e2e {
         h.get_by_label("依頼");
         h.get_by_label("依頼の一覧");
         h.get_by_label("ツール名");
+        assert!(h.query_by_label("s1の題名").is_none());
         h.get_by_label_contains("別の作業").click();
         h.run();
-        h.get_by_label_contains("Claude Codeの要約はありません");
+        h.get_by_label_contains("離席中の要約はありません");
+        h.get_by_label("s2の題名");
     }
 
     #[test]

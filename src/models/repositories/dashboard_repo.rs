@@ -15,7 +15,8 @@ pub(crate) const SESSION_SELECT: &str = "SELECT s.session_id, s.profile_id, s.ki
   (SELECT t.model FROM turns t WHERE t.session_id = s.session_id AND t.agent_id = '' AND t.model IS NOT NULL ORDER BY t.ts DESC, t.id DESC LIMIT 1),
   (SELECT t.input + t.cache_read + t.cache_write_5m + t.cache_write_1h FROM turns t
      WHERE t.session_id = s.session_id AND t.agent_id = '' AND t.model IS NOT NULL ORDER BY t.ts DESC, t.id DESC LIMIT 1),
-  (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.session_id)
+  (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.session_id),
+  s.ai_title
 FROM sessions s";
 
 /// `SESSION_SELECT`の1行。
@@ -34,6 +35,7 @@ pub(crate) type SessionTuple = (
     Option<String>,
     Option<i64>,
     i64,
+    Option<String>,
 );
 
 /// タプルからセッション行を作る。時刻か種別が読めない行は`None`にして一覧から外す。1行の破損で画面全体を止めないため。
@@ -53,6 +55,7 @@ pub(crate) fn session_row(t: SessionTuple) -> Option<SessionRow> {
         last_model,
         ctx,
         turn_count,
+        ai_title,
     ) = t;
     Some(SessionRow {
         session_id,
@@ -69,6 +72,7 @@ pub(crate) fn session_row(t: SessionTuple) -> Option<SessionRow> {
         last_model,
         last_context_tokens: ctx.unwrap_or(0) as u64,
         turn_count,
+        ai_title,
     })
 }
 

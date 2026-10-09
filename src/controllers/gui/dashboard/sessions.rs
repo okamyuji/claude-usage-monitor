@@ -152,6 +152,8 @@ pub struct ModelLine {
 pub struct SummaryVm {
     /// Claude Codeが書いた要約（時刻、本文）。時刻順。
     pub recaps: Vec<(String, String)>,
+    /// 要約がないときに代わりに出す、Claude Codeが付けた題名。
+    pub title: Option<String>,
     /// 数値（名前、値）。
     pub stats: Vec<(&'static str, String)>,
     /// モデル表。
@@ -427,12 +429,14 @@ fn summary_vm(
         .iter()
         .fold((0, 0), |a, t| (a.0 + t.calls, a.1 + t.errors));
     let compacts = notes.iter().filter(|n| n.kind == NoteKind::Compact).count();
+    let recaps: Vec<(String, String)> = notes
+        .iter()
+        .filter(|n| n.kind == NoteKind::Recap)
+        .map(|n| (clock(n.ts), n.text.clone()))
+        .collect();
     Ok(SummaryVm {
-        recaps: notes
-            .iter()
-            .filter(|n| n.kind == NoteKind::Recap)
-            .map(|n| (clock(n.ts), n.text.clone()))
-            .collect(),
+        title: s.ai_title.clone().filter(|_| recaps.is_empty()),
+        recaps,
         stats: vec![
             (
                 "期間",
@@ -782,6 +786,10 @@ mod tests {
             .unwrap();
         }
         s.mark_tool_error("t2").unwrap();
+        // 題名は要約がないときだけ出す。要約のある"w"にも入れ、出ないことを確かめる。
+        for id in ["w", "empty"] {
+            s.set_ai_title(id, &format!("{id}の題名")).unwrap();
+        }
         for (id, text) in [
             ("c1", "<command-name>/effort</command-name>"),
             ("c2", "<command-name>/effort</command-name>"),
@@ -858,6 +866,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let s = d.summary.expect("概要");
+        assert_eq!(s.title, None);
         assert_eq!(
             s.recaps.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
             ["終わりました", "続きも終わりました"]
@@ -915,6 +924,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let s = d.summary.expect("概要");
+        assert_eq!(s.title.as_deref(), Some("emptyの題名"));
         assert!(s.recaps.is_empty() && s.models.is_empty() && s.tools.is_empty());
         assert!(s.prompts.is_empty());
         assert_eq!(
