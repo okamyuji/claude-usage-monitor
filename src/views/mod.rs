@@ -7,6 +7,7 @@ pub mod app;
 pub mod dashboard;
 pub mod header;
 pub mod layout;
+pub mod plot;
 pub mod tabs;
 pub mod theme;
 pub mod tray;

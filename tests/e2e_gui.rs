@@ -3,7 +3,7 @@
 mod common;
 
 use chrono::{TimeZone, Utc};
-use claude_usage_monitor::controllers::gui::app::Tab;
+use claude_usage_monitor::controllers::gui::app::{GuiController, Tab};
 use claude_usage_monitor::controllers::gui::dashboard::ListMode;
 use common::gui::gui_env;
 use egui_kittest::kittest::Queryable;
@@ -136,7 +136,7 @@ fn layout_follows_window_size() {
 
 use claude_usage_monitor::models::domain::records::{FetchLogEntry, FetchResult};
 use claude_usage_monitor::models::domain::usage::parse_usage;
-use claude_usage_monitor::models::ports::{FetchLogRepo, ProfileRepo, UsageRepo};
+use claude_usage_monitor::models::ports::{FetchLogRepo, MaintenanceRepo, ProfileRepo, UsageRepo};
 
 fn record_rising_usage(env: &common::gui::GuiEnv) {
     let p = env.store.ensure_default().unwrap();
@@ -165,6 +165,70 @@ fn cards_show_limits_remaining_and_projection() {
     h.get_by_label_contains("このペースだと 13:10 に上限");
     h.get_by_label("週間枠（Fable）");
     h.get_by_label("使用中");
+}
+
+/// グラフの縦一列をマウスでなぞり、`needle`を含むツールチップが出たかを返す。
+/// グラフは線の頂点の近くでしか点を拾わないため、1か所に乗せるだけでは当たらない。
+fn tooltip_along(
+    h: &mut egui_kittest::Harness<'_, GuiController>,
+    x: f32,
+    ys: std::ops::Range<f32>,
+    needle: &str,
+) -> bool {
+    let mut y = ys.start;
+    while y < ys.end {
+        h.hover_at(egui::pos2(x, y));
+        h.run();
+        if h.query_by_label_contains(needle).is_some() {
+            return true;
+        }
+        y += 2.0;
+    }
+    false
+}
+
+#[test]
+fn trend_graph_shows_the_value_under_the_pointer() {
+    let env = gui_env(now());
+    let p = env.store.ensure_default().unwrap();
+    let mut snap = parse_usage(include_str!("fixtures/usage_ok.json")).unwrap();
+    for l in &mut snap.limits {
+        l.percent = 50.0;
+        l.resets_at = Some(now() + chrono::Duration::hours(2));
+    }
+    for i in 0..60 {
+        env.store
+            .record_snapshot(p.id, now() - chrono::Duration::minutes(5 * i), &snap)
+            .unwrap();
+    }
+    let mut h = env.harness();
+    let r = h.get_by_label("5時間枠のグラフ").rect();
+    assert!(
+        tooltip_along(&mut h, r.left() + 300.0, r.bottom()..820.0, "50.0%"),
+        "5時間枠のグラフに乗せると値が出る"
+    );
+    h.get_by_label_contains("default\n09/26 ");
+}
+
+#[test]
+fn memory_graph_shows_the_value_under_the_pointer() {
+    let env = gui_env(now());
+    // 横軸は記録の範囲に合わせて伸びる。1分ごとに置き、頂点の間隔をマウスが拾える距離より狭くする。
+    for i in 0..300 {
+        env.store
+            .record_daemon_stats(now() - chrono::Duration::minutes(i), 14 << 20)
+            .unwrap();
+    }
+    let mut h = env.harness();
+    h.get_by_label("診断").click();
+    h.run();
+    let r = h.get_by_label_contains("デーモンのメモリ").rect();
+    assert!(
+        tooltip_along(&mut h, 640.0, r.bottom()..r.bottom() + 200.0, "RSS（MB）\n"),
+        "メモリのグラフに乗せると値が出る"
+    );
+    h.get_by_label_contains("\n09/26 ");
+    h.get_by_label_contains("\n14.0MB");
 }
 
 fn log_expired(env: &common::gui::GuiEnv) {

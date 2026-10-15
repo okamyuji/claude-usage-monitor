@@ -3,8 +3,9 @@ use crate::controllers::gui::app::Action;
 use crate::controllers::gui::dashboard::trend::{TrendPanel, TrendRange, TrendsVm};
 use crate::controllers::gui::dashboard::{DashAction, DashboardVm};
 use crate::views::layout::GAP;
+use crate::views::plot::{hover_label, plot_time};
 use crate::views::widgets::{help, pal, section};
-use chrono::{DateTime, FixedOffset};
+use chrono::FixedOffset;
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
 use egui_plot::{HLine, Legend, Line, Plot, PlotPoints, VLine};
@@ -73,11 +74,8 @@ fn panel(ui: &mut Ui, t: &TrendsVm, p: &TrendPanel, height: f32) {
         .include_y(100.0)
         .include_x(t.x_min)
         .include_x(t.x_max)
-        .x_axis_formatter(move |mark, _| {
-            DateTime::from_timestamp(mark.value as i64, 0)
-                .map(|x| x.with_timezone(&tz).format("%m/%d %H:%M").to_string())
-                .unwrap_or_default()
-        })
+        .x_axis_formatter(move |mark, _| plot_time(mark.value, tz))
+        .label_formatter(move |pos| hover_label(pos, tz, "%"))
         .show(ui, |plot| {
             for s in &p.series {
                 plot.line(Line::new(
