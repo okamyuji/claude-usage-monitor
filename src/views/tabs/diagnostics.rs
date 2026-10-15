@@ -2,9 +2,10 @@
 use crate::controllers::gui::tabs::diagnostics::DiagnosticsVm;
 use crate::models::domain::display::help as h;
 use crate::views::layout::{GAP, flex_columns};
+use crate::views::plot::{hover_label, plot_time};
 use crate::views::theme::card_frame;
 use crate::views::widgets::{cell, help, pal, section, trunc};
-use chrono::{DateTime, FixedOffset};
+use chrono::FixedOffset;
 use egui::{RichText, Ui};
 use egui_plot::{Line, Plot, PlotPoints};
 
@@ -45,11 +46,8 @@ pub fn show(ui: &mut Ui, vm: &DiagnosticsVm) {
         Plot::new("rss")
             .height(180.0)
             .include_y(0.0)
-            .x_axis_formatter(move |m, _| {
-                DateTime::from_timestamp(m.value as i64, 0)
-                    .map(|t| t.with_timezone(&tz).format("%m/%d %H:%M").to_string())
-                    .unwrap_or_default()
-            })
+            .x_axis_formatter(move |m, _| plot_time(m.value, tz))
+            .label_formatter(move |pos| hover_label(pos, tz, "MB"))
             .show(ui, |pl| {
                 pl.line(Line::new(
                     "RSS（MB）",
