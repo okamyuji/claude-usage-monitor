@@ -25,9 +25,13 @@ fn entry(pid: &Pid, p: &Process) -> ProcEntry {
     }
 }
 
+fn unsupported_os() -> ExitError {
+    ExitError::Failed("このOSではプロセス情報を取得できません".into())
+}
+
 /// 本番のプロセス一覧。
 pub struct SysProcessTree {
-    sys: Mutex<System>,
+    sys: Mutex<Option<System>>,
     sender: Arc<dyn ExitSender>,
 }
 
@@ -35,7 +39,7 @@ impl SysProcessTree {
     /// 終了を送る役を受け取って作る。
     pub fn new(sender: Arc<dyn ExitSender>) -> Self {
         Self {
-            sys: Mutex::new(System::new()),
+            sys: Mutex::new(System::new().ok()),
             sender,
         }
     }
@@ -43,7 +47,11 @@ impl SysProcessTree {
 
 impl ProcessTree for SysProcessTree {
     fn snapshot(&self) -> Vec<ProcEntry> {
-        let mut sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+        // sysinfo 0.40は未対応のOSで`System::new`が失敗する。その場合は一覧を空にする。
+        let Some(sys) = guard.as_mut() else {
+            return Vec::new();
+        };
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind());
         sys.processes()
             .iter()
@@ -53,7 +61,8 @@ impl ProcessTree for SysProcessTree {
 
     fn request_exit(&self, v: &Victim) -> Result<(), ExitError> {
         let e = {
-            let mut sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+            let mut guard = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+            let sys = guard.as_mut().ok_or_else(unsupported_os)?;
             let pid = Pid::from_u32(v.pid);
             sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, kind());
             sys.process(pid)
@@ -78,7 +87,7 @@ impl ExitSender for SystemExitSender {
                 .map_err(|e| ExitError::Failed(e.to_string()))?;
             return quit_result(out.status.code(), &String::from_utf8_lossy(&out.stderr));
         }
-        let mut sys = System::new();
+        let mut sys = System::new().map_err(|_| unsupported_os())?;
         let p = Pid::from_u32(pid);
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[p]),

@@ -323,10 +323,12 @@ mod tests {
     }
 
     fn row(it: RunItem) -> Harness<'static, RowState> {
-        Harness::new_ui_state(
-            |ui, s: &mut RowState| run_row(ui, &s.0, false, &mut s.1),
-            (it, Vec::new()),
-        )
+        Harness::builder()
+            .with_context_setup(crate::views::app::install_fonts)
+            .build_ui_state(
+                |ui, s: &mut RowState| run_row(ui, &s.0, false, &mut s.1),
+                (it, Vec::new()),
+            )
     }
 
     #[test]

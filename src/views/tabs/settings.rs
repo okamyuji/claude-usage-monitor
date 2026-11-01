@@ -176,10 +176,12 @@ mod tests {
     }
 
     fn harness(vm: SettingsVm, forms: Forms) -> Harness<'static, State> {
-        Harness::new_ui_state(
-            |ui, s: &mut State| show(ui, &s.0, &mut s.1, &mut s.2),
-            (vm, forms, Vec::new()),
-        )
+        Harness::builder()
+            .with_context_setup(crate::views::app::install_fonts)
+            .build_ui_state(
+                |ui, s: &mut State| show(ui, &s.0, &mut s.1, &mut s.2),
+                (vm, forms, Vec::new()),
+            )
     }
 
     fn draft() -> ModelDraft {
