@@ -24,7 +24,7 @@ pub fn desktop(ui: &mut Ui, d: &DesktopMemoryVm, acts: &mut Vec<Action>) {
 pub fn confirm(ui: &mut Ui, c: &ConfirmExit, acts: &mut Vec<Action>) {
     let p = pal(ui);
     let before = acts.len();
-    let m = egui::Modal::new(egui::Id::new("confirm_exit")).show(ui.ctx(), |ui| {
+    let m = egui::Modal::new(egui::Id::unique("confirm_exit")).show(ui.ctx(), |ui| {
         ui.label(RichText::new(format!("{} を終了します（{}）", c.title, c.memory)).strong());
         ui.label(RichText::new("実行中の編集が失われることがあります").color(p.warn));
         if let Some(cmd) = &c.resume {

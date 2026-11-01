@@ -78,14 +78,16 @@ mod tests {
 
     #[test]
     fn parts_render_their_text() {
-        let h = Harness::new_ui(|ui| {
-            section(ui, "レート制限");
-            help(ui, "5時間ごとに戻る上限");
-            badge(ui, "入力待ち", LIGHT.warn, LIGHT.warn_soft);
-            usage_bar(ui, 1.5, LIGHT.accent);
-            trunc(ui, "とても長い入力の冒頭");
-            cell(ui, 80.0, |ui| ui.label("セル"));
-        });
+        let h = Harness::builder()
+            .with_context_setup(crate::views::app::install_fonts)
+            .build_ui(|ui| {
+                section(ui, "レート制限");
+                help(ui, "5時間ごとに戻る上限");
+                badge(ui, "入力待ち", LIGHT.warn, LIGHT.warn_soft);
+                usage_bar(ui, 1.5, LIGHT.accent);
+                trunc(ui, "とても長い入力の冒頭");
+                cell(ui, 80.0, |ui| ui.label("セル"));
+            });
         h.get_by_label("レート制限");
         h.get_by_label("ⓘ");
         h.get_by_label("入力待ち");

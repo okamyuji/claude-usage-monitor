@@ -143,6 +143,7 @@ impl GuiEnv {
     pub fn harness_sized(&self, w: f32, h: f32) -> Harness<'static, GuiController> {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(w, h))
+            .with_context_setup(claude_usage_monitor::views::app::install_fonts)
             .build_ui_state(
                 |ui, c: &mut GuiController| {
                     // `cumon gui`の`CumonApp::ui`と同じ順で呼ぶ。毎フレームの処理（ライブログの追記の読み取り）も同じ経路で確かめるため。

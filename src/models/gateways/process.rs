@@ -15,19 +15,21 @@ impl Clock for SystemClock {
 
 /// sysinfoによるプロセス情報。全プロセスの一覧を持たず、問い合わせたpidだけを更新してメモリを抑える。
 pub struct SysProcessInfo {
-    sys: Mutex<System>,
+    sys: Mutex<Option<System>>,
 }
 
 impl SysProcessInfo {
     /// 空の状態で作る。
     pub fn new() -> Self {
         Self {
-            sys: Mutex::new(System::new()),
+            sys: Mutex::new(System::new().ok()),
         }
     }
 
     fn refresh(&self, pid: Pid) -> Option<u64> {
-        let mut sys = self.sys.lock().ok()?;
+        let mut guard = self.sys.lock().ok()?;
+        // sysinfo 0.40は未対応のOSで`System::new`が失敗する。その場合は問い合わせに答えない。
+        let sys = guard.as_mut()?;
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid]),
             true,

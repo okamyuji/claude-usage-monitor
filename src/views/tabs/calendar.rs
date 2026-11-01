@@ -6,8 +6,8 @@ use crate::views::layout::GAP;
 use crate::views::theme::series;
 use crate::views::widgets::{pal, section};
 use egui::{
-    Align2, Button, FontId, Painter, Rect, RichText, Sense, Stroke, StrokeKind, Ui, WidgetInfo,
-    WidgetType, pos2, vec2,
+    Align2, Button, FontId, Painter, Rect, RichText, Role, Sense, Stroke, StrokeKind, Ui,
+    WidgetInfo, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -179,10 +179,10 @@ fn band_rect(b: &BandVm, x: f32, col: f32, y_of: impl Fn(u32) -> f32) -> Rect {
 
 fn band(ui: &mut Ui, painter: &Painter, b: &BandVm, r: Rect, day: usize, acts: &mut Vec<Action>) {
     let color = series(b.color, pal(ui));
-    let id = ui.id().with(("band", day, &b.session_id, b.start));
+    let id = ui.scope_id().with(("band", day, &b.session_id, b.start));
     let resp = ui.interact(r, id, Sense::click());
     // 帯は文字を持たないので、説明を部品名にして読み上げと検索ができるようにする。
-    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &b.tooltip));
+    resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &b.tooltip));
     let fill = if resp.hovered() { 0.55 } else { 0.35 };
     painter.rect_filled(r, 3.0, color.gamma_multiply(fill));
     let width = if b.selected { 2.5 } else { 1.0 };

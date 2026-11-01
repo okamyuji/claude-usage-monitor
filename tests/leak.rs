@@ -71,7 +71,7 @@ fn rss_growth(extra: &[&str]) -> u64 {
         .spawn()
         .unwrap();
     let db = data.path().join("cumon.db");
-    let mut sys = System::new();
+    let mut sys = System::new().expect("sysinfo supports this OS");
     wait_ticks(&db, &jsonl, 100, &mut child);
     let at100 = rss(&mut sys, child.id());
     wait_ticks(&db, &jsonl, 999, &mut child);

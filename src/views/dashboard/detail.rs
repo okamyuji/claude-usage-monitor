@@ -325,7 +325,8 @@ fn live(ui: &mut Ui, vm: &LiveLogVm, forms: &mut Forms, acts: &mut Vec<Action>) 
         }
     });
     // 手で上へスクロールしたときだけ「最新へ戻る」を出す（spec 7.4節）。
-    let at_bottom = out.state.offset.y + out.inner_rect.height() >= out.content_size.y - 4.0;
+    let at_bottom =
+        out.state.clamped_offset().y + out.inner_rect.height() >= out.content_size.y - 4.0;
     if !at_bottom && ui.button("最新へ戻る").clicked() {
         acts.push(Action::Live(LiveAction::JumpToLatest));
     }
@@ -370,7 +371,10 @@ fn replay(ui: &mut Ui, vm: &ReplayVm, forms: &mut Forms, acts: &mut Vec<Action>)
         ui.label(RichText::new(format!("{} / {}", vm.position + 1, vm.len)).strong());
     });
     let slider = egui::Slider::new(&mut forms.replay_position, 0..=vm.len - 1).show_value(false);
-    if ui.add_sized([ui.available_width(), 20.0], slider).changed() {
+    let resp = ui.add_sized([ui.available_width(), 20.0], slider);
+    // 値を表示しないので、読み上げに使う名前を付ける。egui 0.37の検査が名前のない部品を拒む。
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Slider, true, "再生位置"));
+    if resp.changed() {
         acts.push(act(ReplayAction::Seek(forms.replay_position)));
     }
     if let Some(c) = &vm.current {

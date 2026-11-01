@@ -86,12 +86,28 @@ fn body(ui: &mut Ui, vm: &AppVm, forms: &mut Forms, acts: &mut Vec<Action>) {
 /// バイナリに埋め込んで`from_static`で渡し、ヒープへ複製しない。
 const CJK_FONT: &[u8] = include_bytes!("../../assets/fonts/NotoSansJP-Regular.otf");
 
+/// Phosphorのアイコンフォントを、本文のフォントの次に並べて登録する。
+/// egui-phosphor 0.14.0はegui 0.36の型を取り、egui 0.37のFontDefinitionsを渡せない。
+/// 対応版が出るまでは、同じ手順をここで行う。字形のバイト列はegui-phosphorのものを使う。
+fn add_phosphor(fonts: &mut egui::FontDefinitions) {
+    let name = "phosphor";
+    fonts.font_data.insert(
+        name.into(),
+        Arc::new(egui::FontData::from_static(
+            egui_phosphor::Variant::Regular.font_bytes(),
+        )),
+    );
+    if let Some(keys) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        keys.insert(keys.len().min(1), name.into());
+    }
+}
+
 /// フォント定義。同梱の日本語フォントを、本文では英字フォントより前に置く。
 /// 既定の英字フォント（Ubuntu-Light）は細字で、数字だけが漢字より細く低く描かれて1行の太さが揃わないため。
 /// 等幅では桁を揃えるためHackを先頭に残す。絵文字フォントより前に置くのは、全角の括弧などを絵文字フォントの字形で描かせないため。
 pub fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    add_phosphor(&mut fonts);
     fonts.font_data.insert(
         "cjk".into(),
         Arc::new(egui::FontData::from_static(CJK_FONT)),
@@ -240,7 +256,9 @@ mod tests {
         let (_d, ctl) = controller(home.path());
         let mut app = CumonApp::new(ctl);
         app.theme = Theme::Dark;
-        let mut h = Harness::new_eframe(|_cc| app);
+        let mut h = Harness::builder()
+            .with_context_setup(install_fonts)
+            .build_eframe(|_cc| app);
         h.run();
         h.get_by_label("ダッシュボード");
         h.get_by_label_contains("デーモン停止中");
@@ -259,14 +277,16 @@ mod tests {
         ctl.handle(Action::SelectTab(
             crate::controllers::gui::app::Tab::Diagnostics,
         ));
-        let mut h = Harness::new_ui_state(
-            |ui, c: &mut GuiController| {
-                let (vm, forms) = c.view_parts();
-                let acts = show_app(ui, vm, forms);
-                c.handle_all(acts);
-            },
-            ctl,
-        );
+        let mut h = Harness::builder()
+            .with_context_setup(install_fonts)
+            .build_ui_state(
+                |ui, c: &mut GuiController| {
+                    let (vm, forms) = c.view_parts();
+                    let acts = show_app(ui, vm, forms);
+                    c.handle_all(acts);
+                },
+                ctl,
+            );
         h.run();
         h.get_by_label("取得の状況");
     }
