@@ -86,15 +86,18 @@ impl TrayController {
                 .and_then(|u| u.limits.iter().find(|l| l.kind == kind))
                 .map(|l| fmt_percent(l.percent))
         };
+        let name = active.map(|p| p.name.as_str()).unwrap_or("");
         let (title, tooltip) = match (pct("session"), pct("weekly_all")) {
-            (Some(s), Some(w)) => (
-                format!("{s}・{w}"),
-                format!(
-                    "{}: 5時間枠 {s} / 週間枠 {w}",
-                    active.map(|p| p.name.as_str()).unwrap_or("")
-                ),
-            ),
-            _ => ("—".to_string(), "まだ取得していません".to_string()),
+            (None, None) => ("—".to_string(), "まだ取得していません".to_string()),
+            // Ultra（旧Max 20x）は5時間枠が無く、APIが`session`を返さないので週間枠だけを出す
+            (None, Some(w)) => (w.clone(), format!("{name}: 週間枠 {w}")),
+            (s, w) => {
+                let (s, w) = (s.as_deref().unwrap_or("—"), w.as_deref().unwrap_or("—"));
+                (
+                    format!("{s}・{w}"),
+                    format!("{name}: 5時間枠 {s} / 週間枠 {w}"),
+                )
+            }
         };
         Ok(TrayVm {
             title,
@@ -198,6 +201,19 @@ mod tests {
         assert_eq!(vm.tooltip, "default: 5時間枠 13% / 週間枠 67%");
         assert_eq!(vm.profiles, [("default".to_string(), true)]);
         assert!(!vm.paused);
+    }
+
+    #[test]
+    fn title_shows_only_weekly_for_plan_without_session_limit() {
+        // Ultra（旧Max 20x）は5時間枠が撤廃され、APIの`limits[]`に`session`が入らない
+        let (_d, _h, s, _l, c) = setup(false);
+        let p = s.ensure_default().unwrap();
+        let body = r#"{"limits":[{"kind":"weekly_all","group":"weekly","percent":16,"severity":"normal","resets_at":"2026-11-06T04:59:59Z"}]}"#;
+        s.record_snapshot(p.id, chrono::Utc::now(), &parse_usage(body).unwrap())
+            .unwrap();
+        let vm = c.vm().unwrap();
+        assert_eq!(vm.title, "16%");
+        assert_eq!(vm.tooltip, "default: 週間枠 16%");
     }
 
     #[test]
