@@ -4,49 +4,27 @@ use crate::gpui_views::app::Plots;
 use crate::gpui_views::plot::Plot;
 use crate::gpui_views::plot::format::{hover_label, plot_time};
 use crate::gpui_views::theme::{BODY, GAP_X, Palette, SMALL};
-use crate::gpui_views::widgets::{card, help, label, section, text, trunc, truncate};
+use crate::gpui_views::widgets::{card, help, label, section, table_row, text, trunc, truncate};
 use crate::models::domain::display::help as h;
 use crate::views::layout::GAP;
 use chrono::FixedOffset;
 use gpui::{IntoElement, ParentElement as _, Styled as _, div, px};
 
-/// 列（対象、時刻、結果）の幅。詳細の列だけが伸びる。
-const COLUMNS: [f32; 3] = [180.0, 72.0, 56.0];
-/// 伸びる列の最小の幅（`views::layout`の`MIN_FLEX`と同じ）。
-const MIN_FLEX: f32 = 40.0;
+/// 列（対象、時刻、結果、詳細）。詳細の列だけが伸びる。
+const COLUMNS: [Option<f32>; 4] = [Some(180.0), Some(72.0), Some(56.0), None];
 
 /// 診断タブを描く。
 pub fn render(vm: &DiagnosticsVm, p: &'static Palette, plots: &mut Plots) -> impl IntoElement {
     let rows = vm.fetches.iter().map(|f| {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(GAP / 2.0))
-            .child(
-                div()
-                    .w(px(COLUMNS[0]))
-                    .flex_none()
-                    .overflow_hidden()
-                    .child(trunc(p, &f.target)),
-            )
-            .child(
-                div()
-                    .w(px(COLUMNS[1]))
-                    .flex_none()
-                    .child(text(&f.at, SMALL, p.text)),
-            )
-            .child(div().w(px(COLUMNS[2])).flex_none().child(text(
-                &f.result,
-                BODY,
-                if f.failed { p.err } else { p.ok },
-            )))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(MIN_FLEX))
-                    .overflow_hidden()
-                    .child(truncate(p, text(&f.detail, SMALL, p.text), &f.detail)),
-            )
+        table_row(
+            &COLUMNS,
+            vec![
+                trunc(p, &f.target).into_any_element(),
+                text(&f.at, SMALL, p.text).into_any_element(),
+                text(&f.result, BODY, if f.failed { p.err } else { p.ok }).into_any_element(),
+                truncate(p, text(&f.detail, SMALL, p.text), &f.detail).into_any_element(),
+            ],
+        )
     });
     let tz =
         FixedOffset::east_opt(vm.tz_offset_secs).unwrap_or(FixedOffset::east_opt(0).expect("UTC"));

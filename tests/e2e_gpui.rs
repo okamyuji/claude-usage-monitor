@@ -1269,3 +1269,115 @@ mod calendar_e2e {
         assert!(cal2 < cal, "{cal} -> {cal2}");
     }
 }
+
+mod analytics_profiles_e2e {
+    use super::*;
+    use claude_usage_monitor::gpui_views::probe::Role;
+
+    #[test]
+    fn analytics_tab_renders_groups_and_switches_period() {
+        let env = gui_env(now());
+        record_rising_usage(&env);
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = env.gpui_harness();
+        h.get_by_label("分析").click();
+        h.run();
+        for t in [
+            "プロジェクト別",
+            "モデル別",
+            "ブランチ別",
+            "キャッシュヒット率（日ごと）",
+            "ツール",
+        ] {
+            h.get_by_label(t);
+        }
+        h.get_by_label("/work/app");
+        h.get_by_label("30日").click();
+        h.run();
+        assert!(h.with_state(|c| matches!(
+            &c.vm().body,
+            TabVm::Analytics(a) if a.period == claude_usage_monitor::controllers::gui::tabs::analytics::Period::Days30
+        )));
+    }
+
+    #[test]
+    fn analytics_empty_period_says_so() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        h.get_by_label("分析").click();
+        h.run();
+        assert_eq!(
+            h.get_all_by_label("この期間の記録はありません").count(),
+            3,
+            "3つの軸のカードがそれぞれ空と出す"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_added_in_tab_and_activated_from_card_is_used_by_cumon_run() {
+        let env = gui_env(now());
+        env.store.ensure_default().unwrap();
+        let dir = env.home.path().join("work-config");
+        let mut h = env.gpui_harness();
+        h.get_by_label("プロファイル").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "プロファイル名")
+            .type_text("work");
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "設定ディレクトリ")
+            .type_text(dir.to_str().unwrap());
+        h.run();
+        h.get_by_label("追加").click();
+        h.run();
+        assert_eq!(h.input_value(1), "", "追加した後は名前の欄を空に戻す");
+        assert_eq!(
+            h.input_value(2),
+            "",
+            "追加した後はディレクトリの欄を空に戻す"
+        );
+        h.get_by_label("ダッシュボード").click();
+        h.run();
+        h.get_by_label("使用中にする").click();
+        h.run();
+        h.get_by_label_contains("work に切り替えました");
+        assert!(h.with_state(|c| matches!(&c.vm().body,
+            TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active))));
+        let bin = tempfile::tempdir().unwrap();
+        common::fake_claude(bin.path());
+        common::cumon(env.data.path(), env.home.path(), Some(bin.path()))
+            .args(["run", "-p", "hi"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(format!(
+                "CONFIG={} ARGS=-p hi",
+                dir.display()
+            )));
+    }
+
+    #[test]
+    fn profile_remove_asks_before_deleting() {
+        let env = gui_env(now());
+        env.store.ensure_default().unwrap();
+        let mut h = env.gpui_harness();
+        h.get_by_label("プロファイル").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "プロファイル名")
+            .type_text("tmp");
+        h.run();
+        h.get_by_label("追加").click();
+        h.run();
+        h.get_by_label("削除").click();
+        h.run();
+        h.get_by_label_contains("tmp を削除すると");
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(h.query_by_label_contains("tmp を削除すると").is_none());
+        h.get_by_label("tmp");
+        h.get_by_label("削除").click();
+        h.run();
+        h.get_by_label("本当に削除する").click();
+        h.run();
+        assert!(h.query_by_label("tmp").is_none(), "確認の後に消える");
+    }
+}

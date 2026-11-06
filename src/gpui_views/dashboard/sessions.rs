@@ -5,16 +5,15 @@ use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionItem};
 use crate::controllers::gui::dashboard::{DashAction, DashboardVm, ListMode};
 use crate::gpui_views::app::Acts;
-use crate::gpui_views::input::FormInputs;
+use crate::gpui_views::input::{Field, FormInputs};
 use crate::gpui_views::probe::Role;
 use crate::gpui_views::theme::{BODY, GAP_X, GAP_Y, Palette, SMALL, color};
 use crate::gpui_views::widgets::{
-    badge, help, label, probed, section, selectable, small_button, text, truncate, weak,
+    badge, help, label, probed, section, selectable, small_button, table_row, text, truncate, weak,
 };
 use crate::models::domain::activity::RunKind;
 use crate::models::domain::display::help as h;
 use crate::models::domain::transcript::SessionKind;
-use crate::views::layout::{GAP, MIN_FLEX};
 use gpui::{
     AnyElement, Div, InteractiveElement as _, IntoElement, ParentElement as _, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
@@ -234,7 +233,7 @@ fn filters(vm: &DashboardVm, inputs: &FormInputs, p: &'static Palette, acts: &Ac
         .child(
             probed("session-query", Role::TextInput, "検索")
                 .flex_1()
-                .child(Input::new(&inputs.session_query).aria_label("検索")),
+                .child(Input::new(inputs.get(Field::SessionQuery)).aria_label("検索")),
         );
     let kinds = [
         ("全種別", None),
@@ -283,19 +282,6 @@ fn filters(vm: &DashboardVm, inputs: &FormInputs, p: &'static Palette, acts: &Ac
         .child(chips)
 }
 
-/// 表の1行。最初の列だけが伸び、残りは固定幅（`views::layout::flex_columns`と同じ割り付け）。
-fn table_row(cells: Vec<AnyElement>) -> Div {
-    div().flex().items_center().gap(px(GAP / 2.0)).children(
-        cells.into_iter().zip(HISTORY_COLUMNS).map(|(c, w)| {
-            let cell = div().min_w_0().child(c);
-            match w {
-                Some(w) => cell.w(px(w)).flex_shrink_0(),
-                None => cell.flex_1().min_w(px(MIN_FLEX)),
-            }
-        }),
-    )
-}
-
 fn history(vm: &DashboardVm, p: &'static Palette, acts: &Acts) -> Vec<AnyElement> {
     if vm.history.is_empty() {
         return vec![weak(p, "条件に合う完了したセッションはありません").into_any_element()];
@@ -306,6 +292,7 @@ fn history(vm: &DashboardVm, p: &'static Palette, acts: &Acts) -> Vec<AnyElement
     }
     out.push(
         table_row(
+            &HISTORY_COLUMNS,
             HISTORY_HEADS
                 .iter()
                 // eguiの見出しは折り返さず、狭い列では隣へはみ出して描く。
@@ -341,7 +328,7 @@ fn history_row(i: &SessionItem, selected: bool, p: &'static Palette, acts: &Acts
     ] {
         cells.push(truncate(p, text(v, SMALL, p.text), v).into_any_element());
     }
-    table_row(cells)
+    table_row(&HISTORY_COLUMNS, cells)
 }
 
 #[cfg(test)]

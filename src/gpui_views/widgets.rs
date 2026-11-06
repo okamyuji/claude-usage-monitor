@@ -9,10 +9,11 @@ use crate::gpui_views::theme::{
     BODY, BUTTON, DARK, HEADING, MONO, Palette, SMALL, WIDGET_RADIUS, color,
 };
 use crate::models::domain::display::Severity;
+use crate::views::layout::{GAP, MIN_FLEX};
 use gpui::{
-    App, AppContext as _, ClickEvent, Div, ElementId, InteractiveElement as _, ParentElement as _,
-    Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Toggled, Window,
-    div, prelude::FluentBuilder as _, px, relative,
+    AnyElement, App, AppContext as _, ClickEvent, Div, ElementId, InteractiveElement as _,
+    ParentElement as _, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Toggled, Window, div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_base::SelectableText;
 use std::cell::Cell;
@@ -347,6 +348,21 @@ pub fn card(p: &Palette, highlighted: bool) -> Div {
             spread_radius: px(0.0),
             inset: false,
         }])
+}
+
+/// 表の1行。`None`の列だけが伸び、残りは固定幅（`views::layout::flex_columns`と同じ割り付け）。
+pub fn table_row(columns: &[Option<f32>], cells: Vec<AnyElement>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(GAP / 2.0))
+        .children(cells.into_iter().zip(columns).map(|(c, w)| {
+            let cell = div().min_w_0().child(c);
+            match w {
+                Some(w) => cell.w(px(*w)).flex_shrink_0(),
+                None => cell.flex_1().min_w(px(MIN_FLEX)),
+            }
+        }))
 }
 
 /// 選ぶと強調される文字のボタン（eguiの`selectable_label`）。

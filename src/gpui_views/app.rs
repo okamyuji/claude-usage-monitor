@@ -429,6 +429,29 @@ fn body(
                     .overflow_y_scroll()
                     .child(crate::gpui_views::tabs::diagnostics::render(v, p, plots))
                     .into_any_element(),
+                TabVm::Analytics(v) => div()
+                    .id("body-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(crate::gpui_views::tabs::analytics::render(
+                        v,
+                        p,
+                        acts,
+                        size.get().0,
+                    ))
+                    .into_any_element(),
+                TabVm::Profiles(v) => div()
+                    .id("body-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(crate::gpui_views::tabs::profiles::render(
+                        v,
+                        inputs,
+                        p,
+                        acts,
+                        size.get().0,
+                    ))
+                    .into_any_element(),
                 _ => label(p, vm.tab.label()).into_any_element(),
             }),
     )
@@ -636,7 +659,11 @@ pub(crate) mod tests {
         let (_d, ctl) = controller(home.path());
         let mut cx = crate::test_support::gpui_cx();
         let (root, vcx) = open(&mut cx, ctl);
-        let input = root.read_with(vcx, |r, _| r.inputs.session_query.clone());
+        let input = root.read_with(vcx, |r, _| {
+            r.inputs
+                .get(crate::gpui_views::input::Field::SessionQuery)
+                .clone()
+        });
         // IMEが変換中の文字を置く。変換中は変更の通知が出ないので、controllerの値は空のまま。
         input.update_in(vcx, |s, window, cx| {
             s.replace_and_mark_text_in_range(None, "やかん", None, window, cx)
