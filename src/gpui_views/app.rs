@@ -1,18 +1,23 @@
 //! 画面の枠（上部バー、本文、状態表示）とGPUIのアプリ。
-use crate::controllers::gui::app::{Action, AppVm, GuiController, REFRESH_SECS, TabVm};
+use crate::controllers::gui::app::{Action, AppVm, Forms, GuiController, REFRESH_SECS, TabVm};
+use crate::controllers::gui::dashboard::memory::MemAction;
 use crate::gpui_views::fonts::{BODY_FAMILY, body_fallbacks, install};
 use crate::gpui_views::header;
 use crate::gpui_views::plot::PlotState;
 use crate::gpui_views::theme::{GAP_X, Palette, color, palette};
 use crate::gpui_views::widgets::{self, frame_start, label, text};
 use crate::models::domain::settings::Theme;
+use crate::views::layout::drag_ratio;
 use gpui::{
-    App, AppContext as _, Bounds, ClickEvent, Context, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds,
-    WindowKind, WindowOptions, div, point, px, size,
+    App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
+    ParentElement as _, Pixels, Render, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds, WindowKind,
+    WindowOptions, canvas, div, point, px, size,
 };
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 /// テーマの選択と窓の明暗から、ダークで描くかを決める。
@@ -50,10 +55,22 @@ impl Plots<'_> {
     }
 }
 
+/// 中段のつまみのドラッグ。押した位置と、押したときの空き幅と左の幅。
+#[derive(Debug, Clone, Copy)]
+struct SplitDrag {
+    start_x: f32,
+    avail: f32,
+    left: f32,
+}
+
 /// 根のビュー。controllerを持ち、描き直しと操作の受け口になる。
 pub struct CumonRoot {
     ctl: GuiController,
-    plots: HashMap<String, Entity<PlotState>>,
+    pub(crate) plots: HashMap<String, Entity<PlotState>>,
+    /// 本文の大きさ。前の描画で測った値で、配置の計算（`views::layout`）に渡す。
+    body: Rc<Cell<(f32, f32)>>,
+    split_drag: Option<SplitDrag>,
+    focus: FocusHandle,
     _tick: Task<()>,
     _appearance: Subscription,
 }
@@ -79,9 +96,14 @@ impl CumonRoot {
             }
         });
         let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         Self {
             ctl,
             plots: HashMap::new(),
+            body: Rc::new(Cell::new((0.0, 0.0))),
+            split_drag: None,
+            focus,
             _tick: tick,
             _appearance: appearance,
         }
@@ -112,11 +134,25 @@ pub struct Acts(WeakEntity<CumonRoot>);
 impl Acts {
     /// 押したときに`a`を届ける受け口。
     pub fn on(&self, a: Action) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-        let root = self.0.clone();
-        move |_, _, cx| {
-            // 窓を閉じた後に届いた操作は、受け取る画面が無いので捨てる。
-            let _ = root.update(cx, |r, cx| r.act(a.clone(), cx));
-        }
+        let acts = self.clone();
+        move |_, w, cx| acts.send(a.clone(), w, cx)
+    }
+
+    /// `a`を届ける。
+    pub fn send(&self, a: Action, _: &mut Window, cx: &mut App) {
+        // 窓を閉じた後に届いた操作は、受け取る画面が無いので捨てる。
+        let _ = self.0.update(cx, |r, cx| r.act(a, cx));
+    }
+
+    /// 中段のつまみのドラッグを始める。動きと離す操作は根のビューが窓全体で受ける。
+    pub fn drag_split(&self, x: Pixels, avail: f32, left: f32, _: &mut Window, cx: &mut App) {
+        let _ = self.0.update(cx, |r, _| {
+            r.split_drag = Some(SplitDrag {
+                start_x: f32::from(x),
+                avail,
+                left,
+            })
+        });
     }
 }
 
@@ -124,8 +160,33 @@ impl Render for CumonRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         frame_start();
         let acts = Acts(cx.entity().downgrade());
-        let Self { ctl, plots, .. } = self;
+        let on_move = cx.listener(|r, ev: &MouseMoveEvent, _, cx| {
+            let Some(d) = r.split_drag else { return };
+            if ev.pressed_button != Some(MouseButton::Left) {
+                r.split_drag = None;
+                return;
+            }
+            let dx = f32::from(ev.position.x) - d.start_x;
+            r.ctl.forms_mut().split_ratio = drag_ratio(d.avail, d.left, dx);
+            cx.notify();
+        });
+        let on_up = cx.listener(|r, _: &MouseUpEvent, _, _| r.split_drag = None);
+        let on_key = cx.listener(|r, ev: &KeyDownEvent, _, cx| {
+            // eguiのModalと同じく、Escで確認ダイアログを閉じる。
+            let open = matches!(&r.ctl.vm().body, TabVm::Dashboard(d) if d.confirm_exit.is_some());
+            if open && ev.keystroke.key == "escape" {
+                r.act(Action::Memory(MemAction::Cancel), cx);
+            }
+        });
+        let focus = self.focus.clone();
+        let Self {
+            ctl,
+            plots,
+            body: body_size,
+            ..
+        } = self;
         let vm = ctl.vm();
+        let forms = ctl.forms();
         let dark = is_dark(vm.theme, window.appearance());
         let p = palette(dark);
         let mut plots = Plots { map: plots, cx };
@@ -137,17 +198,30 @@ impl Render for CumonRoot {
             .text_color(color(p.text))
             .font_family(BODY_FAMILY);
         root.text_style().font_fallbacks = Some(body_fallbacks());
-        root.child(
-            div()
-                .bg(color(p.card))
-                .border_b_1()
-                .border_color(color(p.border))
-                .px(px(12.0))
-                .py(px(8.0))
-                .child(header::render(vm, p, dark, &acts)),
-        )
-        .child(body(vm, p, &acts, &mut plots))
-        .child(status(vm, p))
+        let confirm = match &vm.body {
+            TabVm::Dashboard(d) => d
+                .confirm_exit
+                .as_ref()
+                .map(|c| crate::gpui_views::dashboard::memory::confirm(c, p, &acts)),
+            _ => None,
+        };
+        root.relative()
+            .track_focus(&focus)
+            .on_mouse_move(on_move)
+            .on_mouse_up(MouseButton::Left, on_up)
+            .on_key_down(on_key)
+            .child(
+                div()
+                    .bg(color(p.card))
+                    .border_b_1()
+                    .border_color(color(p.border))
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .child(header::render(vm, p, dark, &acts)),
+            )
+            .child(body(vm, forms, p, &acts, &mut plots, body_size))
+            .child(status(vm, p))
+            .children(confirm)
     }
 }
 
@@ -179,21 +253,46 @@ fn status(vm: &AppVm, p: &Palette) -> impl IntoElement {
 }
 
 // shortcut: 移していないタブはタブ名だけを出し、ダッシュボードは推移だけを出す。各タブを移したらその画面を描く。
-fn body(vm: &AppVm, p: &'static Palette, acts: &Acts, plots: &mut Plots) -> impl IntoElement {
-    let area = div().flex_1().min_h_0().p(px(12.0));
-    match &vm.body {
-        TabVm::Dashboard(d) => area.child(crate::gpui_views::dashboard::trend::render(
-            d, p, acts, plots, 260.0,
-        )),
-        TabVm::Diagnostics(v) => area.child(
-            div()
-                .id("body-scroll")
-                .size_full()
-                .overflow_y_scroll()
-                .child(crate::gpui_views::tabs::diagnostics::render(v, p, plots)),
-        ),
-        _ => area.child(label(p, vm.tab.label())),
-    }
+fn body(
+    vm: &AppVm,
+    forms: &Forms,
+    p: &'static Palette,
+    acts: &Acts,
+    plots: &mut Plots,
+    size: &Rc<Cell<(f32, f32)>>,
+) -> impl IntoElement {
+    let measured = size.clone();
+    // 本文の大きさを測る。変わったら描き直し、次の描画で配置の計算に使う。
+    let measure = canvas(
+        move |bounds, window, _| {
+            let now = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            if measured.replace(now) != now {
+                window.refresh();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full();
+    div().flex_1().min_h_0().p(px(12.0)).child(
+        div()
+            .relative()
+            .size_full()
+            .child(measure)
+            .child(match &vm.body {
+                TabVm::Dashboard(d) => {
+                    crate::gpui_views::dashboard::render(d, forms, p, acts, plots, size.get())
+                        .into_any_element()
+                }
+                TabVm::Diagnostics(v) => div()
+                    .id("body-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(crate::gpui_views::tabs::diagnostics::render(v, p, plots))
+                    .into_any_element(),
+                _ => label(p, vm.tab.label()).into_any_element(),
+            }),
+    )
 }
 
 /// `x,y`を窓の左上の位置として読む。

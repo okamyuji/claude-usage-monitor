@@ -23,11 +23,13 @@ pub enum Role {
     Link,
     /// タブ。
     Tab,
+    /// 区画の境界のつまみ。
+    Splitter,
 }
 
 impl Role {
     /// すべての役割。
-    pub const ALL: [Role; 8] = [
+    pub const ALL: [Role; 9] = [
         Role::Label,
         Role::Button,
         Role::TextInput,
@@ -36,6 +38,7 @@ impl Role {
         Role::ComboBox,
         Role::Link,
         Role::Tab,
+        Role::Splitter,
     ];
 
     /// 目印の接頭辞。
@@ -49,6 +52,7 @@ impl Role {
             Role::ComboBox => "combobox",
             Role::Link => "link",
             Role::Tab => "tab",
+            Role::Splitter => "splitter",
         }
     }
 
@@ -62,6 +66,7 @@ impl Role {
             Role::Slider => gpui::Role::Slider,
             Role::ComboBox => gpui::Role::ComboBox,
             Role::Link => gpui::Role::Link,
+            Role::Splitter => gpui::Role::Splitter,
         }
     }
 }

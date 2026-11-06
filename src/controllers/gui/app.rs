@@ -369,6 +369,11 @@ impl GuiController {
         self.refresh();
     }
 
+    /// 入力欄の状態。
+    pub fn forms(&self) -> &Forms {
+        &self.forms
+    }
+
     /// 入力欄の状態。テストで入力済みの状態を作るため公開する。
     pub fn forms_mut(&mut self) -> &mut Forms {
         &mut self.forms

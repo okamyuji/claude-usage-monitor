@@ -5,8 +5,8 @@ use claude_usage_monitor::controllers::gui::app::GuiController;
 use claude_usage_monitor::gpui_views::app::CumonRoot;
 use claude_usage_monitor::gpui_views::probe::{self, Role};
 use gpui::{
-    AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, Pixels, TestAppContext,
-    VisualTestContext, point, px, size,
+    AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels,
+    TestAppContext, VisualTestContext, point, px, size,
 };
 
 /// 本物の文字の仕組みと同梱のフォントを持つテスト用アプリ。テスト窓の既定の文字の仕組みはフォントも幅も持たず、
@@ -25,6 +25,9 @@ pub fn gpui_cx() -> TestAppContext {
     });
     cx
 }
+
+/// GPUIのツールチップが出るまでの待ち（500ms）より少し長い時間。
+const TOOLTIP_WAIT: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// 画面の部品1つ。
 pub struct Node {
@@ -51,10 +54,25 @@ impl Node {
         self.cx.run_until_parked();
     }
 
-    /// 中央にマウスを乗せる。
+    /// 中央にマウスを乗せ、ツールチップが出るまで時計を進める。
     pub fn hover(mut self) {
         self.cx
             .simulate_mouse_move(self.bounds.center(), None, Modifiers::default());
+        self.cx.run_until_parked();
+        self.cx.executor().advance_clock(TOOLTIP_WAIT);
+        self.cx.run_until_parked();
+    }
+
+    /// 中央をつかんで横へ`dx`だけ動かし、離す。
+    pub fn drag_by(mut self, dx: f32) {
+        let from = self.bounds.center();
+        let to = from + point(px(dx), px(0.0));
+        self.cx
+            .simulate_mouse_down(from, MouseButton::Left, Modifiers::default());
+        self.cx
+            .simulate_mouse_move(to, Some(MouseButton::Left), Modifiers::default());
+        self.cx
+            .simulate_mouse_up(to, MouseButton::Left, Modifiers::default());
         self.cx.run_until_parked();
     }
 
@@ -130,6 +148,12 @@ impl GpuiHarness {
     /// controllerを書き換える。
     pub fn with_state_mut<R>(&mut self, f: impl FnOnce(&mut GuiController) -> R) -> R {
         self.root.update(&mut self.cx, |r, _| f(r.controller_mut()))
+    }
+
+    /// キーを押す（`escape`など、GPUIのキーの名前）。
+    pub fn press_key(&mut self, key: &str) {
+        self.cx.simulate_keystrokes(key);
+        self.cx.run_until_parked();
     }
 
     /// 窓の中の位置にマウスを乗せる。

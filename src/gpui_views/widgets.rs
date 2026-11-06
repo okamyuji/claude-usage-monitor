@@ -7,12 +7,11 @@ use crate::gpui_views::probe::{self, Role};
 use crate::gpui_views::theme::{BODY, BUTTON, DARK, HEADING, Palette, SMALL, WIDGET_RADIUS, color};
 use crate::models::domain::display::Severity;
 use gpui::{
-    App, ClickEvent, Div, ElementId, InteractiveElement as _, ParentElement as _, Pixels,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Toggled, Window, div,
-    prelude::FluentBuilder as _, px, relative,
+    App, AppContext as _, ClickEvent, Div, ElementId, InteractiveElement as _, ParentElement as _,
+    Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Toggled, Window,
+    div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_base::SelectableText;
-use gpui_component::tooltip::Tooltip;
 use std::cell::Cell;
 
 thread_local! {
@@ -57,6 +56,15 @@ pub(crate) fn tagged(id: impl Into<ElementId>, role: Role, name: &str) -> Statef
         .debug_selector(move || probe::selector(role, &key_name, nth))
 }
 
+/// テスト用の記録と目印だけを付けた入れ物。読み上げ用の名前を持たない部品（eguiで名前の無い部品）に使う。
+pub fn probed(id: impl Into<ElementId>, role: Role, name: &str) -> Stateful<Div> {
+    let nth = probe::record(role, name);
+    let key_name = name.to_string();
+    div()
+        .id(id)
+        .debug_selector(move || probe::selector(role, &key_name, nth))
+}
+
 /// 大きさと色を指定した、選んで写せる文字。
 pub fn text(s: &str, size: Pixels, hex: u32) -> Stateful<Div> {
     tagged(next_id(), Role::Label, s)
@@ -92,24 +100,53 @@ pub fn section(p: &Palette, s: &str) -> Stateful<Div> {
 
 /// 長い文言を末尾で省略する。全文は乗ったときのツールチップに出す。
 pub fn trunc(p: &Palette, s: &str) -> Stateful<Div> {
-    truncate(label(p, s), s)
+    truncate(p, label(p, s), s)
 }
 
 /// 文字の部品`el`を末尾で省略し、全文`full`をツールチップに出す。
 // shortcut: ツールチップは省略していないときも出る。省略の有無は描いた幅でしか分からないため。
-pub fn truncate(el: Stateful<Div>, full: &str) -> Stateful<Div> {
-    let full = SharedString::from(full.to_string());
+pub fn truncate(p: &Palette, el: Stateful<Div>, full: &str) -> Stateful<Div> {
     el.min_w_0()
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .tooltip(move |w, cx| Tooltip::new(full.clone()).build(w, cx))
+        .tooltip(tip(p, full))
+}
+
+/// 文字のツールチップ。アプリの配色で描き、中身を部品の記録と読み上げ用の名前に残す。
+struct Tip {
+    text: SharedString,
+    colors: (u32, u32, u32),
+}
+
+impl gpui::Render for Tip {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let (fg, bg, border) = self.colors;
+        text(&self.text, BODY, fg)
+            .bg(color(bg))
+            .border_1()
+            .border_color(color(border))
+            .rounded(WIDGET_RADIUS)
+            .px(px(6.0))
+            .py(px(4.0))
+    }
+}
+
+fn tip(p: &Palette, s: &str) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+    let text = SharedString::from(s.to_string());
+    let colors = (p.text, p.card, p.border);
+    move |_, cx| {
+        cx.new(|_| Tip {
+            text: text.clone(),
+            colors,
+        })
+        .into()
+    }
 }
 
 /// 指標名の横に置く「ⓘ」。説明はツールチップに出す（spec 7.1節）。
 pub fn help(p: &Palette, s: &str) -> Stateful<Div> {
-    let tip = SharedString::from(s.to_string());
-    weak(p, "ⓘ").tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
+    weak(p, "ⓘ").tooltip(tip(p, s))
 }
 
 /// 淡い地と濃い文字のバッジ（spec 7.3節）。

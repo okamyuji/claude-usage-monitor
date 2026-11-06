@@ -139,4 +139,44 @@ mod tests {
         );
         assert_eq!(flex_columns(300.0, &[Some(60.0)]), [60.0]);
     }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_split_widths_sum_to_usable(avail in 0.0f32..4000.0, ratio in 0.0f32..=1.0) {
+            let (l, r) = split_widths(avail, ratio);
+            let usable = (avail - SPLITTER).max(0.0);
+            proptest::prop_assert!((l + r - usable).abs() < 1e-2, "{l} + {r} != {usable}");
+        }
+
+        #[test]
+        fn prop_split_widths_respect_min_pane(avail in 0.0f32..4000.0, ratio in 0.0f32..=1.0) {
+            let (l, r) = split_widths(avail, ratio);
+            if avail - SPLITTER >= 2.0 * MIN_PANE {
+                proptest::prop_assert!(l >= MIN_PANE - 1e-3 && r >= MIN_PANE - 1e-3, "{l} {r}");
+            } else {
+                proptest::prop_assert_eq!(l, r);
+            }
+        }
+
+        #[test]
+        fn prop_columns_fit_avail(avail in 0.0f32..4000.0, n in 0usize..12, min in 1.0f32..600.0) {
+            let (cols, w) = columns(avail, n, min);
+            proptest::prop_assert!(cols >= 1 && cols <= n.max(1));
+            let used = w * cols as f32 + GAP * (cols - 1) as f32;
+            proptest::prop_assert!((used - avail).abs() < 1e-2, "{used} != {avail}");
+            if cols > 1 {
+                proptest::prop_assert!(w >= min - 1e-3, "{w} < {min}");
+            }
+        }
+
+        #[test]
+        fn prop_drag_ratio_in_unit_range(
+            avail in -100.0f32..4000.0,
+            left in -1000.0f32..4000.0,
+            dx in -4000.0f32..4000.0,
+        ) {
+            let r = drag_ratio(avail, left, dx);
+            proptest::prop_assert!((0.0..=1.0).contains(&r), "{r}");
+        }
+    }
 }

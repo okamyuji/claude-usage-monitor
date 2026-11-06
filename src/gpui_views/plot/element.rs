@@ -14,9 +14,10 @@ use crate::gpui_views::theme::{BODY, Palette, SMALL, color};
 use crate::gpui_views::widgets::{tagged, text};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, Entity, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder,
-    Pixels, Point, RenderOnce, ShapedLine, SharedString, StatefulInteractiveElement as _,
-    Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font, outline, point, px, size,
+    IntoElement, Length, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement as _,
+    PathBuilder, Pixels, Point, RenderOnce, ShapedLine, SharedString,
+    StatefulInteractiveElement as _, Styled as _, TextAlign, TextRun, Window, canvas, div, fill,
+    font, outline, point, px, size,
 };
 use std::rc::Rc;
 
@@ -52,7 +53,7 @@ pub struct Plot {
     id: SharedString,
     state: Entity<PlotState>,
     palette: &'static Palette,
-    height: Pixels,
+    height: Length,
     legend: bool,
     include_x: Vec<f64>,
     include_y: Vec<f64>,
@@ -74,7 +75,7 @@ impl Plot {
             id: id.into(),
             state,
             palette,
-            height: px(180.0),
+            height: px(180.0).into(),
             legend: false,
             include_x: Vec::new(),
             include_y: Vec::new(),
@@ -87,8 +88,8 @@ impl Plot {
     }
 
     /// 高さ。
-    pub fn height(mut self, h: Pixels) -> Self {
-        self.height = h;
+    pub fn height(mut self, h: impl Into<Length>) -> Self {
+        self.height = h.into();
         self
     }
 

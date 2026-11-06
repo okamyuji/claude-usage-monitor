@@ -10,18 +10,17 @@ use crate::gpui_views::theme::{GAP_X, Palette, SMALL};
 use crate::gpui_views::widgets::{help, icon, section, selectable, small_button, text};
 use crate::views::layout::GAP;
 use chrono::FixedOffset;
-use gpui::{Entity, IntoElement, ParentElement as _, SharedString, Styled as _, div, px};
+use gpui::{Entity, IntoElement, ParentElement as _, SharedString, Styled as _, div, px, relative};
 
-/// 見出しの行の高さ（eguiの`interact_size.y`）。グラフの高さはここから引く。
-const ROW: f32 = 18.0;
+/// グラフの最小の高さ（egui版の`plot_h`の下限）。
+const MIN_PLOT: f32 = 60.0;
 
-/// 推移の区画を描く。見出しの行は折りたたみ中も出す。`height`は区画に使える高さ。
+/// 推移の区画を描く。見出しの行は折りたたみ中も出す。グラフは見出しの下の残りの高さを使う。
 pub fn render(
     vm: &DashboardVm,
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
-    height: f32,
 ) -> impl IntoElement {
     let (caret, toggle) = if vm.trend_open {
         (icons::CARET_DOWN, "折りたたむ")
@@ -55,11 +54,17 @@ pub fn render(
         let mut panels = Vec::with_capacity(t.panels.len());
         for pn in &t.panels {
             let state = plots.get(&title(pn));
-            panels.push(panel(t, pn, p, state, height - ROW));
+            panels.push(panel(t, pn, p, state));
         }
-        div().flex().gap(px(GAP)).children(panels)
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .gap(px(GAP))
+            .children(panels)
     });
     div()
+        .size_full()
         .flex()
         .flex_col()
         .gap(px(6.0))
@@ -81,13 +86,12 @@ fn panel(
     pn: &TrendPanel,
     p: &'static Palette,
     state: Entity<PlotState>,
-    height: f32,
 ) -> impl IntoElement {
     let tz =
         FixedOffset::east_opt(t.tz_offset_secs).unwrap_or(FixedOffset::east_opt(0).expect("UTC"));
     let title = title(pn);
     let mut plot = Plot::new(SharedString::from(title.clone()), state, p)
-        .height(px((height - ROW).max(60.0)))
+        .height(relative(1.0))
         // 凡例はプロファイルごとに1行増える。本文の大きさでは、既定のウィンドウの高さで数行でもグラフの下端からはみ出す。
         .legend(true)
         .include_y(0.0)
@@ -116,7 +120,8 @@ fn panel(
                 .child(text(&title, SMALL, p.weak))
                 .child(help(p, &graph_help(pn.help))),
         )
-        .child(plot)
+        // eguiと同じく、グラフは題名の行の下の残りを使い、低くても60は取る。
+        .child(div().flex_1().min_h(px(MIN_PLOT)).child(plot))
 }
 
 #[cfg(test)]
@@ -132,6 +137,36 @@ mod tests {
         assert!(s.starts_with("直近5時間の割合です。"));
         assert!(s.contains("縦の灰色の線はリセット時刻"));
         assert!(s.contains("横の線は通知閾値"));
+    }
+
+    #[test]
+    fn graphs_fit_above_the_status_bar() {
+        let home = tempfile::tempdir().unwrap();
+        let (_d, ctl) = controller(home.path());
+        let mut cx = crate::test_support::gpui_cx();
+        let (root, vcx) = open(&mut cx, ctl);
+        vcx.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(820.0)));
+        vcx.run_until_parked();
+        let status = probe::take()
+            .into_iter()
+            .find(|(_, l)| l.starts_with("最終更新"))
+            .expect("状態表示");
+        let key: &'static str = Box::leak(probe::selector(status.0, &status.1, 0).into_boxed_str());
+        let status_top = vcx.debug_bounds(key).expect("状態表示の位置").top();
+        let outers: Vec<_> = root.read_with(vcx, |r, cx| {
+            r.plots.values().filter_map(|s| s.read(cx).outer).collect()
+        });
+        assert!(!outers.is_empty(), "推移のグラフを描く");
+        for o in outers {
+            assert!(
+                o.bottom() <= status_top,
+                "グラフの下端 {o:?} が状態表示 {status_top:?} より下"
+            );
+            assert!(
+                o.size.height >= gpui::px(60.0),
+                "グラフは60以上の高さを取る: {o:?}"
+            );
+        }
     }
 
     #[test]

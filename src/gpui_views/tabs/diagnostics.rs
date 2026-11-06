@@ -45,7 +45,7 @@ pub fn render(vm: &DiagnosticsVm, p: &'static Palette, plots: &mut Plots) -> imp
                     .flex_1()
                     .min_w(px(MIN_FLEX))
                     .overflow_hidden()
-                    .child(truncate(text(&f.detail, SMALL, p.text), &f.detail)),
+                    .child(truncate(p, text(&f.detail, SMALL, p.text), &f.detail)),
             )
     });
     let tz =

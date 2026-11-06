@@ -124,3 +124,198 @@ fn diagnostics_tab_shows_fetch_status() {
     h.run();
     h.get_by_label("取得の状況");
 }
+
+#[test]
+fn help_icons_on_dashboard_show_their_text_on_hover() {
+    use claude_usage_monitor::gpui_views::probe::Role;
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    let n = h.get_all_by_label("ⓘ").count();
+    assert!(n > 0);
+    let labels = |h: &GpuiHarness| h.query_all_by_role(Role::Label).count();
+    let mut missing = Vec::new();
+    for i in 0..n {
+        // 前のⓘの説明を消してから数える。
+        h.hover_at(1.0, 1.0);
+        let before = labels(&h);
+        h.get_all_by_label("ⓘ").nth(i).unwrap().hover();
+        h.step();
+        if labels(&h) <= before {
+            missing.push(i);
+        }
+    }
+    assert!(missing.is_empty(), "説明が出ないⓘ: {missing:?} / {n}");
+}
+
+#[test]
+fn layout_follows_window_size() {
+    let env = gui_env(now());
+    let mut small = env.gpui_harness_sized(1000.0, 700.0);
+    let mut large = env.gpui_harness_sized(1920.0, 1200.0);
+    small.run();
+    large.run();
+    let x = |h: &GpuiHarness| {
+        f32::from(
+            h.get_by_label("左の一覧からセッションを選んでください")
+                .bounds()
+                .left(),
+        )
+    };
+    assert!(
+        x(&large) > x(&small) + 200.0,
+        "広げると詳細ペインの位置が右へ移る"
+    );
+    for (h, w, ht) in [(&small, 1000.0, 700.0), (&large, 1920.0, 1200.0)] {
+        for label in ["推移", "左の一覧からセッションを選んでください"] {
+            let r = h.get_by_label(label).bounds();
+            assert!(
+                f32::from(r.right()) <= w && f32::from(r.bottom()) <= ht,
+                "{label} がウィンドウ内に収まる: {r:?}"
+            );
+        }
+        assert!(f32::from(h.get_by_label_contains("デーモン停止中").bounds().right()) <= w);
+    }
+}
+
+#[test]
+fn cards_show_limits_remaining_and_projection() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    let h = env.gpui_harness();
+    h.get_by_label("5時間枠");
+    h.get_by_label("30%");
+    h.get_by_label_contains("残り2時間（14:00）");
+    h.get_by_label_contains("このペースだと 13:10 に上限");
+    h.get_by_label("週間枠（Fable）");
+    h.get_by_label("使用中");
+}
+
+fn log_expired(env: &common::gui::GuiEnv) {
+    use claude_usage_monitor::models::domain::records::{FetchLogEntry, FetchResult};
+    use claude_usage_monitor::models::ports::FetchLogRepo;
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .log(&FetchLogEntry {
+            target: format!("usage:{}", p.id),
+            at: now(),
+            result: FetchResult::Failed,
+            http_status: Some(401),
+            message: String::new(),
+        })
+        .unwrap();
+}
+
+#[test]
+fn token_expired_is_shown_on_401_before_any_value() {
+    let env = gui_env(now());
+    log_expired(&env);
+    let h = env.gpui_harness();
+    h.get_by_label_contains("トークン期限切れ");
+}
+
+#[test]
+fn token_expired_keeps_the_last_value_without_error() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    log_expired(&env);
+    let h = env.gpui_harness();
+    h.get_by_label("30%");
+    assert!(h.query_by_label_contains("トークン期限切れ").is_none());
+}
+
+#[test]
+fn splitter_drag_changes_the_split_ratio() {
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    let before = h.with_state_mut(|c| c.forms_mut().split_ratio);
+    h.get_by_label("左右の境界").drag_by(80.0);
+    h.run();
+    let after = h.with_state_mut(|c| c.forms_mut().split_ratio);
+    assert!(after > before, "{before} -> {after}");
+}
+
+mod memory_e2e {
+    use super::*;
+    use claude_usage_monitor::models::domain::memory::{ProcEntry, Target, Victim};
+    use std::path::PathBuf;
+
+    const MIB: u64 = 1 << 20;
+
+    fn desktop_env() -> common::gui::GuiEnv {
+        let env = gui_env(now());
+        *env.procs.procs.lock().unwrap() = vec![ProcEntry {
+            pid: 100,
+            parent: Some(1),
+            rss: 1229 * MIB,
+            start_time: 50,
+            exe: Some(PathBuf::from(
+                "/Applications/Claude.app/Contents/MacOS/Claude",
+            )),
+        }];
+        env
+    }
+
+    fn notice(h: &mut GpuiHarness) -> Option<String> {
+        h.with_state(|c| c.vm().notice.clone())
+    }
+
+    /// 「終了する」を押し、別スレッドの要求の結果が知らせに出るまで描き直す。
+    fn confirm_exit(h: &mut GpuiHarness) {
+        h.get_by_label("終了する").click();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            h.run();
+            if notice(h).is_some_and(|n| !n.ends_with("に終了を要求しています")) {
+                return;
+            }
+            assert!(std::time::Instant::now() < until, "要求の結果が届きません");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn desktop_card_requests_exit_after_confirm() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Claude Desktop");
+        h.get_by_label_contains("1.2GB");
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label_contains("実行中の編集が失われることがあります");
+        confirm_exit(&mut h);
+        assert_eq!(
+            *env.procs.exits.lock().unwrap(),
+            [Victim {
+                pid: 100,
+                start_time: 50,
+                target: Target::Desktop
+            }]
+        );
+        assert!(h.query_by_label("終了する").is_none(), "ダイアログが閉じる");
+    }
+
+    #[test]
+    fn escape_closes_the_dialog_without_exit() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("終了する");
+        h.press_key("escape");
+        h.run();
+        assert!(env.procs.exits.lock().unwrap().is_empty());
+        assert!(h.query_by_label("終了する").is_none(), "Escで閉じる");
+    }
+
+    #[test]
+    fn cancel_does_not_request_exit() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(env.procs.exits.lock().unwrap().is_empty());
+        assert!(h.query_by_label("終了する").is_none());
+    }
+}
