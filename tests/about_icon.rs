@@ -26,6 +26,30 @@ fn main() {
         Some(icon.size()),
         "Aboutの画像がアプリのアイコンになる"
     );
+
+    use claude_usage_monitor::views::about_icon::set_dock_icon;
+    let tiff = include_bytes!("../assets/app-icon.tiff");
+    assert!(set_dock_icon(tiff));
+    let dock_image = app
+        .dockTile()
+        .contentView(MainThreadMarker::new().unwrap())
+        .and_then(|v| v.downcast::<objc2_app_kit::NSImageView>().ok())
+        .and_then(|v| v.image())
+        .map(|i| i.size());
+    assert_eq!(
+        dock_image,
+        Some(NSSize::new(512.0, 512.0)),
+        "Dockにegui版と同じ512ptの画像を出す"
+    );
+    assert_eq!(
+        named_size(),
+        Some(NSSize::new(512.0, 512.0)),
+        "Aboutにもegui版と同じ512ptの画像を出す"
+    );
+    assert!(
+        !set_dock_icon(b"not an image"),
+        "読めない画像では何もしない"
+    );
     println!("about_icon: ok");
 }
 

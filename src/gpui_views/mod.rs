@@ -1,5 +1,6 @@
 //! GPUIで描く画面。
 pub mod app;
+pub mod app_menu;
 pub mod fonts;
 pub mod header;
 pub mod icons;

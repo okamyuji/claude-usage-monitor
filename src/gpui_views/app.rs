@@ -164,6 +164,10 @@ pub fn parse_origin(s: &str) -> Option<(f32, f32)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
+/// アプリのアイコン。egui版でeframeが登録していた既定の画像と同じもの。
+#[cfg(target_os = "macos")]
+const APP_ICON: &[u8] = include_bytes!("../../assets/app-icon.tiff");
+
 /// 窓の設定。`verify`があれば、その位置に最前面で浮かべ、フォーカスを取らない。
 pub fn window_options(verify: Option<(f32, f32)>, cx: &App) -> WindowOptions {
     let window_size = size(px(1280.0), px(820.0));
@@ -196,8 +200,9 @@ pub fn launch(ctl: GuiController, verify: Option<(f32, f32)>, cx: &mut App) -> g
         let root = cx.new(|cx| CumonRoot::new(ctl, w, cx));
         cx.new(|cx| gpui_component::Root::new(root, w, cx))
     })?;
+    crate::gpui_views::app_menu::install(cx);
     #[cfg(target_os = "macos")]
-    crate::views::about_icon::name_app_icon_for_about();
+    crate::views::about_icon::set_dock_icon(APP_ICON);
     if verify.is_none() {
         cx.activate(true);
     }
