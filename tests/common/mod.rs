@@ -1,5 +1,6 @@
 //! E2E用のWireMock起動。ライブラリの`test_support`は`cfg(test)`で外から使えないため、E2E側に同じ役割を置く。
 #![allow(dead_code)]
+pub mod gpui;
 pub mod gui;
 use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::SyncRunner;

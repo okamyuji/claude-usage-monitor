@@ -45,8 +45,8 @@ fn button_colors(p: &Palette) -> (u32, u32, u32) {
 }
 
 /// 役割と名前を記録し、目印と読み上げ用の名前を付けた入れ物。
-fn tagged(id: impl Into<ElementId>, role: Role, name: &str) -> Stateful<Div> {
-    probe::record(role, name);
+pub(crate) fn tagged(id: impl Into<ElementId>, role: Role, name: &str) -> Stateful<Div> {
+    let nth = probe::record(role, name);
     let name = SharedString::from(name.to_string());
     // releaseのdebug_selectorは関数を呼ばないので、目印の文字列はこの中で作る。
     let key_name = name.clone();
@@ -54,7 +54,7 @@ fn tagged(id: impl Into<ElementId>, role: Role, name: &str) -> Stateful<Div> {
         .id(id)
         .role(role.a11y())
         .aria_label(name)
-        .debug_selector(move || probe::selector(role, &key_name))
+        .debug_selector(move || probe::selector(role, &key_name, nth))
 }
 
 /// 大きさと色を指定した、選んで写せる文字。
@@ -91,11 +91,15 @@ pub fn section(p: &Palette, s: &str) -> Stateful<Div> {
 }
 
 /// 長い文言を末尾で省略する。全文は乗ったときのツールチップに出す。
-// shortcut: ツールチップは省略していないときも出る。省略の有無は描いた幅でしか分からないため。
 pub fn trunc(p: &Palette, s: &str) -> Stateful<Div> {
-    let full = SharedString::from(s.to_string());
-    label(p, s)
-        .min_w_0()
+    truncate(label(p, s), s)
+}
+
+/// 文字の部品`el`を末尾で省略し、全文`full`をツールチップに出す。
+// shortcut: ツールチップは省略していないときも出る。省略の有無は描いた幅でしか分からないため。
+pub fn truncate(el: Stateful<Div>, full: &str) -> Stateful<Div> {
+    let full = SharedString::from(full.to_string());
+    el.min_w_0()
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
@@ -197,6 +201,37 @@ pub fn icon_button(
         .child(div().font_family(ICON_FAMILY).child(glyph.to_string()))
         .child(s.to_string())
         .on_click(on_click)
+}
+
+/// 小さいボタン（eguiの`small_button`）。文字は補足の大きさで、上下の余白を持たない。
+pub fn small_button(
+    p: &Palette,
+    id: impl Into<ElementId>,
+    s: &str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    button(p, id, s, on_click)
+        .px(px(4.0))
+        .py(px(0.0))
+        .text_size(SMALL)
+}
+
+/// カードの枠（spec 7.3節）。使用中のカードだけアクセント色の枠にする。
+pub fn card(p: &Palette, highlighted: bool) -> Div {
+    div()
+        .bg(color(p.card))
+        .border(px(if highlighted { 1.5 } else { 1.0 }))
+        .border_color(color(if highlighted { p.accent } else { p.border }))
+        .rounded(crate::gpui_views::theme::RADIUS)
+        .px(px(10.0))
+        .py(px(8.0))
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 18.0 / 255.0),
+            offset: gpui::point(px(0.0), px(1.0)),
+            blur_radius: px(3.0),
+            spread_radius: px(0.0),
+            inset: false,
+        }])
 }
 
 /// 選ぶと強調される文字のボタン（eguiの`selectable_label`）。

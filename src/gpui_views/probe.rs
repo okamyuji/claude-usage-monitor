@@ -70,12 +70,21 @@ thread_local! {
     static SEEN: RefCell<Vec<(Role, String)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// 描いた部品を記録する。
-pub fn record(role: Role, label: &str) {
+/// 描いた部品を記録し、同じ役割と名前の部品のうち何番目か（0から）を返す。
+/// releaseでは記録せず0を返す。
+pub fn record(role: Role, label: &str) -> usize {
     #[cfg(debug_assertions)]
-    SEEN.with(|s| s.borrow_mut().push((role, label.to_string())));
+    return SEEN.with(|s| {
+        let mut s = s.borrow_mut();
+        let n = s.iter().filter(|(r, l)| *r == role && l == label).count();
+        s.push((role, label.to_string()));
+        n
+    });
     #[cfg(not(debug_assertions))]
-    let _ = (role, label);
+    {
+        let _ = (role, label);
+        0
+    }
 }
 
 /// 記録を取り出して空にする。
@@ -83,9 +92,13 @@ pub fn take() -> Vec<(Role, String)> {
     SEEN.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
-/// 要素に付ける目印。
-pub fn selector(role: Role, label: &str) -> String {
-    format!("{}:{label}", role.key())
+/// 要素に付ける目印。同じ役割と名前の2番目からは`#番号`を付けて区別する。
+pub fn selector(role: Role, label: &str, nth: usize) -> String {
+    if nth == 0 {
+        format!("{}:{label}", role.key())
+    } else {
+        format!("{}:{label}#{nth}", role.key())
+    }
 }
 
 #[cfg(test)]
@@ -116,8 +129,20 @@ mod tests {
 
     #[test]
     fn selector_joins_role_and_label() {
-        assert_eq!(selector(Role::CheckBox, "通知"), "checkbox:通知");
-        assert_eq!(selector(Role::TextInput, "検索"), "textinput:検索");
+        assert_eq!(selector(Role::CheckBox, "通知", 0), "checkbox:通知");
+        assert_eq!(selector(Role::TextInput, "検索", 0), "textinput:検索");
+        assert_eq!(selector(Role::Label, "ⓘ", 2), "label:ⓘ#2");
+    }
+
+    #[test]
+    fn record_numbers_repeated_parts_in_drawing_order() {
+        take();
+        assert_eq!(record(Role::Label, "ⓘ"), 0);
+        assert_eq!(record(Role::Button, "ⓘ"), 0, "役割が違えば別に数える");
+        assert_eq!(record(Role::Label, "ⓘ"), 1);
+        assert_eq!(record(Role::Label, "ⓘ"), 2);
+        take();
+        assert_eq!(record(Role::Label, "ⓘ"), 0, "描き直すと0から数え直す");
     }
 
     #[test]

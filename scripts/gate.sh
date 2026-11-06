@@ -67,13 +67,13 @@ fi
 mutant_files=()
 for f in "$@"; do
   case "$f" in
-    src/views/layout.rs|src/views/*/math.rs) mutant_files+=("$f") ;;
+    src/views/layout.rs|src/views/probe.rs|src/views/theme.rs|src/views/*/math.rs|src/views/*/format.rs|src/views/*/state.rs) mutant_files+=("$f") ;;
     src/views/*|src/main.rs) ;;
     *) mutant_files+=("$f") ;;
   esac
 done
 # viewsの描画とmain.rsの依存の組み立てはmutationの対象外にする（spec 12.3節）。色や並びを変える変異はe2eで見分けられないため。
-# viewsの下でも、寸法とグラフの計算（layout.rs、*/math.rs）は壊れると表示が崩れるので対象に残す。
+# viewsの下でも、計算だけのファイル（寸法、部品の記録、配色、グラフの計算と書式と操作の状態）は壊れると表示が崩れるので対象に残す。
 # 対象が残らないときは、cargo-mutantsが「対象なし」で返す終了コードに頼らず、ここで終える。
 if [ "${#mutant_files[@]}" -eq 0 ]; then
   echo "mutation: 対象なし（viewsの描画とmain.rsは対象外）"

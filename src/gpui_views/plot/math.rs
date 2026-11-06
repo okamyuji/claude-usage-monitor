@@ -185,9 +185,51 @@ pub fn grid_marks(lo: f64, hi: f64, base_step: f64) -> Vec<(f64, f64)> {
     out
 }
 
+/// `i`番目の線の自動の色（0xRRGGBB）。egui_plotの`auto_color`と同じく、色相を黄金比ずつ回したHSV（彩度0.85、明度0.5）を
+/// 線形のRGBとみなしてsRGBへ変換する。
+pub fn auto_color(i: usize) -> u32 {
+    let h = i as f32 * (std::f32::consts::GOLDEN_RATIO - 1.0);
+    let [r, g, b] = rgb_from_hsv(h, 0.85, 0.5);
+    u32::from_be_bytes([0, gamma_u8(r), gamma_u8(g), gamma_u8(b)])
+}
+
+fn rgb_from_hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let h = (h.fract() + 1.0).fract();
+    let f = h * 6.0 - (h * 6.0).floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match (h * 6.0).floor() as i32 % 6 {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
+
+fn gamma_u8(l: f32) -> u8 {
+    let x = if l <= 0.0031308 {
+        3294.6 * l
+    } else {
+        269.025 * l.powf(1.0 / 2.4) - 14.025
+    };
+    (x + 0.5).floor().clamp(0.0, 255.0) as u8
+}
+
 /// 間隔`spacing`の濃さ。`min`以下で0、`max`以上で1。
 pub fn strength(spacing: f32, min: f32, max: f32) -> f32 {
     ((spacing - min) / (max - min)).clamp(0.0, 1.0)
+}
+
+/// 軸の数字の濃さ。間隔`spacing`が`limits`の下限以下か、数字の幅`width`が間隔より広ければ出さない（`None`）。
+/// 濃さは間隔で0から1に上げた値の平方根（egui_plotの`add_tick_labels`）。
+pub fn label_alpha(spacing: f32, width: f32, limits: (f32, f32)) -> Option<f32> {
+    if spacing <= limits.0 || spacing < width {
+        return None;
+    }
+    Some(strength(spacing, limits.0, limits.1).sqrt())
 }
 
 /// `cursor`から半径`radius`の中にある点。各系列でいちばん近い点を取り、半径の中にある系列のうち最後のもの（上に描いた系列）を返す。
@@ -346,6 +388,24 @@ mod tests {
         assert_eq!(strength(8.0, 8.0, 300.0), 0.0);
         assert_eq!(strength(154.0, 8.0, 300.0), 0.5);
         assert_eq!(strength(1000.0, 8.0, 300.0), 1.0);
+    }
+
+    #[test]
+    fn label_shows_only_when_spaced_enough_and_wide_enough() {
+        // xの数字は60ptを超える間隔で出し、80ptで濃さが最大になる。数字の幅が間隔より広ければ出さない。
+        assert_eq!(label_alpha(60.0, 10.0, (60.0, 80.0)), None);
+        assert_eq!(label_alpha(70.0, 80.0, (60.0, 80.0)), None);
+        assert_eq!(label_alpha(70.0, 70.0, (60.0, 80.0)), Some(0.5f32.sqrt()));
+        assert_eq!(label_alpha(200.0, 70.0, (60.0, 80.0)), Some(1.0));
+    }
+
+    #[test]
+    fn auto_color_matches_egui_plot() {
+        // egui_plot 0.38.0のauto_colorがegui 0.37.0で出す色を書き写した値。
+        assert_eq!(
+            (0..6).map(auto_color).collect::<Vec<_>>(),
+            [0xbc4d4d, 0x4d7bbc, 0x9abc4d, 0xbc4db2, 0x4dbcaf, 0xbc964d]
+        );
     }
 
     #[test]

@@ -1,15 +1,18 @@
 //! 画面の枠（上部バー、本文、状態表示）とGPUIのアプリ。
-use crate::controllers::gui::app::{Action, AppVm, GuiController, REFRESH_SECS};
+use crate::controllers::gui::app::{Action, AppVm, GuiController, REFRESH_SECS, TabVm};
 use crate::gpui_views::fonts::{BODY_FAMILY, body_fallbacks, install};
 use crate::gpui_views::header;
+use crate::gpui_views::plot::PlotState;
 use crate::gpui_views::theme::{GAP_X, Palette, color, palette};
 use crate::gpui_views::widgets::{self, frame_start, label, text};
 use crate::models::domain::settings::Theme;
 use gpui::{
-    App, AppContext as _, Bounds, ClickEvent, Context, IntoElement, ParentElement as _, Render,
-    Styled as _, Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowAppearance,
-    WindowBounds, WindowKind, WindowOptions, div, point, px, size,
+    App, AppContext as _, Bounds, ClickEvent, Context, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds,
+    WindowKind, WindowOptions, div, point, px, size,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// テーマの選択と窓の明暗から、ダークで描くかを決める。
@@ -29,9 +32,28 @@ pub fn redraw_every(playing: bool) -> Duration {
     Duration::from_millis(if playing { 50 } else { 1000 })
 }
 
+/// グラフごとの状態。グラフの題名で引き、描画をまたいで持つ。
+pub struct Plots<'a> {
+    map: &'a mut HashMap<String, Entity<PlotState>>,
+    cx: &'a mut App,
+}
+
+impl Plots<'_> {
+    /// `key`のグラフの状態。初めてなら作る。
+    pub fn get(&mut self, key: &str) -> Entity<PlotState> {
+        if let Some(s) = self.map.get(key) {
+            return s.clone();
+        }
+        let s = self.cx.new(|_| PlotState::default());
+        self.map.insert(key.to_string(), s.clone());
+        s
+    }
+}
+
 /// 根のビュー。controllerを持ち、描き直しと操作の受け口になる。
 pub struct CumonRoot {
     ctl: GuiController,
+    plots: HashMap<String, Entity<PlotState>>,
     _tick: Task<()>,
     _appearance: Subscription,
 }
@@ -59,6 +81,7 @@ impl CumonRoot {
         let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
         Self {
             ctl,
+            plots: HashMap::new(),
             _tick: tick,
             _appearance: appearance,
         }
@@ -100,10 +123,12 @@ impl Acts {
 impl Render for CumonRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         frame_start();
-        let vm = self.ctl.vm();
+        let acts = Acts(cx.entity().downgrade());
+        let Self { ctl, plots, .. } = self;
+        let vm = ctl.vm();
         let dark = is_dark(vm.theme, window.appearance());
         let p = palette(dark);
-        let acts = Acts(cx.entity().downgrade());
+        let mut plots = Plots { map: plots, cx };
         let mut root = div()
             .size_full()
             .flex()
@@ -121,7 +146,7 @@ impl Render for CumonRoot {
                 .py(px(8.0))
                 .child(header::render(vm, p, dark, &acts)),
         )
-        .child(div().flex_1().min_h_0().p(px(12.0)).child(body(vm, p)))
+        .child(body(vm, p, &acts, &mut plots))
         .child(status(vm, p))
     }
 }
@@ -153,9 +178,22 @@ fn status(vm: &AppVm, p: &Palette) -> impl IntoElement {
         )
 }
 
-// shortcut: タブの中身は移す途中のためタブ名だけを出す。各タブを移したらその画面を描く。
-fn body(vm: &AppVm, p: &Palette) -> impl IntoElement {
-    label(p, vm.tab.label())
+// shortcut: 移していないタブはタブ名だけを出し、ダッシュボードは推移だけを出す。各タブを移したらその画面を描く。
+fn body(vm: &AppVm, p: &'static Palette, acts: &Acts, plots: &mut Plots) -> impl IntoElement {
+    let area = div().flex_1().min_h_0().p(px(12.0));
+    match &vm.body {
+        TabVm::Dashboard(d) => area.child(crate::gpui_views::dashboard::trend::render(
+            d, p, acts, plots, 260.0,
+        )),
+        TabVm::Diagnostics(v) => area.child(
+            div()
+                .id("body-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .child(crate::gpui_views::tabs::diagnostics::render(v, p, plots)),
+        ),
+        _ => area.child(label(p, vm.tab.label())),
+    }
 }
 
 /// `x,y`を窓の左上の位置として読む。
@@ -284,7 +322,7 @@ pub(crate) mod tests {
 
     /// 役割と名前で探した部品の中央を押す。
     pub(crate) fn click(vcx: &mut VisualTestContext, role: Role, label: &str) {
-        let key: &'static str = Box::leak(probe::selector(role, label).into_boxed_str());
+        let key: &'static str = Box::leak(probe::selector(role, label, 0).into_boxed_str());
         let b = vcx
             .debug_bounds(key)
             .unwrap_or_else(|| panic!("{key} が無い"));
