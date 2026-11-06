@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 変更したファイルに品質ゲートをかける。各タスクの完了条件を、同じ基準のコマンド1つで確かめるため。
-# 使い方: [GATE_BASE=<コミット>] [GATE_LOW=1] [GATE_NO_MUTANTS=1] scripts/gate.sh src/models/domain/usage.rs [...]
+# 使い方: [GATE_BASE=<コミット>] [GATE_LOW=1] [GATE_JOBS=<並行数>] [GATE_NO_MUTANTS=1] scripts/gate.sh src/models/domain/usage.rs [...]
 # mutationは、GATE_BASE（既定はHEAD）からの差分で変わった行だけを検査する。
 # 全ファイルを毎回検査すると1,000件を超えて約7時間かかり、結果が出る前にコミットが進むため。
 set -euo pipefail
@@ -25,13 +25,16 @@ export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
 
 # GATE_LOW=1 は、並列のビルドとmutationでmacOSのWindowServerが固まったため、時間より負荷を優先する。
-# ビルドとテストを1本ずつ、バックグラウンドの優先度（CPUとディスクI/O）で動かす。
-# mutationは作業ツリーをその場で書き換えるので、終わるまでソースを編集しない。
+# バックグラウンドの優先度（CPUとディスクI/O）で動かし、ビルドとテストの並行をGATE_JOBS（既定は1）に絞る。
 run=()
 cov_args=()
-mut_args=(--timeout 300 --jobs 2)
+mut_args=(--timeout 300)
 if [ -n "${GATE_LOW:-}" ]; then
-  export CARGO_BUILD_JOBS=1
+  jobs="${GATE_JOBS:-1}"
+  case "$jobs" in
+    ''|*[!0-9]*|0) echo "gate.sh: GATE_JOBSは1以上の整数にしてください: $jobs" >&2; exit 2 ;;
+  esac
+  export CARGO_BUILD_JOBS="$jobs"
   if command -v taskpolicy >/dev/null; then
     run=(taskpolicy -b)
   fi
@@ -42,9 +45,9 @@ if [ -n "${GATE_LOW:-}" ]; then
     name="$(basename "$t" .rs)"
     [ "$name" = readme_images ] || targets+=(--test "$name")
   done
-  cov_args=("${targets[@]}" -- --test-threads=1)
+  cov_args=("${targets[@]}" -- --test-threads="$jobs")
   # cargo-mutantsは既定でCPU数の枠のjobserverを子のcargoに渡し、CARGO_BUILD_JOBSより優先されるため、jobserverを使わない。
-  mut_args=(--in-place --jobserver false --timeout 300 -- "${targets[@]}" -- --test-threads=1)
+  mut_args=(--jobserver false --timeout 300 -- "${targets[@]}" -- --test-threads="$jobs")
 fi
 
 "${run[@]}" cargo fmt --manifest-path "$manifest" --check
@@ -64,14 +67,16 @@ fi
 mutant_files=()
 for f in "$@"; do
   case "$f" in
+    src/views/layout.rs|src/views/*/math.rs) mutant_files+=("$f") ;;
     src/views/*|src/main.rs) ;;
     *) mutant_files+=("$f") ;;
   esac
 done
-# viewsは描画、main.rsは依存の組み立てだけなのでmutationの対象外にする（spec 12.3節）。
+# viewsの描画とmain.rsの依存の組み立てはmutationの対象外にする（spec 12.3節）。色や並びを変える変異はe2eで見分けられないため。
+# viewsの下でも、寸法とグラフの計算（layout.rs、*/math.rs）は壊れると表示が崩れるので対象に残す。
 # 対象が残らないときは、cargo-mutantsが「対象なし」で返す終了コードに頼らず、ここで終える。
 if [ "${#mutant_files[@]}" -eq 0 ]; then
-  echo "mutation: 対象なし（viewsとmain.rsは対象外）"
+  echo "mutation: 対象なし（viewsの描画とmain.rsは対象外）"
   exit 0
 fi
 base="${GATE_BASE:-HEAD}"
@@ -95,8 +100,19 @@ fi
 # 終了コード3はタイムアウトだけが出た場合。ループの終了条件を壊す変異は無限ループになり、タイムアウトで検出されるので合格とする。
 # 生存（コード2）とその他の失敗は不合格のまま返す。
 status=0
-# 低負荷のmutationは--in-placeで、依存を含めた4GBほどの複製と全体の再ビルドを避ける。
-"${run[@]}" cargo mutants -d "$root" --in-diff "$diff_file" "${mut_args[@]}" || status=$?
+# mutationは一時領域に複製したソースを書き換えて回し、作業ツリーには触れない。実行中も編集できるようにするため。
+# 複製はgitが追跡するファイルと未追跡の新しいファイルだけにする。依存のビルドはtarget/mutantsに残し、
+# 実行のたびに4GBほどの依存を作り直さない。複製は終わったとき（中断を含む）に消す。
+work="$(mktemp -d "${TMPDIR:-/tmp}/cumon-mutants.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+trap 'exit 130' INT TERM
+# 作業ツリーで消したがgitの索引に残るファイルは、tarが読めずに止まるので渡さない。
+git -C "$root" ls-files -z --cached --others --exclude-standard \
+  | while IFS= read -r -d '' f; do [ -e "$root/$f" ] && printf '%s\0' "$f"; done \
+  | tar -C "$root" --null -T - -cf - \
+  | tar -C "$work" -xf -
+CARGO_TARGET_DIR="$root/target/mutants" "${run[@]}" cargo mutants -d "$work" --in-place \
+  --output "$root" --in-diff "$diff_file" "${mut_args[@]}" || status=$?
 if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
   exit "$status"
 fi
