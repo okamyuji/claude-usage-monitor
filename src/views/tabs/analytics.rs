@@ -1,128 +1,156 @@
-//! 分析タブの描画。
+//! 分析タブの描画。期間の切り替え、軸ごとの使用量、日ごとのキャッシュヒット率、ツール。
 use crate::controllers::gui::app::Action;
 use crate::controllers::gui::tabs::analytics::{AnalyticsVm, GroupRow, Period};
 use crate::models::domain::display::help as h;
-use crate::views::layout::{GAP, card_columns, flex_columns};
-use crate::views::theme::card_frame;
-use crate::views::widgets::{cell, help, pal, section, trunc, usage_bar};
-use egui::{RichText, Ui};
+use crate::views::app::Acts;
+use crate::views::layout::{GAP, card_columns};
+use crate::views::theme::{GAP_X, GAP_Y, Palette, SMALL};
+use crate::views::widgets::{
+    card, help, label, section, selectable, small, strong, table_row, text, trunc, usage_bar, weak,
+};
+use gpui::{AnyElement, Div, IntoElement, ParentElement as _, Styled as _, div, px};
 
-/// 分析タブを描く。
-pub fn show(ui: &mut Ui, vm: &AnalyticsVm, acts: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        section(ui, "分析");
-        for p in [Period::Days7, Period::Days30] {
-            if ui.selectable_label(vm.period == p, p.label()).clicked() {
-                acts.push(Action::SetPeriod(p));
-            }
-        }
-        ui.label(RichText::new(&vm.agent_share).strong());
-        help(ui, h::RUN_KIND);
+/// 列（軸の値、割合の棒、Token、コスト）。軸の値の列だけが伸びる。
+const GROUP_COLUMNS: [Option<f32>; 4] = [None, Some(96.0), Some(56.0), Some(64.0)];
+/// 列（ツール、回数、エラー、エラー率）。ツールの列だけが伸びる。
+const TOOL_COLUMNS: [Option<f32>; 4] = [None, Some(56.0), Some(56.0), Some(64.0)];
+
+/// 分析タブを描く。`width`は本文の幅。
+pub fn render(vm: &AnalyticsVm, p: &'static Palette, acts: &Acts, width: f32) -> Div {
+    let periods = [Period::Days7, Period::Days30].map(|d| {
+        selectable(
+            p,
+            format!("period:{}", d.label()),
+            vm.period == d,
+            d.label(),
+            acts.on(Action::SetPeriod(d)),
+        )
     });
-    ui.add_space(GAP / 2.0);
+    let head = div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(section(p, "分析"))
+        .children(periods)
+        .child(strong(p, &vm.agent_share))
+        .child(help(p, h::RUN_KIND));
     let groups = [
         ("プロジェクト別", &vm.by_project),
         ("モデル別", &vm.by_model),
         ("ブランチ別", &vm.by_branch),
-    ];
-    let (cols, width) = card_columns(ui.available_width(), groups.len());
-    for row in groups.chunks(cols) {
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP;
-            for (title, rows) in row {
-                ui.vertical(|ui| {
-                    ui.set_width(width);
-                    group_card(ui, title, rows);
-                });
-            }
-        });
-        ui.add_space(GAP);
+    ]
+    .map(|(title, rows)| group_card(p, title, rows));
+    let halves = [cache_card(p, vm), tools_card(p, vm)];
+    div()
+        .flex()
+        .flex_col()
+        .child(head)
+        .child(div().h(px(GAP / 2.0)))
+        .children(rows_of(groups.into(), width))
+        .children(rows_of(halves.into(), width))
+}
+
+/// カードを幅に合わせて列に並べ、行ごとに返す。
+fn rows_of(cards: Vec<Div>, width: f32) -> Vec<Div> {
+    let (cols, w) = card_columns(width, cards.len());
+    let mut rows = Vec::new();
+    let mut it = cards.into_iter().peekable();
+    while it.peek().is_some() {
+        let row = it.by_ref().take(cols).map(|c| c.w(px(w)).flex_shrink_0());
+        rows.push(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(GAP))
+                .mb(px(GAP))
+                .children(row),
+        );
     }
-    let (cols, width) = card_columns(ui.available_width(), 2);
-    let halves: [&dyn Fn(&mut Ui); 2] = [&|ui| cache_card(ui, vm), &|ui| tools_card(ui, vm)];
-    for row in halves.chunks(cols) {
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP;
-            for f in row {
-                ui.vertical(|ui| {
-                    ui.set_width(width);
-                    f(ui);
-                });
-            }
-        });
-        ui.add_space(GAP);
-    }
+    rows
 }
 
-/// 列（軸の値、割合の棒、Token、コスト）。軸の値の列だけが伸びる。
-const GROUP_COLUMNS: [Option<f32>; 4] = [None, Some(96.0), Some(56.0), Some(64.0)];
-
-fn group_card(ui: &mut Ui, title: &str, rows: &[GroupRow]) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        section(ui, title);
-        if rows.is_empty() {
-            ui.label(RichText::new("この期間の記録はありません").color(p.weak));
-        }
-        let widths = flex_columns(ui.available_width(), &GROUP_COLUMNS);
-        for r in rows {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP / 2.0;
-                cell(ui, widths[0], |ui| trunc(ui, &r.key));
-                cell(ui, widths[1], |ui| usage_bar(ui, r.share, p.accent));
-                cell(ui, widths[2], |ui| {
-                    ui.label(RichText::new(&r.tokens).small())
-                });
-                cell(ui, widths[3], |ui| ui.label(RichText::new(&r.cost).small()));
-            });
-        }
-    });
+fn group_card(p: &'static Palette, title: &str, rows: &[GroupRow]) -> Div {
+    let body: Vec<AnyElement> = if rows.is_empty() {
+        vec![weak(p, "この期間の記録はありません").into_any_element()]
+    } else {
+        rows.iter()
+            .map(|r| {
+                table_row(
+                    &GROUP_COLUMNS,
+                    vec![
+                        trunc(p, &r.key).into_any_element(),
+                        usage_bar(r.share, p.accent, p).into_any_element(),
+                        small(p, &r.tokens).into_any_element(),
+                        small(p, &r.cost).into_any_element(),
+                    ],
+                )
+                .into_any_element()
+            })
+            .collect()
+    };
+    card(p, false)
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(section(p, title))
+        .children(body)
 }
 
-fn cache_card(ui: &mut Ui, vm: &AnalyticsVm) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.horizontal(|ui| {
-            section(ui, "キャッシュヒット率（日ごと）");
-            help(ui, h::CACHE_HIT);
-        });
-        ui.horizontal_wrapped(|ui| {
-            for (day, rate) in &vm.daily_cache {
-                ui.label(RichText::new(day).small().color(p.weak));
-                ui.label(RichText::new(rate).strong());
-                ui.add_space(8.0);
-            }
-        });
+fn cache_card(p: &'static Palette, vm: &AnalyticsVm) -> Div {
+    let days = vm.daily_cache.iter().map(|(day, rate)| {
+        div()
+            .flex()
+            .items_center()
+            .gap(GAP_X)
+            .mr(px(8.0))
+            .child(text(day, SMALL, p.weak))
+            .child(strong(p, rate))
     });
+    card(p, false)
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(GAP_X)
+                .child(section(p, "キャッシュヒット率（日ごと）"))
+                .child(help(p, h::CACHE_HIT)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(GAP_X)
+                .children(days),
+        )
 }
 
-/// 列（ツール、回数、エラー、エラー率）。ツールの列だけが伸びる。
-const TOOL_COLUMNS: [Option<f32>; 4] = [None, Some(56.0), Some(56.0), Some(64.0)];
-
-fn tools_card(ui: &mut Ui, vm: &AnalyticsVm) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        section(ui, "ツール");
-        let widths = flex_columns(ui.available_width(), &TOOL_COLUMNS);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP / 2.0;
-            for (w, t) in widths.iter().zip(["ツール", "回数", "エラー", "エラー率"]) {
-                cell(ui, *w, |ui| {
-                    ui.label(RichText::new(t).small().color(p.weak))
-                });
-            }
-        });
-        for t in &vm.tools {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP / 2.0;
-                cell(ui, widths[0], |ui| trunc(ui, &t.name));
-                cell(ui, widths[1], |ui| ui.label(&t.calls));
-                cell(ui, widths[2], |ui| ui.label(&t.errors));
-                cell(ui, widths[3], |ui| ui.label(&t.error_rate));
-            });
-        }
+fn tools_card(p: &'static Palette, vm: &AnalyticsVm) -> Div {
+    let head = table_row(
+        &TOOL_COLUMNS,
+        ["ツール", "回数", "エラー", "エラー率"]
+            .map(|t| text(t, SMALL, p.weak).into_any_element())
+            .into(),
+    );
+    let rows = vm.tools.iter().map(|t| {
+        table_row(
+            &TOOL_COLUMNS,
+            vec![
+                trunc(p, &t.name).into_any_element(),
+                label(p, &t.calls).into_any_element(),
+                label(p, &t.errors).into_any_element(),
+                label(p, &t.error_rate).into_any_element(),
+            ],
+        )
     });
+    card(p, false)
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(section(p, "ツール"))
+        .child(head)
+        .children(rows)
 }

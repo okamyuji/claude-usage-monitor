@@ -1,7 +1,7 @@
 //! 読み上げ用のノードに「無効」を書く包み。
 //!
 //! GPUIには`aria_disabled`が無いので、見た目を淡くして押しても何もしないだけでは、
-//! VoiceOverは押せる部品として読む。eguiの`add_enabled(false, ..)`と同じく無効として読ませるため、
+//! VoiceOverは押せる部品として読む。無効として読ませるため、
 //! 要素の読み上げ用のノードを書いた後に`set_disabled`を足す（gpui-baseの`A11yDisabled`と同じやり方）。
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, InteractiveElement,

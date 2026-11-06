@@ -13,7 +13,7 @@ pub fn hover_label(name: &str, x: f64, y: f64, tz: FixedOffset, unit: &str) -> S
     format!("{name}\n{}\n{y:.1}{unit}", plot_time(x, tz))
 }
 
-/// 軸の数字。刻みが0.01なら小数2桁のように、刻みの桁まで出す（egui_plotの既定の書式）。
+/// 軸の数字。刻みが0.01なら小数2桁のように、刻みの桁まで出す。
 pub fn tick_label(value: f64, step: f64) -> String {
     let decimals = (-step.log10().round()).max(0.0) as usize;
     format!("{value:.decimals$}")

@@ -1,17 +1,17 @@
-//! 時系列のグラフの要素。描画と操作はegui_plot 0.38.0の既定と同じにする。
+//! 時系列のグラフの要素。描画と操作を受け持つ。
 //!
 //! 操作は、左ドラッグで移動、スクロールで移動、Cmd（LinuxではCtrl）＋スクロールで拡大、軸の上のドラッグで片方向の拡大、
 //! 右ドラッグで矩形の拡大、ダブルクリックで自動の範囲へ戻す、凡例の項目を押して表示を切り替える、凡例に乗ると線を太くする。
-use crate::gpui_views::fonts::BODY_FAMILY;
-use crate::gpui_views::plot::format::tick_label;
-use crate::gpui_views::plot::math::{
+use crate::views::fonts::BODY_FAMILY;
+use crate::views::plot::format::tick_label;
+use crate::views::plot::math::{
     Range2, auto_color, auto_range, grid_marks, label_alpha, nearest, strength, to_screen,
 };
-pub use crate::gpui_views::plot::state::PlotState;
-use crate::gpui_views::plot::state::{DragKind, rect, tooltip_origin};
-use crate::gpui_views::probe::Role;
-use crate::gpui_views::theme::{BODY, Palette, SMALL, color, with_alpha};
-use crate::gpui_views::widgets::{tagged, text};
+pub use crate::views::plot::state::PlotState;
+use crate::views::plot::state::{DragKind, rect, tooltip_origin};
+use crate::views::probe::Role;
+use crate::views::theme::{BODY, Palette, SMALL, color, with_alpha};
+use crate::views::widgets::{tagged, text};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, Entity, Hsla, InteractiveElement as _,
     IntoElement, Length, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement as _,
@@ -21,18 +21,18 @@ use gpui::{
 };
 use std::rc::Rc;
 
-/// 線どうしの最小の間隔と、濃さが最大になる間隔（egui_plotの`grid_spacing`の既定値）。
+/// 線どうしの最小の間隔と、濃さが最大になる間隔。
 const GRID_SPACING: (f32, f32) = (8.0, 300.0);
-/// x軸とy軸の数字を出す間隔（egui_plotの`label_spacing`の既定値）。
+/// x軸とy軸の数字を出す間隔。
 const X_LABEL_SPACING: (f32, f32) = (60.0, 80.0);
 const Y_LABEL_SPACING: (f32, f32) = (20.0, 30.0);
-/// 格子の濃さの指数（egui_plotの`grid_fade`の既定値）。
+/// 格子の濃さの指数。
 const GRID_FADE: f32 = 0.5;
-/// 近い点として拾う半径（eguiの`interact_radius`の既定値）。
+/// 近い点として拾う半径。
 const HOVER_RADIUS: f32 = 5.0;
 /// x軸の数字の行の高さ。
 const X_AXIS_HEIGHT: f32 = 20.0;
-/// y軸の数字の左右の余白（egui_plotの`SIDE_MARGIN`）と、軸の最小の幅（`min_thickness`）。
+/// y軸の数字の左右の余白と、軸の最小の幅（`min_thickness`）。
 const Y_AXIS_MARGIN: f32 = 4.0;
 const Y_AXIS_MIN: f32 = 14.0;
 /// 線の太さ。凡例に乗ると2倍にする。
@@ -123,7 +123,7 @@ impl Plot {
         self
     }
 
-    /// 折れ線。色はegui_plotと同じく描く順に自動で決める。
+    /// 折れ線。色は描く順に自動で決める。
     pub fn line(mut self, name: impl Into<SharedString>, points: Vec<[f64; 2]>) -> Self {
         let color = auto_color(self.lines.len());
         self.lines.push(Line {
@@ -256,7 +256,7 @@ impl RenderOnce for Plot {
                 }
             },
             move |_, l, window, cx| {
-                // 移動と離す操作は窓全体で受ける。グラフの外へ出たホバーを消し、外へ出てもドラッグを続けるため（egui_plotと同じ）。
+                // 移動と離す操作は窓全体で受ける。グラフの外へ出たホバーを消し、外へ出てもドラッグを続けるため。
                 let s = events.clone();
                 window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
                     if phase == DispatchPhase::Bubble {
@@ -594,9 +594,9 @@ fn paint_axis_labels(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpui_views::probe::{self, Role};
-    use crate::gpui_views::theme::LIGHT;
-    use crate::gpui_views::widgets::frame_start;
+    use crate::views::probe::{self, Role};
+    use crate::views::theme::LIGHT;
+    use crate::views::widgets::frame_start;
     use gpui::{
         AppContext as _, Context, Modifiers, MouseButton, MouseDownEvent, Render, ScrollDelta,
         ScrollEvent, TestAppContext, VisualTestContext, Window, div, point, px, size,

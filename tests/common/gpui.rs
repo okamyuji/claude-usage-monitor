@@ -1,9 +1,9 @@
-//! GPUI版の画面を、egui_kittestと同じ名前の呼び出しで操作するハーネス。
+//! GPUI版の画面を、ラベルや役割の名前で部品を探して操作するハーネス。
 //! GPUIのテスト窓は読み上げ用の木を作らないため、部品が描くたびに残す記録（`probe`）と目印（`debug_selector`）で探す。
 use super::gui::GuiEnv;
 use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
-use claude_usage_monitor::gpui_views::app::CumonRoot;
-use claude_usage_monitor::gpui_views::probe::{self, Role};
+use claude_usage_monitor::views::app::CumonRoot;
+use claude_usage_monitor::views::probe::{self, Role};
 use gpui::{
     AnyWindowHandle, AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels,
     TestAppContext, VisualTestContext, point, px, size,
@@ -16,12 +16,12 @@ pub fn gpui_cx() -> TestAppContext {
     let text = std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
     #[cfg(target_os = "linux")]
     let text = std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-        claude_usage_monitor::gpui_views::fonts::BODY_FAMILY,
+        claude_usage_monitor::views::fonts::BODY_FAMILY,
     ));
     let cx = TestAppContext::build_with_text_system(gpui::TestDispatcher::new(0), None, text);
     cx.update(|cx| {
         gpui_component::init(cx);
-        claude_usage_monitor::gpui_views::fonts::install(cx).expect("同梱のフォント");
+        claude_usage_monitor::views::fonts::install(cx).expect("同梱のフォント");
     });
     cx
 }

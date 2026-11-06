@@ -25,7 +25,7 @@ Claude CodeのToken使用量、レート制限、セッションの動きを、�
 
 ## 対応OS
 
-対応OSはmacOS、Windows、Linuxです。認証情報は、Claude Codeの[認証のドキュメント](https://code.claude.com/docs/en/iam)に書かれた場所から読み出します。読み出し先は、macOSではKeychain、WindowsとLinuxでは設定ディレクトリの`.credentials.json`です。
+動作を確認しているOSはmacOSです。WindowsとLinuxでは動作を確認していません。Linuxでは、CIがビルドとテストだけを回しています。認証情報は、Claude Codeの[認証のドキュメント](https://code.claude.com/docs/en/iam)に書かれた場所から読み出します。読み出し先は、macOSではKeychain、WindowsとLinuxでは設定ディレクトリの`.credentials.json`です。
 
 ## インストール
 
@@ -123,9 +123,9 @@ cumon profile remove work
 | デーモン（トレイなし、起動後20〜120秒） | 21MB |
 | デーモン（トレイなし、数時間の稼働後） | 11MB |
 | デーモン（トレイあり、起動後20〜120秒） | 41MB |
-| 画面（実データを表示した状態） | 184MB |
+| 画面（実データを表示した状態） | 170MB |
 
-トレイを出すと、メニューバーのためにmacOSのAppKitが約20MBを確保します。画面の値のうち約106MBは、GPUドライバが描画のために確保する分です。画面はOpenGLで描画しています。同じ画面をwgpuで描いた場合は約253MBで、これより約60MB多くかかりました。日本語フォントはアプリに埋め込んで複製せずに使っています。
+トレイを出すと、メニューバーのためにmacOSのAppKitが約20MBを確保します。画面の値のうち約120MBは、GPUドライバが描画のために確保する分です。画面は[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)がMetalで描画します。日本語フォントはアプリに埋め込み、複製せずに使っています。
 
 ## 開発
 
@@ -136,12 +136,12 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 ```
 
-変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。mutation testingは数十分かかるので、`GATE_NO_MUTANTS=1`を付けると省略できます。`GATE_LOW=1`を付けると、ビルドとテストを1本ずつ、macOSのバックグラウンドの優先度で動かします。時間はかかりますが、マシンが重くなりません。このときmutation testingは作業ツリーをその場で書き換えるので、終わるまでソースを編集しないでください。
+変更したファイルの品質は`scripts/gate.sh`で確かめられます。このスクリプトは、フォーマット、clippy、行カバレッジ（80%以上）、CRAP値（15未満）、mutation testing（生存0件）を順に検査します。mutation testingの対象は、`GATE_BASE`（既定は`HEAD`）から変わった行だけです。mutation testingは数十分かかるので、`GATE_NO_MUTANTS=1`を付けると省略できます。`GATE_LOW=1`を付けると、macOSのバックグラウンドの優先度で動かし、ビルドとテストの並行を`GATE_JOBS`（既定は1）までに絞ります。時間はかかりますが、マシンは重くなりません。mutation testingは一時的な場所へ複製したソースで回すので、実行中も作業ツリーを編集できます。複製は、終わったときに自動で消されます。
 
 ```bash
 scripts/gate.sh src/controllers/gui/app.rs
 GATE_BASE=origin/main scripts/gate.sh src/controllers/gui/app.rs
-GATE_LOW=1 scripts/gate.sh src/controllers/gui/app.rs
+GATE_LOW=1 GATE_JOBS=4 scripts/gate.sh src/controllers/gui/app.rs
 ```
 
 長時間の稼働でメモリが増え続けないことは、デーモンを1,000周期回すリーク検査で確かめます。100周期目と1,000周期目のRSSを比べ、5MBを超えて増えていれば失敗にします。macOSで測った値は、トレイなしで12.0MBから11.6MB、トレイありで73.4MBから29.0MBでした。所要時間は約17分なので、通常のテストとは分けて実行します。
@@ -150,7 +150,7 @@ GATE_LOW=1 scripts/gate.sh src/controllers/gui/app.rs
 cargo test --release --test leak -- --ignored --nocapture
 ```
 
-READMEの画像は、架空のデータから作り直します。`examples/demo_data.rs`がClaude Codeと同じ形のログを一時的なHOMEに書き、デーモンと同じ取り込み処理でDBに入れます。稼働中かどうかは最終更新からの経過時間で決まるため、データを作ったらすぐに画像を書き出してください。
+READMEの画像は、架空のデータからmacOSで作り直します。画像はMetalで画面の外に描くので、窓は開きません。`examples/demo_data.rs`がClaude Codeと同じ形のログを一時的なHOMEに書き、デーモンと同じ取り込み処理でDBに入れます。稼働中かどうかは最終更新からの経過時間で決まるため、データを作ったらすぐに画像を書き出してください。
 
 ```bash
 cargo run --example demo_data -- /tmp/cumon-demo/data /tmp/cumon-demo/home
@@ -159,4 +159,10 @@ CUMON_DEMO_DATA=/tmp/cumon-demo/data CUMON_DEMO_HOME=/tmp/cumon-demo/home cargo 
 
 ## ライセンス
 
-[MIT License](LICENSE)で公開しています。同梱の日本語フォント[Noto Sans JP](https://github.com/notofonts/noto-cjk)はSIL Open Font License 1.1で配布されており、ライセンス文書は[assets/fonts/OFL.txt](assets/fonts/OFL.txt)にあります。
+[MIT License](LICENSE)で公開しています。同梱のフォントは、それぞれ次のライセンスで配布されています。ライセンス文書は[assets/fonts](assets/fonts)に置いてあります。
+
+- 日本語 [Noto Sans JP](https://github.com/notofonts/noto-cjk)はSIL Open Font License 1.1です（[OFL.txt](assets/fonts/OFL.txt)）。
+- 絵文字 [Noto Emoji](https://github.com/googlefonts/noto-emoji)も同じSIL Open Font License 1.1です。
+- 等幅 [Hack](https://github.com/source-foundry/Hack)はMIT Licenseです（[Hack-Regular.txt](assets/fonts/Hack-Regular.txt)）。
+- 欧文 [Ubuntu](https://design.ubuntu.com/font)はUbuntu Font Licence 1.0です（[UFL.txt](assets/fonts/UFL.txt)）。
+- アイコン [Phosphor Icons](https://github.com/phosphor-icons/web)はMIT Licenseです（[Phosphor-LICENSE.txt](assets/fonts/Phosphor-LICENSE.txt)）。

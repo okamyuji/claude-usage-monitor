@@ -1,12 +1,12 @@
 //! グラフの操作の状態と、操作で範囲を動かす計算。描画はelement.rsに置く。
-use crate::gpui_views::plot::math::{self, Range2, Rect, to_screen};
+use crate::views::plot::math::{self, Range2, Rect, to_screen};
 use gpui::{
     Bounds, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollEvent,
     point, px,
 };
 use std::collections::HashSet;
 
-/// ホバーのツールチップとポインタの間（egui_plotの`gap`）。
+/// ホバーのツールチップとポインタの間。
 const TOOLTIP_GAP: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -165,7 +165,7 @@ impl PlotState {
         let d = ev.delta.pixel_delta(px(16.0));
         let (dx, dy) = (f32::from(d.x), f32::from(d.y));
         if zoom {
-            // eguiは修飾キー付きのスクロールを、200pxでe倍になる拡大に読み替える（`scroll_zoom_speed`）。
+            // 修飾キー付きのスクロールは、200pxでe倍になる拡大に読み替える。
             let f = ((dy as f64) / 200.0).exp();
             let at = (f32::from(ev.position.x), f32::from(ev.position.y));
             self.set(math::zoom(&r, rc, at, (f, f)));

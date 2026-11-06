@@ -5,55 +5,64 @@ pub mod memory;
 pub mod sessions;
 pub mod trend;
 
-use crate::controllers::gui::app::{Action, Forms};
+use crate::controllers::gui::app::Forms;
 use crate::controllers::gui::dashboard::DashboardVm;
+use crate::views::app::{Acts, Plots};
+use crate::views::input::FormInputs;
 use crate::views::layout::{
-    GAP, SPLITTER, TREND_COLLAPSED, drag_ratio, middle_height, split_widths, trend_height,
+    GAP, MIN_MIDDLE, SPLITTER, TREND_COLLAPSED, split_widths, trend_height,
 };
-use crate::views::theme::card_frame;
-use crate::views::widgets::pal;
-use egui::{Align, Layout, Sense, Ui, vec2};
+use crate::views::probe::Role;
+use crate::views::theme::{GAP_X, GAP_Y, Palette, color};
+use crate::views::widgets::{card, probed};
+use gpui::{
+    CursorStyle, Div, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    ScrollHandle, Styled as _, div, px,
+};
 
-/// ダッシュボードを描く。
-pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    let total = ui.available_height();
-    cards::show(ui, &vm.cards, acts);
-    if let Some(d) = &vm.desktop {
-        memory::desktop(ui, d, acts);
-    }
-    if let Some(c) = &vm.confirm_exit {
-        memory::confirm(ui, c, acts);
-    }
-    ui.add_space(GAP);
+/// ダッシュボードを描く。`width`と`height`は本文の大きさ。
+pub fn render(
+    vm: &DashboardVm,
+    forms: &Forms,
+    p: &'static Palette,
+    acts: &Acts,
+    plots: &mut Plots,
+    (inputs, scroll, detail_ui): (&FormInputs, &ScrollHandle, &detail::DetailUi),
+    (width, height): (f32, f32),
+) -> Div {
     let trend_h = if vm.trend_open {
-        trend_height(total)
+        trend_height(height)
     } else {
         TREND_COLLAPSED
     };
-    let mid_h = middle_height(ui.available_height(), trend_h);
-    split(
-        ui,
-        forms,
-        mid_h,
-        dash_ratio,
+    let middle = split(
+        p,
         acts,
-        |ui, forms, acts| sessions::show(ui, vm, forms, acts),
-        |ui, forms, acts| detail::show(ui, vm.detail.as_ref(), forms, acts),
-    );
-    ui.add_space(GAP);
-    // 丸めや部品の間隔で中段が見込みより高くなっても、推移がウィンドウの外へはみ出さないよう残りの高さに収める。
-    let rest = ui.available_height();
-    trend_area(ui, vm, trend_h.min(rest), acts);
-}
-
-/// 大きさを決めた領域にカードの枠を描き、中身で領域を埋める。
-fn filled_card(ui: &mut Ui, size: egui::Vec2, add: impl FnOnce(&mut Ui)) {
-    ui.allocate_ui_with_layout(size, Layout::top_down(Align::Min), |ui| {
-        card_frame(pal(ui), false).show(ui, |ui| {
-            ui.set_min_size(ui.available_size());
-            add(ui);
-        });
-    });
+        (forms.split_ratio, dash_ratio),
+        width,
+        sessions::render(vm, inputs, scroll, p, acts),
+        detail::render(vm.detail.as_ref(), forms, detail_ui, p, acts),
+    )
+    .min_h(px(MIN_MIDDLE))
+    .flex_shrink_0();
+    let trend_area = card(p, false)
+        .w_full()
+        .h(px(trend_h))
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(trend::render(vm, p, acts, plots));
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(cards::render(&vm.cards, p, acts, width))
+        .children(vm.desktop.as_ref().map(|d| memory::desktop(d, p, acts)))
+        .child(div().h(px(GAP - f32::from(GAP_Y))))
+        .child(middle)
+        .child(div().h(px(GAP - f32::from(GAP_Y))))
+        .child(trend_area)
 }
 
 /// ダッシュボードの分割比の場所。
@@ -66,43 +75,52 @@ pub fn calendar_ratio(f: &mut Forms) -> &mut f32 {
     &mut f.calendar_split
 }
 
-/// 中段を左右に分けて描く。境界のつまみをドラッグすると比率が変わり、ウィンドウの幅に比例して伸縮する。
-/// 左右の描画にも入力欄の状態を渡すため、クロージャは`forms`を引数で受け取る。
+/// 左右に分けた2つのカードとつまみ。`(ratio, place)`は今の比率と、つまみで書き換える比率の場所。
 pub fn split(
-    ui: &mut Ui,
-    forms: &mut Forms,
-    height: f32,
-    ratio: fn(&mut Forms) -> &mut f32,
-    acts: &mut Vec<Action>,
-    left: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
-    right: impl FnOnce(&mut Ui, &mut Forms, &mut Vec<Action>),
-) {
+    p: &'static Palette,
+    acts: &Acts,
+    (ratio, place): (f32, fn(&mut Forms) -> &mut f32),
+    width: f32,
+    left: impl IntoElement,
+    right: impl IntoElement,
+) -> Div {
     // 左、つまみ、右の間には部品の間隔が2つ入るので、その分を引いてから分ける。
-    // 間隔を0にすると中の一覧や詳細にも0が引き継がれ、文言どうしが詰まって読めなくなるため、変えない。
-    let avail = ui.available_width() - 2.0 * ui.spacing().item_spacing.x;
-    let (lw, rw) = split_widths(avail, *ratio(forms));
-    ui.horizontal_top(|ui| {
-        filled_card(ui, vec2(lw, height), |ui| left(ui, forms, acts));
-        let (rect, resp) = ui.allocate_exact_size(vec2(SPLITTER, height), Sense::drag());
-        let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-        let line = if resp.hovered() || resp.dragged() {
-            pal(ui).accent
-        } else {
-            pal(ui).border
-        };
-        ui.painter().vline(
-            rect.center().x,
-            rect.y_range(),
-            egui::Stroke::new(1.0, line),
-        );
-        if resp.dragged() {
-            *ratio(forms) = drag_ratio(avail, lw, resp.drag_delta().x);
-        }
-        filled_card(ui, vec2(rw, height), |ui| right(ui, forms, acts));
-    });
+    let avail = width - 2.0 * f32::from(GAP_X);
+    let (lw, rw) = split_widths(avail, ratio);
+    div()
+        .flex_1()
+        .flex()
+        .gap(GAP_X)
+        .child(card(p, false).w(px(lw)).h_full().child(left))
+        .child(splitter(p, acts, avail, lw, place))
+        .child(card(p, false).w(px(rw)).h_full().child(right))
 }
 
-fn trend_area(ui: &mut Ui, vm: &DashboardVm, height: f32, acts: &mut Vec<Action>) {
-    let w = ui.available_width();
-    filled_card(ui, vec2(w, height), |ui| trend::show(ui, vm, acts));
+/// 中段の境界のつまみ。ドラッグすると比率が変わり、ウィンドウの幅に比例して伸縮する。
+/// つまみは名前を持たないので、読み上げ用の名前は付けず、テスト用の記録だけを残す。
+fn splitter(
+    p: &Palette,
+    acts: &Acts,
+    avail: f32,
+    left: f32,
+    place: fn(&mut Forms) -> &mut f32,
+) -> impl IntoElement {
+    let (border, accent) = (p.border, p.accent);
+    let down = acts.clone();
+    let line = div()
+        .w(px(1.0))
+        .h_full()
+        .bg(color(border))
+        .group_hover("splitter", move |s| s.bg(color(accent)));
+    probed("splitter", Role::Splitter, "左右の境界")
+        .group("splitter")
+        .w(px(SPLITTER))
+        .h_full()
+        .flex()
+        .justify_center()
+        .cursor(CursorStyle::ResizeLeftRight)
+        .on_mouse_down(MouseButton::Left, move |ev, w, cx| {
+            down.drag_split(ev.position.x, (avail, left, place), w, cx)
+        })
+        .child(line)
 }

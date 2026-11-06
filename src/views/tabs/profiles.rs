@@ -1,94 +1,157 @@
-//! プロファイルタブの描画。
-use crate::controllers::gui::app::{Action, Forms};
+//! プロファイルタブの描画。一覧、削除の確認、追加の入力欄。
+use crate::controllers::gui::app::Action;
 use crate::controllers::gui::tabs::profiles::{ProfileRow, ProfilesAction, ProfilesVm};
-use crate::views::layout::{GAP, flex_columns};
-use crate::views::theme::card_frame;
-use crate::views::widgets::{badge, cell, pal, section, trunc};
-use egui::{RichText, Ui};
+use crate::views::app::Acts;
+use crate::views::input::{Field, FormInputs};
+use crate::views::layout::GAP;
+use crate::views::probe::Role;
+use crate::views::theme::{GAP_X, GAP_Y, Palette, SMALL};
+use crate::views::widgets::{
+    badge, button, card, label, probed, section, small, strong, table_row, text, truncate,
+};
+use gpui::{AnyElement, Div, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui_component::input::Input;
 
 /// 列（名前、設定ディレクトリ、トークン、契約、操作）。設定ディレクトリの列だけが伸びる。
 const COLUMNS: [Option<f32>; 5] = [Some(140.0), None, Some(200.0), Some(64.0), Some(180.0)];
+/// 入力欄の左に置く見出しの分の幅。入力欄は残りの幅から160を引いた幅にする。
+const LABEL_PX: f32 = 160.0;
+/// 入力欄の最小の幅。
+const MIN_INPUT_PX: f32 = 120.0;
+/// カードの左右の余白と枠の幅（`card`の`px(10)`と枠の1px）。
+const CARD_INSET_PX: f32 = 22.0;
 
-/// プロファイルタブを描く。
-pub fn show(ui: &mut Ui, vm: &ProfilesVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        section(ui, "プロファイル");
-        let widths = flex_columns(ui.available_width(), &COLUMNS);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP / 2.0;
-            for (w, t) in widths.iter().zip(["名前", "設定ディレクトリ", "トークン", "契約", ""]) {
-                cell(ui, *w, |ui| ui.label(RichText::new(t).small().color(p.weak)));
-            }
-        });
-        for r in &vm.rows {
-            row(ui, r, &widths, acts);
-        }
-        if let Some(name) = &vm.pending_remove {
-            ui.add_space(GAP / 2.0);
-            ui.label(RichText::new(format!("{name} を削除すると、このプロファイルの使用量とセッションの記録も消えます。設定ディレクトリは残ります")).color(p.warn));
-            ui.horizontal(|ui| {
-                if ui.button("本当に削除する").clicked() {
-                    acts.push(Action::Profiles(ProfilesAction::ConfirmRemove));
-                }
-                if ui.button("やめる").clicked() {
-                    acts.push(Action::Profiles(ProfilesAction::CancelRemove));
-                }
-            });
-        }
-    });
-    ui.add_space(GAP);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        section(ui, "プロファイルを追加");
-        let w = (ui.available_width() - 160.0).max(120.0);
-        ui.horizontal(|ui| {
-            let l = ui.label("プロファイル名");
-            ui.add(egui::TextEdit::singleline(&mut forms.new_profile_name).desired_width(w))
-                .labelled_by(l.id);
-        });
-        ui.horizontal(|ui| {
-            let l = ui.label("設定ディレクトリ");
-            ui.add(
-                egui::TextEdit::singleline(&mut forms.new_profile_dir)
-                    .desired_width(w)
-                    .hint_text("空なら ~/.claude-<名前>"),
-            )
-            .labelled_by(l.id);
-        });
-        if ui.button("追加").clicked() {
-            acts.push(Action::Profiles(ProfilesAction::Add));
-        }
-        if let Some(m) = &vm.message {
-            ui.label(m);
-        }
-        trunc(ui, RichText::new(vm.login_help).small().color(p.weak));
-    });
+/// プロファイルタブを描く。`width`は本文の幅。
+pub fn render(
+    vm: &ProfilesVm,
+    inputs: &FormInputs,
+    p: &'static Palette,
+    acts: &Acts,
+    width: f32,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(GAP))
+        .child(list(vm, p, acts))
+        .child(add(vm, inputs, p, acts, width))
 }
 
-fn row(ui: &mut Ui, r: &ProfileRow, widths: &[f32], acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = GAP / 2.0;
-        cell(ui, widths[0], |ui| {
-            ui.label(RichText::new(&r.name).strong());
-            if r.active {
-                badge(ui, "使用中", p.accent, p.accent_soft);
-            }
-        });
-        cell(ui, widths[1], |ui| trunc(ui, RichText::new(&r.dir).small()));
-        cell(ui, widths[2], |ui| {
-            trunc(ui, RichText::new(&r.token).small())
-        });
-        cell(ui, widths[3], |ui| ui.label(RichText::new(&r.plan).small()));
-        cell(ui, widths[4], |ui| {
-            if !r.active && ui.button("使用中にする").clicked() {
-                acts.push(Action::Profiles(ProfilesAction::Use(r.name.clone())));
-            }
-            if !r.active && ui.button("削除").clicked() {
-                acts.push(Action::Profiles(ProfilesAction::Remove(r.name.clone())));
-            }
-        });
+fn list(vm: &ProfilesVm, p: &'static Palette, acts: &Acts) -> Div {
+    let head = table_row(
+        &COLUMNS,
+        ["名前", "設定ディレクトリ", "トークン", "契約", ""]
+            .map(|t| text(t, SMALL, p.weak).into_any_element())
+            .into(),
+    );
+    let confirm = vm.pending_remove.as_ref().map(|name| {
+        let pa = |a| Action::Profiles(a);
+        div()
+            .flex()
+            .flex_col()
+            .gap(GAP_Y)
+            .mt(px(GAP / 2.0))
+            .child(text(
+                &format!("{name} を削除すると、このプロファイルの使用量とセッションの記録も消えます。設定ディレクトリは残ります"),
+                crate::views::theme::BODY,
+                p.warn,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap(GAP_X)
+                    .child(button(
+                        p,
+                        "profile-confirm-remove",
+                        "本当に削除する",
+                        acts.on(pa(ProfilesAction::ConfirmRemove)),
+                    ))
+                    .child(button(
+                        p,
+                        "profile-cancel-remove",
+                        "やめる",
+                        acts.on(pa(ProfilesAction::CancelRemove)),
+                    )),
+            )
     });
+    card(p, false)
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(section(p, "プロファイル"))
+        .child(head)
+        .children(vm.rows.iter().map(|r| row(r, p, acts)))
+        .children(confirm)
+}
+
+fn row(r: &ProfileRow, p: &'static Palette, acts: &Acts) -> Div {
+    let name = div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(strong(p, &r.name))
+        .children(r.active.then(|| badge("使用中", p.accent, p.accent_soft)));
+    let ops: Vec<AnyElement> = if r.active {
+        Vec::new()
+    } else {
+        let pa = |a| Action::Profiles(a);
+        vec![
+            button(
+                p,
+                format!("profile-use:{}", r.name),
+                "使用中にする",
+                acts.on(pa(ProfilesAction::Use(r.name.clone()))),
+            )
+            .into_any_element(),
+            button(
+                p,
+                format!("profile-remove:{}", r.name),
+                "削除",
+                acts.on(pa(ProfilesAction::Remove(r.name.clone()))),
+            )
+            .into_any_element(),
+        ]
+    };
+    table_row(
+        &COLUMNS,
+        vec![
+            name.into_any_element(),
+            truncate(p, small(p, &r.dir), &r.dir).into_any_element(),
+            truncate(p, small(p, &r.token), &r.token).into_any_element(),
+            small(p, &r.plan).into_any_element(),
+            div().flex().gap(GAP_X).children(ops).into_any_element(),
+        ],
+    )
+}
+
+fn add(vm: &ProfilesVm, inputs: &FormInputs, p: &'static Palette, acts: &Acts, width: f32) -> Div {
+    let w = (width - CARD_INSET_PX - LABEL_PX).max(MIN_INPUT_PX);
+    let field = |f: Field, name: &'static str| {
+        div()
+            .flex()
+            .items_center()
+            .gap(GAP_X)
+            .child(label(p, name))
+            .child(
+                probed(format!("input:{name}"), Role::TextInput, name)
+                    .w(px(w))
+                    .child(Input::new(inputs.get(f)).aria_label(name)),
+            )
+    };
+    card(p, false)
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(GAP_Y)
+        .child(section(p, "プロファイルを追加"))
+        .child(field(Field::ProfileName, "プロファイル名"))
+        .child(field(Field::ProfileDir, "設定ディレクトリ"))
+        .child(button(
+            p,
+            "profile-add",
+            "追加",
+            acts.on(Action::Profiles(ProfilesAction::Add)),
+        ))
+        .children(vm.message.as_deref().map(|m| label(p, m)))
+        .child(truncate(p, text(vm.login_help, SMALL, p.weak), vm.login_help).max_w_full())
 }

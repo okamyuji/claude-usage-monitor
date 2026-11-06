@@ -1,4 +1,4 @@
-//! アプリのメニュー。egui版のwinitが作る既定のメニューと同じ項目とキーにする。
+//! アプリのメニュー。winitが作る既定のメニューと同じ項目とキーにする。
 //! GPUIはメニューを作らないので、無いとAbout、隠す、終了（⌘Q）が使えなくなる。
 use gpui::{App, KeyBinding, Menu, MenuItem, SystemMenuType};
 use std::path::Path;

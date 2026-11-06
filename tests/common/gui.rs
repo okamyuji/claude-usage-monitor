@@ -1,7 +1,7 @@
 //! GUIのE2E用の組み立て。
 #![allow(dead_code)]
 use chrono::{DateTime, Utc};
-use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
+use claude_usage_monitor::controllers::gui::app::GuiDeps;
 use claude_usage_monitor::models::domain::memory::{ExitError, ProcEntry, Victim};
 use claude_usage_monitor::models::domain::profile::Profile;
 use claude_usage_monitor::models::ports::{
@@ -9,8 +9,6 @@ use claude_usage_monitor::models::ports::{
     ProcessTree, RepoError,
 };
 use claude_usage_monitor::models::repositories::db::SqliteStore;
-use claude_usage_monitor::views::app::show_app;
-use egui_kittest::Harness;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -132,30 +130,6 @@ impl GuiEnv {
             autostart: Arc::new(FakeAutostart::default()),
             process_tree: self.procs.clone(),
         }
-    }
-
-    /// 既定の大きさ（1280×820）のウィンドウで動かす。`cumon gui`の初期サイズと同じにするため。
-    pub fn harness(&self) -> Harness<'static, GuiController> {
-        self.harness_sized(1280.0, 820.0)
-    }
-
-    /// 大きさを指定して動かす。伸縮の確認に使う。
-    pub fn harness_sized(&self, w: f32, h: f32) -> Harness<'static, GuiController> {
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(w, h))
-            .with_context_setup(claude_usage_monitor::views::app::install_fonts)
-            .build_ui_state(
-                |ui, c: &mut GuiController| {
-                    // `cumon gui`の`CumonApp::ui`と同じ順で呼ぶ。毎フレームの処理（ライブログの追記の読み取り）も同じ経路で確かめるため。
-                    c.tick();
-                    let (vm, forms) = c.view_parts();
-                    let acts = show_app(ui, vm, forms);
-                    c.handle_all(acts);
-                },
-                GuiController::new(self.deps()),
-            );
-        harness.run();
-        harness
     }
 
     pub fn advance(&self, d: chrono::Duration) {

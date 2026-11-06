@@ -1,13 +1,14 @@
-//! GUIの主要導線（spec 12.2節）。一時ディレクトリの実SQLiteを使い、egui_kittestで操作する。
+//! GPUI版の画面の主要導線（spec 12.2節）。一時ディレクトリの実SQLiteを使い、common::gpuiのハーネスで操作する。
 #![forbid(unsafe_code)]
 mod common;
 
 use chrono::{TimeZone, Utc};
-use claude_usage_monitor::controllers::gui::app::{GuiController, Tab};
-use claude_usage_monitor::controllers::gui::dashboard::ListMode;
+use claude_usage_monitor::controllers::gui::app::{Tab, TabVm};
+use claude_usage_monitor::controllers::gui::dashboard::trend::TrendRange;
+use claude_usage_monitor::models::domain::usage::parse_usage;
+use claude_usage_monitor::models::ports::{MaintenanceRepo, ProfileRepo, UsageRepo};
+use common::gpui::GpuiHarness;
 use common::gui::gui_env;
-use egui_kittest::kittest::Queryable;
-use std::sync::atomic::Ordering;
 
 fn now() -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 26, 3, 0, 0).unwrap()
@@ -16,127 +17,13 @@ fn now() -> chrono::DateTime<Utc> {
 #[test]
 fn tabs_switch_without_leaving_the_window() {
     let env = gui_env(now());
-    let mut h = env.harness();
+    let mut h = env.gpui_harness();
     for t in Tab::ALL.iter().rev() {
         h.get_by_label(t.label()).click();
         h.run();
-        assert_eq!(h.state().vm().tab, *t);
+        assert_eq!(h.with_state(|c| c.vm().tab), *t);
     }
 }
-
-#[test]
-fn stopped_daemon_can_be_started_from_gui() {
-    let env = gui_env(now());
-    let mut h = env.harness();
-    h.get_by_label_contains("デーモン停止中");
-    h.get_by_label("デーモンを起動").click();
-    h.run();
-    assert_eq!(env.daemon.starts.load(Ordering::SeqCst), 1);
-    assert!(h.query_by_label_contains("デーモン停止中").is_none());
-    h.get_by_label_contains("監視中");
-}
-
-#[test]
-fn dashboard_shows_three_areas_at_once() {
-    let env = gui_env(now());
-    let h = env.harness();
-    h.get_by_label("レート制限");
-    h.get_by_label("セッション");
-    h.get_by_label("左の一覧からセッションを選んでください");
-    h.get_by_label("推移");
-}
-
-#[test]
-fn help_icons_on_dashboard_show_their_text_on_hover() {
-    let env = gui_env(now());
-    let mut h = env.harness();
-    let n = h.get_all_by_label("ⓘ").count();
-    assert!(n > 0);
-    let labels = |h: &egui_kittest::Harness<'_, _>| {
-        h.query_all_by_role(egui::accesskit::Role::Label).count()
-    };
-    let mut missing = Vec::new();
-    for i in 0..n {
-        h.get_all_by_label("ⓘ").nth(i).unwrap().hover();
-        h.step();
-        let before = labels(&h);
-        for _ in 0..60 {
-            h.step();
-        }
-        if labels(&h) <= before {
-            missing.push(i);
-        }
-    }
-    assert!(missing.is_empty(), "説明が出ないⓘ: {missing:?} / {n}");
-}
-
-#[test]
-fn list_mode_and_trend_collapse() {
-    let env = gui_env(now());
-    let mut h = env.harness();
-    h.get_by_label("履歴").click();
-    h.run();
-    assert_eq!(h.state().dash_mode(), ListMode::History);
-    let before = h.get_by_label("推移").rect();
-    h.get_by_label("折りたたむ").click();
-    h.run();
-    h.get_by_label("開く");
-    let after = h.get_by_label("推移").rect();
-    assert!(
-        after.center().y > before.center().y,
-        "推移を折りたたむと中段が下へ広がり、推移の見出しが下へ移る"
-    );
-}
-
-#[test]
-fn dashboard_renders_in_light_and_dark() {
-    let env = gui_env(now());
-    for pref in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
-        let mut h = env.harness();
-        claude_usage_monitor::views::theme::apply(&h.ctx);
-        h.ctx.set_theme(pref);
-        h.run();
-        assert_eq!(
-            h.ctx.global_style().visuals.dark_mode,
-            pref == egui::ThemePreference::Dark
-        );
-        for label in ["ダッシュボード", "レート制限", "セッション", "推移"] {
-            h.get_by_label(label);
-        }
-        h.get_by_label_contains("デーモン停止中");
-    }
-}
-
-#[test]
-fn layout_follows_window_size() {
-    let env = gui_env(now());
-    let small = env.harness_sized(1000.0, 700.0);
-    let large = env.harness_sized(1920.0, 1200.0);
-    let x = |h: &egui_kittest::Harness<'static, _>| {
-        h.get_by_label("左の一覧からセッションを選んでください")
-            .rect()
-            .min
-            .x
-    };
-    assert!(
-        x(&large) > x(&small) + 200.0,
-        "広げると詳細ペインの位置が右へ移る"
-    );
-    for (h, w, ht) in [(&small, 1000.0, 700.0), (&large, 1920.0, 1200.0)] {
-        for label in ["推移", "左の一覧からセッションを選んでください"] {
-            let r = h.get_by_label(label).rect();
-            assert!(
-                r.max.x <= w && r.max.y <= ht,
-                "{label} がウィンドウ内に収まる: {r:?}"
-            );
-        }
-        assert!(h.get_by_label_contains("デーモン停止中").rect().max.x <= w);
-    }
-}
-
-use claude_usage_monitor::models::domain::records::{FetchLogEntry, FetchResult};
-use claude_usage_monitor::models::domain::usage::parse_usage;
-use claude_usage_monitor::models::ports::{FetchLogRepo, MaintenanceRepo, ProfileRepo, UsageRepo};
 
 fn record_rising_usage(env: &common::gui::GuiEnv) {
     let p = env.store.ensure_default().unwrap();
@@ -154,31 +41,12 @@ fn record_rising_usage(env: &common::gui::GuiEnv) {
     }
 }
 
-#[test]
-fn cards_show_limits_remaining_and_projection() {
-    let env = gui_env(now());
-    record_rising_usage(&env);
-    let h = env.harness();
-    h.get_by_label("5時間枠");
-    h.get_by_label("30%");
-    h.get_by_label_contains("残り2時間（14:00）");
-    h.get_by_label_contains("このペースだと 13:10 に上限");
-    h.get_by_label("週間枠（Fable）");
-    h.get_by_label("使用中");
-}
-
 /// グラフの縦一列をマウスでなぞり、`needle`を含むツールチップが出たかを返す。
 /// グラフは線の頂点の近くでしか点を拾わないため、1か所に乗せるだけでは当たらない。
-fn tooltip_along(
-    h: &mut egui_kittest::Harness<'_, GuiController>,
-    x: f32,
-    ys: std::ops::Range<f32>,
-    needle: &str,
-) -> bool {
+fn tooltip_along(h: &mut GpuiHarness, x: f32, ys: std::ops::Range<f32>, needle: &str) -> bool {
     let mut y = ys.start;
     while y < ys.end {
-        h.hover_at(egui::pos2(x, y));
-        h.run();
+        h.hover_at(x, y);
         if h.query_by_label_contains(needle).is_some() {
             return true;
         }
@@ -201,10 +69,11 @@ fn trend_graph_shows_the_value_under_the_pointer() {
             .record_snapshot(p.id, now() - chrono::Duration::minutes(5 * i), &snap)
             .unwrap();
     }
-    let mut h = env.harness();
-    let r = h.get_by_label("5時間枠のグラフ").rect();
+    let mut h = env.gpui_harness();
+    let r = h.get_by_label("5時間枠のグラフ").bounds();
+    let (x, top) = (f32::from(r.left()) + 300.0, f32::from(r.bottom()));
     assert!(
-        tooltip_along(&mut h, r.left() + 300.0, r.bottom()..820.0, "50.0%"),
+        tooltip_along(&mut h, x, top..820.0, "50.0%"),
         "5時間枠のグラフに乗せると値が出る"
     );
     h.get_by_label_contains("default\n09/26 ");
@@ -219,19 +88,111 @@ fn memory_graph_shows_the_value_under_the_pointer() {
             .record_daemon_stats(now() - chrono::Duration::minutes(i), 14 << 20)
             .unwrap();
     }
-    let mut h = env.harness();
+    let mut h = env.gpui_harness();
     h.get_by_label("診断").click();
     h.run();
-    let r = h.get_by_label_contains("デーモンのメモリ").rect();
+    let r = h.get_by_label_contains("デーモンのメモリ").bounds();
+    let top = f32::from(r.bottom());
     assert!(
-        tooltip_along(&mut h, 640.0, r.bottom()..r.bottom() + 200.0, "RSS（MB）\n"),
+        tooltip_along(&mut h, 640.0, top..top + 200.0, "RSS（MB）\n"),
         "メモリのグラフに乗せると値が出る"
     );
     h.get_by_label_contains("\n09/26 ");
     h.get_by_label_contains("\n14.0MB");
 }
 
+#[test]
+fn trend_range_switches() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("5時間枠のグラフ");
+    h.get_by_label("24時間").click();
+    h.run();
+    let range = h.with_state(|c| match &c.vm().body {
+        TabVm::Dashboard(d) => d.trend.as_ref().map(|t| t.range),
+        _ => None,
+    });
+    assert_eq!(range, Some(TrendRange::Hours24));
+}
+
+#[test]
+fn diagnostics_tab_shows_fetch_status() {
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    h.get_by_label("診断").click();
+    h.run();
+    h.get_by_label("取得の状況");
+}
+
+#[test]
+fn help_icons_on_dashboard_show_their_text_on_hover() {
+    use claude_usage_monitor::views::probe::Role;
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    let n = h.get_all_by_label("ⓘ").count();
+    assert!(n > 0);
+    let labels = |h: &GpuiHarness| h.query_all_by_role(Role::Label).count();
+    let mut missing = Vec::new();
+    for i in 0..n {
+        // 前のⓘの説明を消してから数える。
+        h.hover_at(1.0, 1.0);
+        let before = labels(&h);
+        h.get_all_by_label("ⓘ").nth(i).unwrap().hover();
+        h.step();
+        if labels(&h) <= before {
+            missing.push(i);
+        }
+    }
+    assert!(missing.is_empty(), "説明が出ないⓘ: {missing:?} / {n}");
+}
+
+#[test]
+fn layout_follows_window_size() {
+    let env = gui_env(now());
+    let mut small = env.gpui_harness_sized(1000.0, 700.0);
+    let mut large = env.gpui_harness_sized(1920.0, 1200.0);
+    small.run();
+    large.run();
+    let x = |h: &GpuiHarness| {
+        f32::from(
+            h.get_by_label("左の一覧からセッションを選んでください")
+                .bounds()
+                .left(),
+        )
+    };
+    assert!(
+        x(&large) > x(&small) + 200.0,
+        "広げると詳細ペインの位置が右へ移る"
+    );
+    for (h, w, ht) in [(&small, 1000.0, 700.0), (&large, 1920.0, 1200.0)] {
+        for label in ["推移", "左の一覧からセッションを選んでください"] {
+            let r = h.get_by_label(label).bounds();
+            assert!(
+                f32::from(r.right()) <= w && f32::from(r.bottom()) <= ht,
+                "{label} がウィンドウ内に収まる: {r:?}"
+            );
+        }
+        assert!(f32::from(h.get_by_label_contains("デーモン停止中").bounds().right()) <= w);
+    }
+}
+
+#[test]
+fn cards_show_limits_remaining_and_projection() {
+    let env = gui_env(now());
+    record_rising_usage(&env);
+    let h = env.gpui_harness();
+    h.get_by_label("5時間枠");
+    h.get_by_label("30%");
+    h.get_by_label_contains("残り2時間（14:00）");
+    h.get_by_label_contains("このペースだと 13:10 に上限");
+    h.get_by_label("週間枠（Fable）");
+    h.get_by_label("使用中");
+}
+
 fn log_expired(env: &common::gui::GuiEnv) {
+    use claude_usage_monitor::models::domain::records::{FetchLogEntry, FetchResult};
+    use claude_usage_monitor::models::ports::FetchLogRepo;
     let p = env.store.ensure_default().unwrap();
     env.store
         .log(&FetchLogEntry {
@@ -248,7 +209,7 @@ fn log_expired(env: &common::gui::GuiEnv) {
 fn token_expired_is_shown_on_401_before_any_value() {
     let env = gui_env(now());
     log_expired(&env);
-    let h = env.harness();
+    let h = env.gpui_harness();
     h.get_by_label_contains("トークン期限切れ");
 }
 
@@ -257,23 +218,183 @@ fn token_expired_keeps_the_last_value_without_error() {
     let env = gui_env(now());
     record_rising_usage(&env);
     log_expired(&env);
-    let h = env.harness();
+    let h = env.gpui_harness();
     h.get_by_label("30%");
     assert!(h.query_by_label_contains("トークン期限切れ").is_none());
+}
+
+#[test]
+fn splitter_drag_changes_the_split_ratio() {
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    let before = h.with_state_mut(|c| c.forms_mut().split_ratio);
+    h.get_by_label("左右の境界").drag_by(80.0);
+    h.run();
+    let after = h.with_state_mut(|c| c.forms_mut().split_ratio);
+    assert!(after > before, "{before} -> {after}");
+}
+
+mod memory_e2e {
+    use super::*;
+    use claude_usage_monitor::models::domain::memory::{ProcEntry, Target, Victim};
+    use std::path::PathBuf;
+
+    const MIB: u64 = 1 << 20;
+
+    fn desktop_env() -> common::gui::GuiEnv {
+        let env = gui_env(now());
+        *env.procs.procs.lock().unwrap() = vec![ProcEntry {
+            pid: 100,
+            parent: Some(1),
+            rss: 1229 * MIB,
+            start_time: 50,
+            exe: Some(PathBuf::from(
+                "/Applications/Claude.app/Contents/MacOS/Claude",
+            )),
+        }];
+        env
+    }
+
+    fn notice(h: &mut GpuiHarness) -> Option<String> {
+        h.with_state(|c| c.vm().notice.clone())
+    }
+
+    /// 「終了する」を押し、別スレッドの要求の結果が知らせに出るまで描き直す。
+    fn confirm_exit(h: &mut GpuiHarness) {
+        h.get_by_label("終了する").click();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            h.run();
+            if notice(h).is_some_and(|n| !n.ends_with("に終了を要求しています")) {
+                return;
+            }
+            assert!(std::time::Instant::now() < until, "要求の結果が届きません");
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn desktop_card_requests_exit_after_confirm() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Claude Desktop");
+        h.get_by_label_contains("1.2GB");
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label_contains("実行中の編集が失われることがあります");
+        confirm_exit(&mut h);
+        assert_eq!(
+            *env.procs.exits.lock().unwrap(),
+            [Victim {
+                pid: 100,
+                start_time: 50,
+                target: Target::Desktop
+            }]
+        );
+        assert!(h.query_by_label("終了する").is_none(), "ダイアログが閉じる");
+    }
+
+    #[test]
+    fn escape_closes_the_dialog_without_exit() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("終了する");
+        h.press_key("escape");
+        h.run();
+        assert!(env.procs.exits.lock().unwrap().is_empty());
+        assert!(h.query_by_label("終了する").is_none(), "Escで閉じる");
+    }
+
+    #[test]
+    fn cancel_does_not_request_exit() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(env.procs.exits.lock().unwrap().is_empty());
+        assert!(h.query_by_label("終了する").is_none());
+    }
+}
+
+#[test]
+fn stopped_daemon_can_be_started_from_gui() {
+    use std::sync::atomic::Ordering;
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    h.get_by_label_contains("デーモン停止中");
+    h.get_by_label("デーモンを起動").click();
+    h.run();
+    assert_eq!(env.daemon.starts.load(Ordering::SeqCst), 1);
+    assert!(h.query_by_label_contains("デーモン停止中").is_none());
+    h.get_by_label_contains("監視中");
+}
+
+#[test]
+fn dashboard_shows_three_areas_at_once() {
+    let env = gui_env(now());
+    let h = env.gpui_harness();
+    h.get_by_label("レート制限");
+    h.get_by_label("セッション");
+    h.get_by_label("左の一覧からセッションを選んでください");
+    h.get_by_label("推移");
+}
+
+#[test]
+fn list_mode_and_trend_collapse() {
+    use claude_usage_monitor::controllers::gui::dashboard::ListMode;
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    assert_eq!(h.with_state(|c| c.dash_mode()), ListMode::History);
+    let before = h.get_by_label("推移").bounds();
+    h.get_by_label("折りたたむ").click();
+    h.run();
+    h.get_by_label("開く");
+    let after = h.get_by_label("推移").bounds();
+    assert!(
+        after.center().y > before.center().y,
+        "推移を折りたたむと中段が下へ広がり、推移の見出しが下へ移る"
+    );
+}
+
+#[test]
+fn dashboard_renders_in_light_and_dark() {
+    use claude_usage_monitor::controllers::gui::app::Action;
+    use claude_usage_monitor::models::domain::settings::Theme;
+    let env = gui_env(now());
+    for t in [Theme::Light, Theme::Dark] {
+        let mut h = env.gpui_harness();
+        h.with_state_mut(|c| c.handle(Action::SetTheme(t)));
+        h.run();
+        assert_eq!(h.with_state(|c| c.vm().theme), t);
+        for label in ["ダッシュボード", "レート制限", "セッション", "推移"] {
+            h.get_by_label(label);
+        }
+        h.get_by_label_contains("デーモン停止中");
+    }
 }
 
 #[test]
 fn empty_db_shows_not_fetched_and_daemon_stopped() {
     let env = gui_env(now());
     env.store.ensure_default().unwrap();
-    let h = env.harness();
+    let h = env.gpui_harness();
     h.get_by_label_contains("まだ取得していません");
     h.get_by_label_contains("デーモン停止中");
     h.get_by_label("稼働中の実行はありません");
 }
 
 use claude_usage_monitor::controllers::daemon::ingest::Ingestor;
+use claude_usage_monitor::models::domain::pricing::TokenUsage;
+use claude_usage_monitor::models::domain::records::{SessionUpsert, TurnRecord};
+use claude_usage_monitor::models::domain::transcript::SessionKind;
 use claude_usage_monitor::models::gateways::process::SysProcessInfo;
+use claude_usage_monitor::models::ports::IngestRepo;
 use std::sync::Arc;
 
 fn ingest(env: &common::gui::GuiEnv) {
@@ -316,12 +437,12 @@ fn headless_run_appears_then_leaves_after_threshold() {
         &headless_line(now() - chrono::Duration::seconds(5)),
     );
     ingest(&env);
-    let mut h = env.harness();
+    let mut h = env.gpui_harness();
     h.get_by_label("ヘッドレス");
     h.get_by_label("ツール実行中");
     h.get_by_label("稼働中 1");
     env.advance(chrono::Duration::seconds(130));
-    h.state_mut().refresh();
+    h.with_state_mut(|c| c.refresh());
     h.run();
     assert!(h.query_by_label("ヘッドレス").is_none());
     h.get_by_label("稼働中 0");
@@ -341,7 +462,7 @@ fn job_shows_badge_and_progress() {
     )
     .unwrap();
     ingest(&env);
-    let h = env.harness();
+    let h = env.gpui_harness();
     h.get_by_label("ジョブ");
     h.get_by_label_contains("3/8件目 / 実行中タスク 2");
 }
@@ -357,16 +478,11 @@ fn header_shows_today_and_week_totals() {
         &headless_line(now() - chrono::Duration::hours(1)),
     );
     ingest(&env);
-    let h = env.harness();
+    let h = env.gpui_harness();
     h.get_by_label("今日");
     h.get_by_label("今週");
     assert_eq!(h.get_all_by_label("1.01k <$0.01").count(), 2);
 }
-
-use claude_usage_monitor::models::domain::pricing::TokenUsage;
-use claude_usage_monitor::models::domain::records::{SessionUpsert, TurnRecord};
-use claude_usage_monitor::models::domain::transcript::SessionKind;
-use claude_usage_monitor::models::ports::IngestRepo;
 
 fn seed_session_with_turns(
     env: &common::gui::GuiEnv,
@@ -419,29 +535,12 @@ fn seed_session_with_turns(
 }
 
 #[test]
-fn history_row_opens_turns_beside_the_list() {
-    let env = gui_env(now());
-    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
-    let mut h = env.harness();
-    h.get_by_label("履歴").click();
-    h.run();
-    h.get_by_label("設計の相談").click();
-    h.run();
-    h.get_by_label("Read: src/main.rs");
-    h.get_by_label("レート制限");
-    h.get_by_label("推移");
-    h.get_all_by_label("内訳").nth(1).unwrap().click();
-    h.run();
-    h.get_by_label_contains("入力 1.20k / 出力 10");
-}
-
-#[test]
 fn history_search_and_kind_filter_keep_cards_and_trend() {
-    use egui::accesskit::Role;
+    use claude_usage_monitor::views::probe::Role;
     let env = gui_env(now());
     seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
     seed_session_with_turns(&env, "s2", "夜間の集計", SessionKind::Headless, None);
-    let mut h = env.harness();
+    let mut h = env.gpui_harness();
     h.get_by_label("履歴").click();
     h.run();
     h.get_by_label("設計の相談");
@@ -457,6 +556,23 @@ fn history_search_and_kind_filter_keep_cards_and_trend() {
     assert!(h.query_by_label("夜間の集計").is_none());
     h.get_by_label("レート制限");
     h.get_by_label("推移");
+}
+
+#[test]
+fn controller_clearing_forms_clears_input() {
+    use claude_usage_monitor::views::probe::Role;
+    let env = gui_env(now());
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "検索")
+        .type_text("夜間");
+    h.run();
+    assert_eq!(h.with_state(|c| c.forms().session_query.clone()), "夜間");
+    assert_eq!(h.input_value(0), "夜間");
+    h.with_state_mut(|c| c.forms_mut().session_query.clear());
+    h.run();
+    assert_eq!(h.input_value(0), "", "controllerが空にした値が入力欄に戻る");
 }
 
 fn seed_live_session(env: &common::gui::GuiEnv) -> std::path::PathBuf {
@@ -486,177 +602,9 @@ fn seed_live_session(env: &common::gui::GuiEnv) -> std::path::PathBuf {
     proj
 }
 
-fn live_depth(
-    h: &egui_kittest::Harness<'static, claude_usage_monitor::controllers::gui::app::GuiController>,
-) -> u8 {
-    match &h.state().vm().body {
-        claude_usage_monitor::controllers::gui::app::TabVm::Dashboard(d) => {
-            d.detail
-                .as_ref()
-                .unwrap()
-                .live
-                .as_ref()
-                .unwrap()
-                .lines
-                .last()
-                .unwrap()
-                .depth
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn active_session_opens_live_log_and_streams_subagent_lines() {
-    let env = gui_env(now());
-    let proj = seed_live_session(&env);
-    let mut h = env.harness();
-    h.get_by_label("設計の相談").click();
-    h.run();
-    h.get_by_label_contains("go-reviewer「メモリ機能のレビュー」を起動");
-    h.get_by_label("レート制限");
-    append(
-        &proj.join("s1/subagents/agent-a1.jsonl"),
-        r#"{"type":"assistant","timestamp":"2026-09-26T02:59:30.000Z","sessionId":"s1","message":{"id":"s9","content":[{"type":"tool_use","id":"t9","name":"Grep","input":{"pattern":"mutex"}}]}}"#,
-    );
-    h.run();
-    h.get_by_label_contains("mutex");
-    assert_eq!(live_depth(&h), 1);
-}
-
-#[test]
-fn job_timeline_appears_in_live_log() {
-    let env = gui_env(now());
-    seed_live_session(&env);
-    let p = env.store.ensure_default().unwrap();
-    env.store
-        .upsert_job(&claude_usage_monitor::models::domain::records::JobRecord {
-            job_id: "j1".into(),
-            profile_id: p.id,
-            session_id: Some("s1".into()),
-            name: None,
-            state: "working".into(),
-            detail: Some("2/8件目".into()),
-            in_flight_tasks: 1,
-            tokens: None,
-            created_at: None,
-            updated_at: now(),
-        })
-        .unwrap();
-    append(
-        &env.home.path().join(".claude/jobs/j1/timeline.jsonl"),
-        r#"{"at":"2026-09-26T02:59:40.000Z","state":"working","detail":"2/8件目"}"#,
-    );
-    let mut h = env.harness();
-    h.get_by_label("設計の相談").click();
-    h.run();
-    h.get_by_label_contains("ジョブ: working（2/8件目）");
-}
-
-#[test]
-fn replay_next_button_changes_displayed_turn() {
-    let env = gui_env(now());
-    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
-    let mut h = env.harness();
-    h.get_by_label("履歴").click();
-    h.run();
-    h.get_by_label("設計の相談").click();
-    h.run();
-    h.get_by_label("再生").click();
-    h.run();
-    h.get_by_label_contains("1 / 3");
-    h.get_by_label_contains("次のターン").click();
-    h.run();
-    h.get_by_label_contains("2 / 3");
-    h.get_by_label_contains("現在: Read: src/main.rs");
-    h.get_by_label("推移");
-}
-
-#[test]
-fn trend_range_switches_and_analytics_tab_renders() {
-    use claude_usage_monitor::controllers::gui::app::TabVm;
-    use claude_usage_monitor::controllers::gui::dashboard::trend::TrendRange;
-    let env = gui_env(now());
-    record_rising_usage(&env);
-    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
-    let mut h = env.harness();
-    h.get_by_label("5時間枠のグラフ");
-    h.get_by_label("24時間").click();
-    h.run();
-    assert!(
-        matches!(&h.state().vm().body, TabVm::Dashboard(d) if d.trend.as_ref().unwrap().range == TrendRange::Hours24)
-    );
-    h.get_by_label("分析").click();
-    h.run();
-    h.get_by_label("プロジェクト別");
-    h.get_by_label("/work/app");
-}
-
-#[cfg(unix)]
-#[test]
-fn profile_added_in_tab_and_activated_from_card_is_used_by_cumon_run() {
-    use egui::accesskit::Role;
-    let env = gui_env(now());
-    env.store.ensure_default().unwrap();
-    let dir = env.home.path().join("work-config");
-    let mut h = env.harness();
-    h.get_by_label("プロファイル").click();
-    h.run();
-    for (name, text) in [
-        ("プロファイル名", "work"),
-        ("設定ディレクトリ", dir.to_str().unwrap()),
-    ] {
-        h.get_by_role_and_label(Role::TextInput, name).click();
-        h.run();
-        h.get_by_role_and_label(Role::TextInput, name)
-            .type_text(text);
-        h.run();
-    }
-    h.get_by_label("追加").click();
-    h.run();
-    h.get_by_label("ダッシュボード").click();
-    h.run();
-    h.get_by_label("使用中にする").click();
-    h.run();
-    h.get_by_label_contains("work に切り替えました");
-    assert!(matches!(&h.state().vm().body,
-        claude_usage_monitor::controllers::gui::app::TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active)));
-    let bin = tempfile::tempdir().unwrap();
-    common::fake_claude(bin.path());
-    common::cumon(env.data.path(), env.home.path(), Some(bin.path()))
-        .args(["run", "-p", "hi"])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains(format!(
-            "CONFIG={} ARGS=-p hi",
-            dir.display()
-        )));
-}
-
-#[test]
-fn settings_threshold_is_saved_for_daemon() {
-    use claude_usage_monitor::models::ports::SettingsRepo;
-    use egui::accesskit::Role;
-    let env = gui_env(now());
-    let mut h = env.harness();
-    h.get_by_label("設定").click();
-    h.run();
-    h.get_by_role_and_label(Role::TextInput, "通知閾値（%）")
-        .click();
-    h.state_mut().forms_mut().settings.threshold = "95".into();
-    h.run();
-    h.get_by_label("保存").click();
-    h.run();
-    assert_eq!(env.store.load().unwrap().notify_threshold_percent, 95.0);
-    h.get_by_label_contains("5分以内");
-    h.get_by_label("診断").click();
-    h.run();
-    h.get_by_label("JSONLの取り込み");
-}
-
-mod memory_e2e {
+mod memory_rows_e2e {
     use super::*;
-    use claude_usage_monitor::controllers::gui::app::{GuiController, TabVm};
+    use claude_usage_monitor::controllers::gui::app::TabVm;
     use claude_usage_monitor::models::domain::memory::{ProcEntry, Target, Victim};
     use std::path::PathBuf;
 
@@ -709,12 +657,12 @@ mod memory_e2e {
         }
     }
 
-    fn notice(h: &egui_kittest::Harness<'static, GuiController>) -> Option<String> {
-        h.state().vm().notice.clone()
+    fn notice(h: &mut GpuiHarness) -> Option<String> {
+        h.with_state(|c| c.vm().notice.clone())
     }
 
-    /// 「終了する」を押し、別スレッドの要求の結果が知らせに出るまでフレームを回す。
-    fn confirm_exit(h: &mut egui_kittest::Harness<'static, GuiController>) {
+    /// 「終了する」を押し、別スレッドの要求の結果が知らせに出るまで描き直す。
+    fn confirm_exit(h: &mut GpuiHarness) {
         h.get_by_label("終了する").click();
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -727,7 +675,7 @@ mod memory_e2e {
         }
     }
 
-    fn open_exit_dialog(h: &mut egui_kittest::Harness<'static, GuiController>) {
+    fn open_exit_dialog(h: &mut GpuiHarness) {
         h.get_by_label("プロセスを終了").click();
         h.run();
     }
@@ -735,20 +683,20 @@ mod memory_e2e {
     #[test]
     fn row_shows_memory_and_exit_button_requests_exit_after_confirm() {
         let env = setup();
-        let mut h = env.harness();
+        let mut h = env.gpui_harness();
         h.get_by_label_contains("500MB");
         open_exit_dialog(&mut h);
         h.get_by_label_contains("実行中の編集が失われることがあります");
         confirm_exit(&mut h);
         assert_eq!(*env.procs.exits.lock().unwrap(), [victim()]);
-        assert!(notice(&h).unwrap().contains("claude --resume s1"));
+        assert!(notice(&mut h).unwrap().contains("claude --resume s1"));
         assert!(h.query_by_label("終了する").is_none(), "ダイアログが閉じる");
     }
 
     #[test]
-    fn cancel_does_not_request_exit() {
+    fn cancel_from_row_does_not_request_exit() {
         let env = setup();
-        let mut h = env.harness();
+        let mut h = env.gpui_harness();
         open_exit_dialog(&mut h);
         h.get_by_label("やめる").click();
         h.run();
@@ -759,7 +707,7 @@ mod memory_e2e {
     #[test]
     fn refresh_while_dialog_is_open_keeps_the_same_victim() {
         let env = setup();
-        let mut h = env.harness();
+        let mut h = env.gpui_harness();
         open_exit_dialog(&mut h);
         seed_session_with_turns(
             &env,
@@ -782,48 +730,21 @@ mod memory_e2e {
     }
 
     #[test]
-    fn desktop_card_requests_exit_after_confirm() {
-        let env = setup();
-        env.procs.procs.lock().unwrap().push(proc(
-            100,
-            1,
-            1229,
-            50,
-            "/Applications/Claude.app/Contents/MacOS/Claude",
-        ));
-        let mut h = env.harness();
-        h.get_by_label("Claude Desktop");
-        h.get_by_label_contains("1.2GB");
-        h.get_by_label("Desktopを終了").click();
-        h.run();
-        confirm_exit(&mut h);
-        assert_eq!(
-            *env.procs.exits.lock().unwrap(),
-            [Victim {
-                pid: 100,
-                start_time: 50,
-                target: Target::Desktop
-            }]
-        );
-    }
-
-    #[test]
     fn still_running_target_is_reported_after_grace_period() {
         let env = setup();
-        let mut h = env.harness();
+        let mut h = env.gpui_harness();
         open_exit_dialog(&mut h);
         confirm_exit(&mut h);
         env.advance(chrono::Duration::seconds(6));
         h.run();
         assert_eq!(
-            notice(&h).as_deref(),
+            notice(&mut h).as_deref(),
             Some("設計の相談 に終了を要求しましたが、まだ動いています")
         );
     }
 
     #[test]
     fn subagent_row_has_no_exit_button() {
-        use claude_usage_monitor::models::domain::pricing::TokenUsage;
         let env = setup();
         env.store
             .upsert_turn(&TurnRecord {
@@ -837,7 +758,7 @@ mod memory_e2e {
                 usage: TokenUsage::default(),
             })
             .unwrap();
-        let h = env.harness();
+        let mut h = env.gpui_harness();
         let sub = "go-reviewer「メモリ機能のレビュー」";
         h.get_by_label(sub);
         assert_eq!(
@@ -845,14 +766,14 @@ mod memory_e2e {
             1,
             "親の行だけ"
         );
-        match &h.state().vm().body {
+        h.with_state(|c| match &c.vm().body {
             TabVm::Dashboard(d) => {
                 let row = d.active.iter().find(|r| r.title == sub).unwrap();
                 assert_eq!(row.depth, 1);
                 assert!(row.memory.is_none());
             }
             other => panic!("{other:?}"),
-        }
+        });
     }
 
     #[test]
@@ -865,7 +786,7 @@ mod memory_e2e {
             SessionKind::Interactive,
             Some("busy"),
         );
-        let h = env.harness();
+        let h = env.gpui_harness();
         h.get_by_label_contains("· —");
     }
 
@@ -887,26 +808,252 @@ mod memory_e2e {
             start(),
             "/U/Library/Application Support/Claude/claude-code/2.1.284/claude.app/Contents/MacOS/claude",
         )];
-        let h = env.harness();
+        let mut h = env.gpui_harness();
         h.get_by_label("Desktop");
-        match &h.state().vm().body {
+        h.with_state(|c| match &c.vm().body {
             TabVm::Dashboard(d) => assert!(d.active[0].memory.as_ref().unwrap().desktop),
             other => panic!("{other:?}"),
-        }
+        });
     }
+}
+
+fn live_depth(h: &mut GpuiHarness) -> u8 {
+    use claude_usage_monitor::controllers::gui::app::TabVm;
+    h.with_state(|c| match &c.vm().body {
+        TabVm::Dashboard(d) => {
+            d.detail
+                .as_ref()
+                .unwrap()
+                .live
+                .as_ref()
+                .unwrap()
+                .lines
+                .last()
+                .unwrap()
+                .depth
+        }
+        other => panic!("{other:?}"),
+    })
+}
+
+#[test]
+fn active_session_opens_live_log_and_streams_subagent_lines() {
+    let env = gui_env(now());
+    let proj = seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("go-reviewer「メモリ機能のレビュー」を起動");
+    h.get_by_label("レート制限");
+    append(
+        &proj.join("s1/subagents/agent-a1.jsonl"),
+        r#"{"type":"assistant","timestamp":"2026-09-26T02:59:30.000Z","sessionId":"s1","message":{"id":"s9","content":[{"type":"tool_use","id":"t9","name":"Grep","input":{"pattern":"mutex"}}]}}"#,
+    );
+    h.run();
+    h.get_by_label_contains("mutex");
+    assert_eq!(live_depth(&mut h), 1);
+}
+
+#[test]
+fn live_log_stays_at_bottom_while_appending() {
+    let env = gui_env(now());
+    let proj = seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    let line = |i: usize| {
+        format!(
+            r#"{{"type":"assistant","timestamp":"2026-09-26T02:59:{:02}.000Z","sessionId":"s1","message":{{"id":"x{i}","content":[{{"type":"tool_use","id":"tx{i}","name":"Grep","input":{{"pattern":"needle{i}"}}}}]}}}}"#,
+            i % 60
+        )
+    };
+    for i in 0..60 {
+        append(&proj.join("s1.jsonl"), &line(i));
+    }
+    h.run();
+    h.run();
+    let visible = |h: &GpuiHarness, needle: &str| {
+        let line = h.get_by_label_contains(needle).bounds();
+        let trend = h.get_by_label("推移").bounds();
+        line.bottom() <= trend.top()
+    };
+    assert!(visible(&h, "needle59"), "開いた直後は最後の行が見える");
+    append(&proj.join("s1.jsonl"), &line(60));
+    h.run();
+    h.run();
+    assert!(visible(&h, "needle60"), "追記しても下端のまま");
+    assert!(
+        h.query_by_label("最新へ戻る").is_none(),
+        "下端にいる間は出さない"
+    );
+    let at = h.get_by_label_contains("needle60").bounds().center();
+    h.scroll_at(f32::from(at.x), f32::from(at.y), 2000.0);
+    h.run();
+    assert!(!visible(&h, "needle60"), "上へ戻すと最後の行は見えない");
+    h.get_by_label("最新へ戻る").click();
+    h.run();
+    h.run();
+    assert!(visible(&h, "needle60"), "最新へ戻るで最後の行へ戻る");
+    assert!(h.query_by_label("最新へ戻る").is_none());
+}
+
+#[test]
+fn job_timeline_appears_in_live_log() {
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .upsert_job(&claude_usage_monitor::models::domain::records::JobRecord {
+            job_id: "j1".into(),
+            profile_id: p.id,
+            session_id: Some("s1".into()),
+            name: None,
+            state: "working".into(),
+            detail: Some("2/8件目".into()),
+            in_flight_tasks: 1,
+            tokens: None,
+            created_at: None,
+            updated_at: now(),
+        })
+        .unwrap();
+    append(
+        &env.home.path().join(".claude/jobs/j1/timeline.jsonl"),
+        r#"{"at":"2026-09-26T02:59:40.000Z","state":"working","detail":"2/8件目"}"#,
+    );
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("ジョブ: working（2/8件目）");
+}
+
+#[test]
+fn history_row_opens_turns_beside_the_list() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("Read: src/main.rs");
+    h.get_by_label("レート制限");
+    h.get_by_label("推移");
+    h.get_all_by_label("内訳").nth(1).unwrap().click();
+    h.run();
+    h.get_by_label_contains("入力 1.20k / 出力 10");
+}
+
+#[test]
+fn replay_next_button_changes_displayed_turn() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    h.get_by_label_contains("1 / 3");
+    assert_eq!(h.replay_slider_value(), Some(0.0));
+    h.get_by_label_contains("次のターン").click();
+    h.run();
+    h.get_by_label_contains("2 / 3");
+    assert_eq!(
+        h.replay_slider_value(),
+        Some(1.0),
+        "つまみも次のターンへ動く"
+    );
+    h.get_by_label_contains("現在: Read: src/main.rs");
+    h.get_by_label("推移");
+}
+
+#[test]
+fn replay_slider_is_named_and_seeks() {
+    use claude_usage_monitor::views::probe::Role;
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    let s = h.get_by_role_and_label(Role::Slider, "再生位置").bounds();
+    h.click_at(f32::from(s.right()) - 2.0, f32::from(s.center().y));
+    h.run();
+    h.get_by_label_contains("3 / 3");
+}
+
+#[test]
+fn detail_tabs_show_summary_and_live_filters() {
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    for label in ["ツール", "本文", "エラーのみ", "発生元"] {
+        h.get_by_label(label);
+    }
+    h.get_by_label_contains("行を保持（最大2,000行）");
+    h.get_by_label("概要").click();
+    h.run();
+    h.get_by_label("要約");
+    h.get_by_label("依頼の一覧");
+    // モデルの表は行の順に読む。見出しの行がすべて先に来る。
+    let labels = h.labels();
+    let at = |s: &str| labels.iter().position(|l| *l == s).unwrap();
+    assert!(at("claude-opus-5-5") > at("要求"), "{labels:?}");
+    for label in [
+        "入力",
+        "出力",
+        "キャッシュ読込",
+        "コスト",
+        "キャッシュヒット率",
+    ] {
+        h.get_by_label(label);
+    }
+}
+
+#[test]
+fn live_source_combo_opens_filters_and_closes() {
+    use claude_usage_monitor::views::probe::Role;
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    assert!(
+        h.query_by_label("すべて").is_none(),
+        "閉じているときは候補を出さない"
+    );
+    h.get_by_role_and_label(Role::ComboBox, "発生元").click();
+    h.run();
+    h.get_by_label("すべて");
+    h.get_by_role_and_label(Role::Tab, "本体").click();
+    h.run();
+    assert_eq!(
+        h.with_state(|c| c.forms().live_filter.source.clone()),
+        Some("本体".to_string())
+    );
+    assert!(h.query_by_label("すべて").is_none(), "選ぶと閉じる");
+    h.get_by_role_and_label(Role::ComboBox, "発生元").click();
+    h.run();
+    h.get_by_label("すべて");
+    h.click_at(5.0, 400.0);
+    h.run();
+    assert!(h.query_by_label("すべて").is_none(), "外を押すと閉じる");
 }
 
 mod calendar_e2e {
     use super::*;
 
-    fn open_calendar(
-        env: &common::gui::GuiEnv,
-    ) -> egui_kittest::Harness<'static, claude_usage_monitor::controllers::gui::app::GuiController>
-    {
-        let mut h = env.harness();
+    fn open_calendar(env: &common::gui::GuiEnv) -> GpuiHarness {
+        let mut h = env.gpui_harness();
         h.get_by_label("カレンダー").click();
         h.run();
-        assert_eq!(h.state().vm().tab, Tab::Calendar);
+        assert_eq!(h.with_state(|c| c.vm().tab), Tab::Calendar);
         h
     }
 
@@ -943,6 +1090,15 @@ mod calendar_e2e {
     }
 
     #[test]
+    fn next_week_is_disabled_on_this_week() {
+        let env = gui_env(now());
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("次週").click();
+        h.run();
+        h.get_by_label("2026年9/20〜9/26");
+    }
+
+    #[test]
     fn headless_runs_are_hidden_until_checked() {
         let env = gui_env(now());
         seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
@@ -966,15 +1122,57 @@ mod calendar_e2e {
         h.get_by_label("ターン").click();
         h.run();
         h.get_by_label("Read: src/main.rs");
-        assert_eq!(h.state().calendar_selected(), Some("s1"));
+        assert_eq!(
+            h.with_state(|c| c.calendar_selected().map(str::to_string)),
+            Some("s1".to_string())
+        );
         h.get_by_label_contains("のターン");
         h.get_by_label("ダッシュボード").click();
         h.run();
-        assert_eq!(h.state().dash_selected(), None);
+        assert_eq!(
+            h.with_state(|c| c.dash_selected().map(str::to_string)),
+            None
+        );
         h.get_by_label("左の一覧からセッションを選んでください");
         h.get_by_label("カレンダー").click();
         h.run();
         h.get_by_label("Read: src/main.rs");
+    }
+
+    #[test]
+    fn calendar_detail_replay_has_its_own_slider() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = env.gpui_harness();
+        h.get_by_label("履歴").click();
+        h.run();
+        h.get_by_label("設計の相談").click();
+        h.run();
+        h.get_by_label("再生").click();
+        h.run();
+        h.get_by_label_contains("次のターン").click();
+        h.run();
+        assert_eq!(h.replay_slider_value(), Some(1.0));
+        h.get_by_label("カレンダー").click();
+        h.run();
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("再生").click();
+        h.run();
+        h.get_by_label_contains("1 / 3");
+        assert_eq!(
+            h.replay_slider_value(),
+            Some(0.0),
+            "カレンダーの詳細のつまみは、ダッシュボードの位置を持ち込まない"
+        );
+        h.get_by_label_contains("次のターン").click();
+        h.run();
+        h.get_by_label_contains("2 / 3");
+        assert_eq!(
+            h.replay_slider_value(),
+            Some(1.0),
+            "つまみも次のターンへ動く"
+        );
     }
 
     #[test]
@@ -1024,7 +1222,10 @@ mod calendar_e2e {
         h.get_by_label_contains("前週").click();
         h.run();
         h.get_by_label("帯を押すと詳細を出します");
-        assert_eq!(h.state().calendar_selected(), None);
+        assert_eq!(
+            h.with_state(|c| c.calendar_selected().map(str::to_string)),
+            None
+        );
     }
 
     #[test]
@@ -1039,20 +1240,301 @@ mod calendar_e2e {
 
     #[test]
     fn calendar_renders_in_light_and_dark() {
+        use claude_usage_monitor::controllers::gui::app::Action;
+        use claude_usage_monitor::models::domain::settings::Theme;
         let env = gui_env(now());
         seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
-        for pref in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
-            let mut h = env.harness();
-            claude_usage_monitor::views::theme::apply(&h.ctx);
-            h.ctx.set_theme(pref);
+        for t in [Theme::Light, Theme::Dark] {
+            let mut h = env.gpui_harness();
+            h.with_state_mut(|c| c.handle(Action::SetTheme(t)));
             h.get_by_label("カレンダー").click();
             h.run();
-            assert_eq!(
-                h.ctx.global_style().visuals.dark_mode,
-                pref == egui::ThemePreference::Dark
-            );
+            assert_eq!(h.with_state(|c| c.vm().theme), t);
             h.get_by_label_contains("設計の相談");
             h.get_by_label("2026年9/20〜9/26");
         }
+    }
+
+    #[test]
+    fn calendar_splitter_moves_only_the_calendar_ratio() {
+        let env = gui_env(now());
+        let mut h = open_calendar(&env);
+        let (dash, cal) =
+            h.with_state_mut(|c| (c.forms_mut().split_ratio, c.forms_mut().calendar_split));
+        h.get_by_label("左右の境界").drag_by(-80.0);
+        h.run();
+        let (dash2, cal2) =
+            h.with_state_mut(|c| (c.forms_mut().split_ratio, c.forms_mut().calendar_split));
+        assert_eq!(dash2, dash, "ダッシュボードの比率は変えない");
+        assert!(cal2 < cal, "{cal} -> {cal2}");
+    }
+}
+
+mod analytics_profiles_e2e {
+    use super::*;
+    use claude_usage_monitor::views::probe::Role;
+
+    #[test]
+    fn analytics_tab_renders_groups_and_switches_period() {
+        let env = gui_env(now());
+        record_rising_usage(&env);
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = env.gpui_harness();
+        h.get_by_label("分析").click();
+        h.run();
+        for t in [
+            "プロジェクト別",
+            "モデル別",
+            "ブランチ別",
+            "キャッシュヒット率（日ごと）",
+            "ツール",
+        ] {
+            h.get_by_label(t);
+        }
+        h.get_by_label("/work/app");
+        h.get_by_label("30日").click();
+        h.run();
+        assert!(h.with_state(|c| matches!(
+            &c.vm().body,
+            TabVm::Analytics(a) if a.period == claude_usage_monitor::controllers::gui::tabs::analytics::Period::Days30
+        )));
+    }
+
+    #[test]
+    fn analytics_empty_period_says_so() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        h.get_by_label("分析").click();
+        h.run();
+        assert_eq!(
+            h.get_all_by_label("この期間の記録はありません").count(),
+            3,
+            "3つの軸のカードがそれぞれ空と出す"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_added_in_tab_and_activated_from_card_is_used_by_cumon_run() {
+        let env = gui_env(now());
+        env.store.ensure_default().unwrap();
+        let dir = env.home.path().join("work-config");
+        let mut h = env.gpui_harness();
+        h.get_by_label("プロファイル").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "プロファイル名")
+            .type_text("work");
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "設定ディレクトリ")
+            .type_text(dir.to_str().unwrap());
+        h.run();
+        h.get_by_label("追加").click();
+        h.run();
+        assert_eq!(h.input_value(1), "", "追加した後は名前の欄を空に戻す");
+        assert_eq!(
+            h.input_value(2),
+            "",
+            "追加した後はディレクトリの欄を空に戻す"
+        );
+        h.get_by_label("ダッシュボード").click();
+        h.run();
+        h.get_by_label("使用中にする").click();
+        h.run();
+        h.get_by_label_contains("work に切り替えました");
+        assert!(h.with_state(|c| matches!(&c.vm().body,
+            TabVm::Dashboard(d) if d.cards.iter().any(|k| k.name == "work" && k.is_active))));
+        let bin = tempfile::tempdir().unwrap();
+        common::fake_claude(bin.path());
+        common::cumon(env.data.path(), env.home.path(), Some(bin.path()))
+            .args(["run", "-p", "hi"])
+            .assert()
+            .success()
+            .stdout(predicates::str::contains(format!(
+                "CONFIG={} ARGS=-p hi",
+                dir.display()
+            )));
+    }
+
+    #[test]
+    fn profile_remove_asks_before_deleting() {
+        let env = gui_env(now());
+        env.store.ensure_default().unwrap();
+        let mut h = env.gpui_harness();
+        h.get_by_label("プロファイル").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "プロファイル名")
+            .type_text("tmp");
+        h.run();
+        h.get_by_label("追加").click();
+        h.run();
+        h.get_by_label("削除").click();
+        h.run();
+        h.get_by_label_contains("tmp を削除すると");
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(h.query_by_label_contains("tmp を削除すると").is_none());
+        h.get_by_label("tmp");
+        h.get_by_label("削除").click();
+        h.run();
+        h.get_by_label("本当に削除する").click();
+        h.run();
+        assert!(h.query_by_label("tmp").is_none(), "確認の後に消える");
+    }
+}
+
+mod settings_e2e {
+    use super::*;
+    use claude_usage_monitor::models::ports::{Autostart, CatalogRefresh, RepoError, SettingsRepo};
+    use claude_usage_monitor::views::probe::Role;
+    use std::sync::Mutex;
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    fn open_settings(h: &mut GpuiHarness) {
+        h.get_by_label("設定").click();
+        h.run();
+    }
+
+    #[test]
+    fn settings_threshold_is_saved_for_daemon() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_role_and_label(Role::TextInput, "通知閾値（%）");
+        h.with_state_mut(|c| c.forms_mut().settings.threshold = "95".into());
+        h.run();
+        assert_eq!(h.input_value(4), "95", "controllerが書いた値を入力欄へ戻す");
+        h.get_by_label("保存").click();
+        h.run();
+        assert_eq!(env.store.load().unwrap().notify_threshold_percent, 95.0);
+        h.get_by_label_contains("5分以内");
+        h.get_by_label("診断").click();
+        h.run();
+        h.get_by_label("JSONLの取り込み");
+    }
+
+    #[test]
+    fn toggling_autostart_registers_it() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_label("ログイン時にデーモンを起動する").click();
+        h.run();
+        h.get_by_label("ログイン時にデーモンを起動するよう登録しました");
+        assert!(h.with_state(
+            |c| matches!(&c.vm().body, TabVm::Settings(s) if s.autostart == Some(true))
+        ));
+    }
+
+    struct Unreadable;
+    impl Autostart for Unreadable {
+        fn is_enabled(&self) -> Result<bool, String> {
+            Err("読めない".into())
+        }
+        fn enable(&self) -> Result<(), String> {
+            Err("読めない".into())
+        }
+        fn disable(&self) -> Result<(), String> {
+            Err("読めない".into())
+        }
+    }
+
+    #[test]
+    fn unreadable_autostart_shows_reason_instead_of_checkbox() {
+        let env = gui_env(now());
+        let mut deps = env.deps();
+        deps.autostart = Arc::new(Unreadable);
+        let mut h = env.gpui_harness_with(deps);
+        open_settings(&mut h);
+        h.get_by_label("ログイン時の起動の状態を読めません");
+        assert!(h.query_by_label("ログイン時にデーモンを起動する").is_none());
+    }
+
+    /// 合図があるまで返らない取得。取得中の画面を確かめるため。
+    struct Held(Mutex<Receiver<()>>);
+    impl CatalogRefresh for Held {
+        fn refresh(&self) -> Result<usize, RepoError> {
+            let _ = self.0.lock().unwrap().recv();
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn refreshing_replaces_the_button_until_done() {
+        let env = gui_env(now());
+        let (tx, rx): (Sender<()>, Receiver<()>) = channel();
+        let mut deps = env.deps();
+        deps.catalog = Arc::new(Held(Mutex::new(rx)));
+        let mut h = env.gpui_harness_with(deps);
+        open_settings(&mut h);
+        h.get_by_label("今すぐ更新").click();
+        h.run();
+        h.get_by_label("取得中…");
+        assert!(h.query_by_label("今すぐ更新").is_none());
+        tx.send(()).unwrap();
+    }
+
+    #[test]
+    fn model_editor_saves_or_cancels() {
+        let env = gui_env(now());
+        // 編集の欄はモデルの一覧の下に開き、既定の高さでは窓の外に出るので、窓を縦に広げる。
+        let mut h = env.gpui_harness_sized(1280.0, 1100.0);
+        open_settings(&mut h);
+        h.get_all_by_label("編集")
+            .next()
+            .expect("モデルの行")
+            .click();
+        h.run();
+        let prefix = h
+            .with_state(|c| c.forms().model.as_ref().map(|m| m.prefix.clone()))
+            .expect("編集中");
+        h.get_by_label(&format!("{prefix} を編集"));
+        h.get_by_role_and_label(Role::TextInput, "入力")
+            .type_text("9");
+        h.run();
+        assert!(h.with_state(|c| c.forms().model.as_ref().unwrap().input.ends_with('9')));
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(h.query_by_label(&format!("{prefix} を編集")).is_none());
+        h.get_all_by_label("編集").next().unwrap().click();
+        h.run();
+        h.get_by_label("単価を保存").click();
+        h.run();
+        assert!(
+            h.with_state(|c| c.forms().model.is_none()),
+            "保存すると閉じる"
+        );
+    }
+
+    #[test]
+    fn theme_choice_is_a_draft_until_saved() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_label("ダーク").click();
+        h.run();
+        assert_eq!(
+            h.with_state(|c| c.forms().settings.theme),
+            claude_usage_monitor::models::domain::settings::Theme::Dark
+        );
+        assert_ne!(
+            env.store.load().unwrap().theme,
+            claude_usage_monitor::models::domain::settings::Theme::Dark,
+            "保存するまで書かない"
+        );
+        h.get_by_label("保存").click();
+        h.run();
+        assert_eq!(
+            env.store.load().unwrap().theme,
+            claude_usage_monitor::models::domain::settings::Theme::Dark
+        );
+    }
+
+    #[test]
+    fn links_are_recorded_as_links() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_role_and_label(Role::Link, "料金ページ");
+        h.get_by_role_and_label(Role::Link, "モデル一覧");
     }
 }

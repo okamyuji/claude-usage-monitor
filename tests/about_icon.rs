@@ -39,12 +39,12 @@ fn main() {
     assert_eq!(
         dock_image,
         Some(NSSize::new(512.0, 512.0)),
-        "Dockにegui版と同じ512ptの画像を出す"
+        "Dockに512ptの画像を出す"
     );
     assert_eq!(
         named_size(),
         Some(NSSize::new(512.0, 512.0)),
-        "Aboutにもegui版と同じ512ptの画像を出す"
+        "Aboutにも512ptの画像を出す"
     );
     assert!(
         !set_dock_icon(b"not an image"),

@@ -1,214 +1,150 @@
 //! デザイントークン（spec 7.3節）。色、角丸、余白、文字サイズをここだけで決める。
-use egui::{
-    Color32, CornerRadius, FontFamily, FontId, Margin, Shadow, Stroke, TextStyle, Theme, Visuals,
-};
+use gpui::{Pixels, Rgba, px};
 
-/// 役割ごとの色。ライトとダークで同じ役割に別の色を割り当てる。
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// 役割ごとの色。値は`0xRRGGBB`で持ち、`const`で表を組めるようにする。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     /// 画面の地。
-    pub bg: Color32,
+    pub bg: u32,
     /// カードの地。
-    pub card: Color32,
+    pub card: u32,
     /// 枠線。
-    pub border: Color32,
+    pub border: u32,
     /// 本文。
-    pub text: Color32,
+    pub text: u32,
     /// 補足の文字。
-    pub weak: Color32,
+    pub weak: u32,
     /// アクセント（選択、使用中、通常の使用率）。
-    pub accent: Color32,
+    pub accent: u32,
     /// アクセントの淡い地。
-    pub accent_soft: Color32,
+    pub accent_soft: u32,
     /// 成功、応答生成中。
-    pub ok: Color32,
+    pub ok: u32,
     /// 成功の淡い地。
-    pub ok_soft: Color32,
+    pub ok_soft: u32,
     /// 注意、入力待ち。
-    pub warn: Color32,
+    pub warn: u32,
     /// 注意の淡い地。
-    pub warn_soft: Color32,
+    pub warn_soft: u32,
     /// エラー。
-    pub err: Color32,
+    pub err: u32,
     /// エラーの淡い地。
-    pub err_soft: Color32,
+    pub err_soft: u32,
     /// 使用率バーの下地。
-    pub track: Color32,
+    pub track: u32,
 }
 
 /// ライト（GitHub Primerのライト配色）。
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(0xf6, 0xf8, 0xfa),
-    card: Color32::from_rgb(0xff, 0xff, 0xff),
-    border: Color32::from_rgb(0xd0, 0xd7, 0xde),
-    text: Color32::from_rgb(0x1f, 0x23, 0x28),
-    weak: Color32::from_rgb(0x65, 0x6d, 0x76),
-    accent: Color32::from_rgb(0x09, 0x69, 0xda),
-    accent_soft: Color32::from_rgb(0xdd, 0xf4, 0xff),
-    ok: Color32::from_rgb(0x1a, 0x7f, 0x37),
-    ok_soft: Color32::from_rgb(0xda, 0xfb, 0xe1),
-    warn: Color32::from_rgb(0x9a, 0x67, 0x00),
-    warn_soft: Color32::from_rgb(0xff, 0xf8, 0xc5),
-    err: Color32::from_rgb(0xcf, 0x22, 0x2e),
-    err_soft: Color32::from_rgb(0xff, 0xeb, 0xe9),
-    track: Color32::from_rgb(0xea, 0xee, 0xf2),
+    bg: 0xf6f8fa,
+    card: 0xffffff,
+    border: 0xd0d7de,
+    text: 0x1f2328,
+    weak: 0x656d76,
+    accent: 0x0969da,
+    accent_soft: 0xddf4ff,
+    ok: 0x1a7f37,
+    ok_soft: 0xdafbe1,
+    warn: 0x9a6700,
+    warn_soft: 0xfff8c5,
+    err: 0xcf222e,
+    err_soft: 0xffebe9,
+    track: 0xeaeef2,
 };
 
 /// ダーク（GitHub Primerのダーク配色）。
 pub const DARK: Palette = Palette {
-    bg: Color32::from_rgb(0x0d, 0x11, 0x17),
-    card: Color32::from_rgb(0x16, 0x1b, 0x22),
-    border: Color32::from_rgb(0x30, 0x36, 0x3d),
-    text: Color32::from_rgb(0xe6, 0xed, 0xf3),
-    weak: Color32::from_rgb(0x8d, 0x96, 0xa0),
-    accent: Color32::from_rgb(0x44, 0x93, 0xf8),
-    accent_soft: Color32::from_rgb(0x12, 0x2d, 0x4f),
-    ok: Color32::from_rgb(0x3f, 0xb9, 0x50),
-    ok_soft: Color32::from_rgb(0x12, 0x2d, 0x1d),
-    warn: Color32::from_rgb(0xd2, 0x99, 0x22),
-    warn_soft: Color32::from_rgb(0x34, 0x2a, 0x0f),
-    err: Color32::from_rgb(0xf8, 0x51, 0x49),
-    err_soft: Color32::from_rgb(0x3b, 0x17, 0x19),
-    track: Color32::from_rgb(0x21, 0x26, 0x2d),
+    bg: 0x0d1117,
+    card: 0x161b22,
+    border: 0x30363d,
+    text: 0xe6edf3,
+    weak: 0x8d96a0,
+    accent: 0x4493f8,
+    accent_soft: 0x122d4f,
+    ok: 0x3fb950,
+    ok_soft: 0x122d1d,
+    warn: 0xd29922,
+    warn_soft: 0x342a0f,
+    err: 0xf85149,
+    err_soft: 0x3b1719,
+    track: 0x21262d,
 };
 
 /// カレンダーの帯の色（Tableau 10を元に、灰色を「その他」と見分けられる色へ替えたもの）。
 /// 帯は薄めた塗りと濃い枠線で描くので、ライトとダークで同じ表を使う。
-pub const SERIES: [Color32; 10] = [
-    Color32::from_rgb(0x4e, 0x79, 0xa7),
-    Color32::from_rgb(0xf2, 0x8e, 0x2b),
-    Color32::from_rgb(0xe1, 0x57, 0x59),
-    Color32::from_rgb(0x76, 0xb7, 0xb2),
-    Color32::from_rgb(0x59, 0xa1, 0x4f),
-    Color32::from_rgb(0xed, 0xc9, 0x48),
-    Color32::from_rgb(0xb0, 0x7a, 0xa1),
-    Color32::from_rgb(0xff, 0x9d, 0xa7),
-    Color32::from_rgb(0x9c, 0x75, 0x5f),
-    Color32::from_rgb(0x17, 0xbe, 0xcf),
+pub const SERIES: [u32; 10] = [
+    0x4e79a7, 0xf28e2b, 0xe15759, 0x76b7b2, 0x59a14f, 0xedc948, 0xb07aa1, 0xff9da7, 0x9c755f,
+    0x17becf,
 ];
 
 /// 色の番号の色。`None`（その他）は弱い文字の色にする。
-pub fn series(c: Option<usize>, p: &Palette) -> Color32 {
+pub fn series(c: Option<usize>, p: &Palette) -> u32 {
     c.map_or(p.weak, |i| SERIES[i % SERIES.len()])
 }
 
-/// 角丸。
-const RADIUS: u8 = 8;
+/// `hex`の色を不透明度`a`倍にする。
+pub fn with_alpha(hex: u32, a: f32) -> gpui::Hsla {
+    let mut c: gpui::Hsla = color(hex).into();
+    c.a *= a;
+    c
+}
 
 /// 表示中のテーマの色。
 pub fn palette(dark: bool) -> &'static Palette {
     if dark { &DARK } else { &LIGHT }
 }
 
-fn visuals(p: &Palette, dark: bool) -> Visuals {
-    let mut v = if dark {
-        Visuals::dark()
-    } else {
-        Visuals::light()
-    };
-    v.panel_fill = p.bg;
-    v.window_fill = p.card;
-    v.extreme_bg_color = p.card;
-    v.faint_bg_color = p.bg;
-    v.window_stroke = Stroke::new(1.0, p.border);
-    v.window_corner_radius = CornerRadius::same(RADIUS);
-    v.hyperlink_color = p.accent;
-    v.selection.bg_fill = p.accent_soft;
-    v.selection.stroke = Stroke::new(1.0, p.accent);
-    v.weak_text_color = Some(p.weak);
-    v.warn_fg_color = p.warn;
-    v.error_fg_color = p.err;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
-    for w in [
-        &mut v.widgets.noninteractive,
-        &mut v.widgets.inactive,
-        &mut v.widgets.hovered,
-        &mut v.widgets.active,
-    ] {
-        w.corner_radius = CornerRadius::same(6);
-    }
-    v
+/// `0xRRGGBB`をGPUIの色にする。
+pub fn color(hex: u32) -> Rgba {
+    gpui::rgb(hex)
 }
 
-/// ライトとダークの両方の見た目を登録する。OSのテーマが変わっても同じ規則で描くため。
-pub fn apply(ctx: &egui::Context) {
-    for (theme, dark) in [(Theme::Light, false), (Theme::Dark, true)] {
-        ctx.set_visuals_of(theme, visuals(palette(dark), dark));
-        ctx.style_mut_of(theme, |s| {
-            s.spacing.item_spacing = egui::vec2(8.0, 6.0);
-            s.spacing.button_padding = egui::vec2(10.0, 4.0);
-            // 等倍（1倍）の外部ディスプレイでは、11px以下の画数の多い漢字（間、週）は線がつぶれて読めない。補足でも12pxを下限にする。
-            for (style, size, family) in [
-                (TextStyle::Heading, 16.0, FontFamily::Proportional),
-                (TextStyle::Body, 14.0, FontFamily::Proportional),
-                (TextStyle::Button, 14.0, FontFamily::Proportional),
-                (TextStyle::Small, 12.0, FontFamily::Proportional),
-                (TextStyle::Monospace, 13.0, FontFamily::Monospace),
-            ] {
-                s.text_styles.insert(style, FontId::new(size, family));
-            }
-        });
-    }
-}
-
-/// カードの枠。使用中のカードだけアクセント色の枠にする。
-pub fn card_frame(p: &Palette, highlighted: bool) -> egui::Frame {
-    let stroke = if highlighted {
-        Stroke::new(1.5, p.accent)
-    } else {
-        Stroke::new(1.0, p.border)
-    };
-    egui::Frame::new()
-        .fill(p.card)
-        .stroke(stroke)
-        .corner_radius(CornerRadius::same(RADIUS))
-        .inner_margin(Margin::symmetric(10, 8))
-        .shadow(Shadow {
-            offset: [0, 1],
-            blur: 3,
-            spread: 0,
-            color: Color32::from_black_alpha(18),
-        })
-}
+/// 見出しの文字の大きさ。
+pub const HEADING: Pixels = px(16.0);
+/// 本文の文字の大きさ。
+pub const BODY: Pixels = px(14.0);
+/// ボタンの文字の大きさ。
+pub const BUTTON: Pixels = px(14.0);
+/// 補足の文字の大きさ。等倍の外部ディスプレイで画数の多い漢字がつぶれないよう、12pxを下限にする。
+pub const SMALL: Pixels = px(12.0);
+/// 等幅の文字の大きさ。
+pub const MONO: Pixels = px(13.0);
+/// 項目の横の間隔。
+pub const GAP_X: Pixels = px(8.0);
+/// 項目の縦の間隔。
+pub const GAP_Y: Pixels = px(6.0);
+/// カードの角丸。
+pub const RADIUS: Pixels = px(8.0);
+/// 部品の角丸。
+pub const WIDGET_RADIUS: Pixels = px(6.0);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn apply_sets_both_themes() {
-        let ctx = egui::Context::default();
-        apply(&ctx);
-        assert_eq!(ctx.style_of(Theme::Light).visuals.panel_fill, LIGHT.bg);
-        assert_eq!(ctx.style_of(Theme::Dark).visuals.panel_fill, DARK.bg);
-        assert_eq!(
-            ctx.style_of(Theme::Dark).visuals.selection.bg_fill,
-            DARK.accent_soft
-        );
-        assert_eq!(
-            ctx.style_of(Theme::Light).text_styles[&TextStyle::Body].size,
-            14.0
-        );
-        assert_eq!(
-            ctx.style_of(Theme::Dark).text_styles[&TextStyle::Small].size,
-            12.0
-        );
-        assert!(ctx.style_of(Theme::Dark).visuals.dark_mode);
+    fn palette_and_series_pick_by_theme_and_index() {
+        assert_eq!(palette(false), &LIGHT);
+        assert_eq!(palette(true), &DARK);
+        assert_eq!(series(None, &LIGHT), LIGHT.weak);
+        assert_eq!(series(Some(1), &DARK), SERIES[1]);
+        assert_eq!(series(Some(SERIES.len() + 2), &DARK), SERIES[2]);
     }
 
     #[test]
-    fn palette_and_card_frame() {
-        assert_eq!(palette(false), &LIGHT);
-        assert_eq!(palette(true), &DARK);
+    fn text_sizes_are_fixed() {
         assert_eq!(
-            card_frame(&LIGHT, true).stroke,
-            Stroke::new(1.5, LIGHT.accent)
+            [HEADING, BODY, BUTTON, SMALL, MONO],
+            [16.0, 14.0, 14.0, 12.0, 13.0].map(gpui::px)
         );
-        assert_eq!(
-            card_frame(&DARK, false).stroke,
-            Stroke::new(1.0, DARK.border)
-        );
-        assert_eq!(card_frame(&DARK, false).fill, DARK.card);
+    }
+
+    #[test]
+    fn color_converts_hex_exactly() {
+        let c = color(0x0969da);
+        assert_eq!((c.r * 255.0).round() as u8, 0x09);
+        assert_eq!((c.g * 255.0).round() as u8, 0x69);
+        assert_eq!((c.b * 255.0).round() as u8, 0xda);
+        assert_eq!(c.a, 1.0);
     }
 }

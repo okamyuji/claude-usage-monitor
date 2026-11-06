@@ -8,7 +8,6 @@
 #[path = "../build/version.rs"]
 mod build_version;
 pub mod controllers;
-pub mod gpui_views;
 pub mod models;
 #[cfg(test)]
 pub(crate) mod test_support;

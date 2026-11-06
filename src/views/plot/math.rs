@@ -1,7 +1,7 @@
-//! グラフの座標と範囲の計算。egui_plot 0.38.0と同じ規則にし、GPUIに依存させない。
+//! グラフの座標と範囲の計算。GPUIに依存させない。
 //! 画面の座標は左上が原点で下へ伸び、データのyは上へ伸びる。
 
-/// 自動範囲の余白（幅に対する割合）。egui_plotの`margin_fraction`の既定値。
+/// 自動範囲の余白（幅に対する割合）。
 pub const MARGIN_FRACTION: f64 = 0.05;
 
 /// データの範囲。各軸は(最小, 最大)。
@@ -66,7 +66,7 @@ fn with_margin(a: (f64, f64)) -> (f64, f64) {
     }
 }
 
-/// 幅0の軸は中央から`other`の幅（無効なら1）に広げ、無限の軸は(-1, 1)にする（egui_plotの`PlotTransform::new`）。
+/// 幅0の軸は中央から`other`の幅（無効なら1）に広げ、無限の軸は(-1, 1)にする。
 fn sanitize(a: (f64, f64), other: (f64, f64)) -> (f64, f64) {
     if !finite(a) {
         return (-1.0, 1.0);
@@ -153,7 +153,7 @@ pub fn zoom_to_box(r: &Range2, rect: Rect, a: (f32, f32), b: (f32, f32)) -> Opti
     out.is_valid().then_some(out)
 }
 
-/// 目盛の(値, 刻み)。egui_plotの`log_grid_spacer(10)`と同じく、`base_step`を10の累乗に切り上げた刻みとその10倍、100倍で刻み、
+/// 目盛の(値, 刻み)。`base_step`を10の累乗に切り上げた刻みとその10倍、100倍で刻み、
 /// 近すぎる目盛は大きい刻みのほうを残す。`base_step`は線どうしの最小の間隔をデータの単位にした値。
 pub fn grid_marks(lo: f64, hi: f64, base_step: f64) -> Vec<(f64, f64)> {
     if base_step.abs() < f64::EPSILON {
@@ -185,7 +185,7 @@ pub fn grid_marks(lo: f64, hi: f64, base_step: f64) -> Vec<(f64, f64)> {
     out
 }
 
-/// `i`番目の線の自動の色（0xRRGGBB）。egui_plotの`auto_color`と同じく、色相を黄金比ずつ回したHSV（彩度0.85、明度0.5）を
+/// `i`番目の線の自動の色（0xRRGGBB）。色相を黄金比ずつ回したHSV（彩度0.85、明度0.5）を
 /// 線形のRGBとみなしてsRGBへ変換する。
 pub fn auto_color(i: usize) -> u32 {
     let h = i as f32 * (std::f32::consts::GOLDEN_RATIO - 1.0);
@@ -224,7 +224,7 @@ pub fn strength(spacing: f32, min: f32, max: f32) -> f32 {
 }
 
 /// 軸の数字の濃さ。間隔`spacing`が`limits`の下限以下か、数字の幅`width`が間隔より広ければ出さない（`None`）。
-/// 濃さは間隔で0から1に上げた値の平方根（egui_plotの`add_tick_labels`）。
+/// 濃さは間隔で0から1に上げた値の平方根。
 pub fn label_alpha(spacing: f32, width: f32, limits: (f32, f32)) -> Option<f32> {
     if spacing <= limits.0 || spacing < width {
         return None;
@@ -350,8 +350,8 @@ mod tests {
     }
 
     #[test]
-    fn grid_marks_match_egui_plot_generate_marks() {
-        // egui_plot 0.38.0 grid.rsのtest_generate_marksと同じ入力と期待値。
+    fn grid_marks_match_reference_marks() {
+        // 参照実装の既知の入力と期待値。
         // 最小の間隔0.005は10の累乗に切り上げて0.01になり、刻みは0.01、0.1、1になる。
         let marks = grid_marks(2.855, 3.015, 0.005);
         let want = [
@@ -400,8 +400,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_color_matches_egui_plot() {
-        // egui_plot 0.38.0のauto_colorがegui 0.37.0で出す色を書き写した値。
+    fn auto_color_matches_reference_colors() {
+        // 参照実装が出す色を書き写した値。
         assert_eq!(
             (0..6).map(auto_color).collect::<Vec<_>>(),
             [0xbc4d4d, 0x4d7bbc, 0x9abc4d, 0xbc4db2, 0x4dbcaf, 0xbc964d]

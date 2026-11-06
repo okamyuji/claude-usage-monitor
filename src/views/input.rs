@@ -6,7 +6,7 @@
 //! 入力欄と`Forms`の差では戻さず、`Forms`が前に見た値から変わったときだけ戻して、変換中の文字を消さない。
 use crate::controllers::gui::app::{Action, Forms};
 use crate::controllers::gui::dashboard::DashAction;
-use crate::gpui_views::app::CumonRoot;
+use crate::views::app::CumonRoot;
 use gpui::{App, AppContext as _, Context, Entity, Subscription, Window};
 use gpui_component::input::{InputEvent, InputState};
 
@@ -114,7 +114,7 @@ impl Field {
         (self == Field::SessionQuery).then_some(Action::Dash(DashAction::Search))
     }
 
-    /// 空のときに淡く出す例（eguiの`hint_text`）。
+    /// 空のときに淡く出す例。
     fn placeholder(self) -> Option<&'static str> {
         (self == Field::ProfileDir).then_some("空なら ~/.claude-<名前>")
     }

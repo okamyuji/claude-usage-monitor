@@ -1,67 +1,134 @@
 //! 上部バー。タブ、今日と今週の集計、デーモンの状態、テーマの切り替え。
 use crate::controllers::gui::app::{Action, AppVm, Tab};
 use crate::models::domain::settings::Theme;
-use crate::views::widgets::{badge, pal};
-use egui::{Align, Layout, RichText, Ui};
-use egui_phosphor::regular as icon;
+use crate::views::app::Acts;
+use crate::views::icons;
+use crate::views::theme::{GAP_X, Palette};
+use crate::views::widgets::{badge, button, icon, icon_button, selectable, strong, weak};
+use gpui::{IntoElement, ParentElement as _, Styled as _, div, px};
 
 fn tab_icon(t: Tab) -> &'static str {
     match t {
-        Tab::Dashboard => icon::SQUARES_FOUR,
-        Tab::Calendar => icon::CALENDAR_BLANK,
-        Tab::Analytics => icon::CHART_BAR,
-        Tab::Profiles => icon::USERS,
-        Tab::Settings => icon::GEAR,
-        Tab::Diagnostics => icon::STETHOSCOPE,
+        Tab::Dashboard => icons::SQUARES_FOUR,
+        Tab::Calendar => icons::CALENDAR_BLANK,
+        Tab::Analytics => icons::CHART_BAR,
+        Tab::Profiles => icons::USERS,
+        Tab::Settings => icons::GEAR,
+        Tab::Diagnostics => icons::STETHOSCOPE,
     }
 }
 
 /// 上部バーを描く。
-pub fn show(ui: &mut Ui, vm: &AppVm, acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    ui.horizontal(|ui| {
-        for t in Tab::ALL {
-            let selected = vm.tab == t;
-            ui.label(RichText::new(tab_icon(t)).color(if selected { p.accent } else { p.weak }));
-            if ui.selectable_label(selected, t.label()).clicked() {
-                acts.push(Action::SelectTab(t));
-            }
-            ui.add_space(6.0);
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (next, text) = if ui.visuals().dark_mode {
-                (Theme::Light, format!("{} ライト", icon::SUN))
-            } else {
-                (Theme::Dark, format!("{} ダーク", icon::MOON))
-            };
-            if ui.button(text).clicked() {
-                acts.push(Action::SetTheme(next));
-            }
-            daemon(ui, vm, acts);
-            totals(ui, vm);
-        });
+pub fn render(vm: &AppVm, p: &Palette, dark: bool, acts: &Acts) -> impl IntoElement {
+    let tabs = Tab::ALL.into_iter().map(|t| {
+        let selected = vm.tab == t;
+        div()
+            .flex()
+            .items_center()
+            .gap(GAP_X)
+            .mr(px(6.0))
+            .child(icon(tab_icon(t), if selected { p.accent } else { p.weak }))
+            .child(selectable(
+                p,
+                t.label(),
+                selected,
+                t.label(),
+                acts.on(Action::SelectTab(t)),
+            ))
     });
+    let (next, glyph, word) = if dark {
+        (Theme::Light, icons::SUN, "ライト")
+    } else {
+        (Theme::Dark, icons::MOON, "ダーク")
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .children(tabs)
+        .child(div().flex_1())
+        .children(totals(vm, p))
+        .child(daemon(vm, p, acts))
+        .child(icon_button(
+            p,
+            "theme",
+            glyph,
+            word,
+            acts.on(Action::SetTheme(next)),
+        ))
 }
 
-fn daemon(ui: &mut Ui, vm: &AppVm, acts: &mut Vec<Action>) {
-    let p = pal(ui);
+fn daemon(vm: &AppVm, p: &Palette, acts: &Acts) -> impl IntoElement {
+    let d = div().flex().items_center().gap(GAP_X);
     if vm.daemon_running {
-        badge(ui, "● 監視中", p.ok, p.ok_soft);
+        d.child(badge("● 監視中", p.ok, p.ok_soft))
     } else {
-        if ui.button("デーモンを起動").clicked() {
-            acts.push(Action::StartDaemon);
-        }
-        badge(ui, "● デーモン停止中", p.err, p.err_soft);
+        d.child(badge("● デーモン停止中", p.err, p.err_soft))
+            .child(button(
+                p,
+                "start-daemon",
+                "デーモンを起動",
+                acts.on(Action::StartDaemon),
+            ))
     }
 }
 
-fn totals(ui: &mut Ui, vm: &AppVm) {
-    let p = pal(ui);
-    for (label, value) in [("今週", &vm.header.week), ("今日", &vm.header.today)] {
-        if value.is_empty() {
-            continue;
+/// 今日と今週の集計。左から今日、今週の順に出す。
+fn totals(vm: &AppVm, p: &Palette) -> Vec<gpui::AnyElement> {
+    [("今日", &vm.header.today), ("今週", &vm.header.week)]
+        .into_iter()
+        .filter(|(_, value)| !value.is_empty())
+        .flat_map(|(name, value)| {
+            [
+                weak(p, name).into_any_element(),
+                strong(p, value).into_any_element(),
+            ]
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::controllers::gui::app::Tab;
+    use crate::views::app::tests::{controller, open};
+    use crate::views::icons;
+    use crate::views::probe::{self, Role};
+
+    #[test]
+    fn header_shows_tabs_daemon_and_theme() {
+        let home = tempfile::tempdir().unwrap();
+        let (_d, ctl) = controller(home.path());
+        let mut cx = crate::test_support::gpui_cx();
+        let _ = open(&mut cx, ctl);
+        let seen = probe::take();
+        for t in Tab::ALL {
+            assert!(
+                seen.contains(&(Role::Tab, t.label().to_string())),
+                "{}",
+                t.label()
+            );
         }
-        ui.label(RichText::new(value).strong());
-        ui.label(RichText::new(label).color(p.weak));
+        assert!(seen.contains(&(Role::Button, "デーモンを起動".into())));
+        assert!(seen.contains(&(Role::Label, "● デーモン停止中".into())));
+        assert!(seen.contains(&(Role::Button, format!("{} ダーク", icons::MOON))));
+        assert!(seen.contains(&(Role::Label, "今日".into())));
+        assert!(seen.contains(&(Role::Label, "0 $0.00".into())));
+    }
+
+    #[test]
+    fn empty_totals_are_left_out() {
+        let home = tempfile::tempdir().unwrap();
+        let (_d, ctl) = controller(home.path());
+        let mut vm = ctl.vm().clone();
+        vm.header.week = String::new();
+        probe::take();
+        assert_eq!(super::totals(&vm, &crate::views::theme::LIGHT).len(), 2);
+        assert_eq!(
+            probe::take(),
+            vec![
+                (Role::Label, "今日".into()),
+                (Role::Label, vm.header.today.clone())
+            ]
+        );
     }
 }

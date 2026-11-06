@@ -56,7 +56,7 @@ impl Role {
         }
     }
 
-    /// 読み上げ用の役割。タブはeguiと同じく押せるボタンとして読ませる。
+    /// 読み上げ用の役割。タブは押せるボタンとして読ませる。
     pub fn a11y(self) -> gpui::Role {
         match self {
             Role::Label => gpui::Role::Label,

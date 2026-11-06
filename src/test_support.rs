@@ -360,7 +360,7 @@ pub(crate) fn gpui_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem>
     let text = std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
     #[cfg(target_os = "linux")]
     let text = std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-        crate::gpui_views::fonts::BODY_FAMILY,
+        crate::views::fonts::BODY_FAMILY,
     ));
     text
 }
@@ -372,6 +372,6 @@ pub(crate) fn gpui_cx() -> gpui::TestAppContext {
         None,
         gpui_text_system(),
     );
-    cx.update(|cx| crate::gpui_views::fonts::install(cx).expect("同梱のフォント"));
+    cx.update(|cx| crate::views::fonts::install(cx).expect("同梱のフォント"));
     cx
 }
