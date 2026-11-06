@@ -204,6 +204,12 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
 /// ウィンドウを開く部分はテストで動かせないため、組み立ては`build_gui`に寄せて単体テストで確かめる。
 fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
     let ctl = build_gui(p, store)?;
+    // shortcut: 移す途中はGPUI版を環境変数で開く。全タブを移したらGPUI版だけにする。
+    if std::env::var_os("CUMON_GPUI").is_some_and(|v| v == "1") {
+        claude_usage_monitor::gpui_views::app::open(ctl)
+            .map_err(|e| other(format!("GUIを起動できません: {e}")))?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let options = eframe::NativeOptions {
         // テストのビルドで開発用の依存がwgpuを有効にしても、本番は実測で省メモリだったglowで描く（spec 3章の決定表）。
         renderer: eframe::Renderer::Glow,

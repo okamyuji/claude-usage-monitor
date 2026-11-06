@@ -37,6 +37,8 @@ winit = "0.30.13"
 gpui = { package = "gpui-pre", version = "=0.3.11" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11" }
 gpui-component = "=0.9.0"
+# 文字を選んで写す部品（SelectableText）を使う。gpui-componentが同じ版を使う。
+gpui-base = "=0.9.0"
 
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
@@ -64,3 +66,10 @@ gpui_macos = { package = "gpui-pre-macos", version = "=0.3.11", features = ["run
 [[test]]
 name = "about_icon"
 harness = false
+
+# テスト窓の文字の仕組みはフォントも幅も持たないため、テストではこの環境の本物の文字の仕組みを使う。
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_apple = { package = "gpui-pre-apple", version = "=0.3.11" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.11" }
