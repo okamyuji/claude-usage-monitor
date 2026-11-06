@@ -350,6 +350,17 @@ pub fn card(p: &Palette, highlighted: bool) -> Div {
         }])
 }
 
+/// 押すとブラウザで`url`を開くリンク（eguiの`hyperlink_to`）。色はeguiの`hyperlink_color`と同じアクセント色。
+pub fn link(p: &Palette, id: impl Into<ElementId>, s: &str, url: &'static str) -> Stateful<Div> {
+    tagged(id, Role::Link, s)
+        .text_size(BODY)
+        .text_color(color(p.accent))
+        .cursor_pointer()
+        .hover(|st| st.underline())
+        .child(s.to_string())
+        .on_click(move |_, _, cx| cx.open_url(url))
+}
+
 /// 表の1行。`None`の列だけが伸び、残りは固定幅（`views::layout::flex_columns`と同じ割り付け）。
 pub fn table_row(columns: &[Option<f32>], cells: Vec<AnyElement>) -> Div {
     div()

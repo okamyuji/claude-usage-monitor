@@ -1381,3 +1381,160 @@ mod analytics_profiles_e2e {
         assert!(h.query_by_label("tmp").is_none(), "確認の後に消える");
     }
 }
+
+mod settings_e2e {
+    use super::*;
+    use claude_usage_monitor::gpui_views::probe::Role;
+    use claude_usage_monitor::models::ports::{Autostart, CatalogRefresh, RepoError, SettingsRepo};
+    use std::sync::Mutex;
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    fn open_settings(h: &mut GpuiHarness) {
+        h.get_by_label("設定").click();
+        h.run();
+    }
+
+    #[test]
+    fn settings_threshold_is_saved_for_daemon() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_role_and_label(Role::TextInput, "通知閾値（%）");
+        h.with_state_mut(|c| c.forms_mut().settings.threshold = "95".into());
+        h.run();
+        assert_eq!(h.input_value(4), "95", "controllerが書いた値を入力欄へ戻す");
+        h.get_by_label("保存").click();
+        h.run();
+        assert_eq!(env.store.load().unwrap().notify_threshold_percent, 95.0);
+        h.get_by_label_contains("5分以内");
+        h.get_by_label("診断").click();
+        h.run();
+        h.get_by_label("JSONLの取り込み");
+    }
+
+    #[test]
+    fn toggling_autostart_registers_it() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_label("ログイン時にデーモンを起動する").click();
+        h.run();
+        h.get_by_label("ログイン時にデーモンを起動するよう登録しました");
+        assert!(h.with_state(
+            |c| matches!(&c.vm().body, TabVm::Settings(s) if s.autostart == Some(true))
+        ));
+    }
+
+    struct Unreadable;
+    impl Autostart for Unreadable {
+        fn is_enabled(&self) -> Result<bool, String> {
+            Err("読めない".into())
+        }
+        fn enable(&self) -> Result<(), String> {
+            Err("読めない".into())
+        }
+        fn disable(&self) -> Result<(), String> {
+            Err("読めない".into())
+        }
+    }
+
+    #[test]
+    fn unreadable_autostart_shows_reason_instead_of_checkbox() {
+        let env = gui_env(now());
+        let mut deps = env.deps();
+        deps.autostart = Arc::new(Unreadable);
+        let mut h = env.gpui_harness_with(deps);
+        open_settings(&mut h);
+        h.get_by_label("ログイン時の起動の状態を読めません");
+        assert!(h.query_by_label("ログイン時にデーモンを起動する").is_none());
+    }
+
+    /// 合図があるまで返らない取得。取得中の画面を確かめるため。
+    struct Held(Mutex<Receiver<()>>);
+    impl CatalogRefresh for Held {
+        fn refresh(&self) -> Result<usize, RepoError> {
+            let _ = self.0.lock().unwrap().recv();
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn refreshing_replaces_the_button_until_done() {
+        let env = gui_env(now());
+        let (tx, rx): (Sender<()>, Receiver<()>) = channel();
+        let mut deps = env.deps();
+        deps.catalog = Arc::new(Held(Mutex::new(rx)));
+        let mut h = env.gpui_harness_with(deps);
+        open_settings(&mut h);
+        h.get_by_label("今すぐ更新").click();
+        h.run();
+        h.get_by_label("取得中…");
+        assert!(h.query_by_label("今すぐ更新").is_none());
+        tx.send(()).unwrap();
+    }
+
+    #[test]
+    fn model_editor_saves_or_cancels() {
+        let env = gui_env(now());
+        // 編集の欄はモデルの一覧の下に開き、既定の高さでは窓の外に出るので、窓を縦に広げる。
+        let mut h = env.gpui_harness_sized(1280.0, 1100.0);
+        open_settings(&mut h);
+        h.get_all_by_label("編集")
+            .next()
+            .expect("モデルの行")
+            .click();
+        h.run();
+        let prefix = h
+            .with_state(|c| c.forms().model.as_ref().map(|m| m.prefix.clone()))
+            .expect("編集中");
+        h.get_by_label(&format!("{prefix} を編集"));
+        h.get_by_role_and_label(Role::TextInput, "入力")
+            .type_text("9");
+        h.run();
+        assert!(h.with_state(|c| c.forms().model.as_ref().unwrap().input.ends_with('9')));
+        h.get_by_label("やめる").click();
+        h.run();
+        assert!(h.query_by_label(&format!("{prefix} を編集")).is_none());
+        h.get_all_by_label("編集").next().unwrap().click();
+        h.run();
+        h.get_by_label("単価を保存").click();
+        h.run();
+        assert!(
+            h.with_state(|c| c.forms().model.is_none()),
+            "保存すると閉じる"
+        );
+    }
+
+    #[test]
+    fn theme_choice_is_a_draft_until_saved() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_label("ダーク").click();
+        h.run();
+        assert_eq!(
+            h.with_state(|c| c.forms().settings.theme),
+            claude_usage_monitor::models::domain::settings::Theme::Dark
+        );
+        assert_ne!(
+            env.store.load().unwrap().theme,
+            claude_usage_monitor::models::domain::settings::Theme::Dark,
+            "保存するまで書かない"
+        );
+        h.get_by_label("保存").click();
+        h.run();
+        assert_eq!(
+            env.store.load().unwrap().theme,
+            claude_usage_monitor::models::domain::settings::Theme::Dark
+        );
+    }
+
+    #[test]
+    fn links_are_recorded_as_links() {
+        let env = gui_env(now());
+        let mut h = env.gpui_harness();
+        open_settings(&mut h);
+        h.get_by_role_and_label(Role::Link, "料金ページ");
+        h.get_by_role_and_label(Role::Link, "モデル一覧");
+    }
+}

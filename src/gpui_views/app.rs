@@ -8,7 +8,7 @@ use crate::gpui_views::header;
 use crate::gpui_views::input::FormInputs;
 use crate::gpui_views::plot::PlotState;
 use crate::gpui_views::theme::{GAP_X, Palette, color, palette};
-use crate::gpui_views::widgets::{self, frame_start, label, text};
+use crate::gpui_views::widgets::{self, frame_start, text};
 use crate::models::domain::settings::Theme;
 use crate::views::layout::drag_ratio;
 use gpui::{
@@ -196,6 +196,20 @@ impl Acts {
                 f(r.ctl.forms_mut());
                 r.active_detail_mut().source_open = false;
                 r.act(a.clone(), cx);
+            });
+        }
+    }
+
+    /// `Forms`を`f`で書き換えるだけの受け口。eguiの`selectable_value`のように、保存までは下書きだけを変えるときに使う。
+    pub fn set(
+        &self,
+        f: impl Fn(&mut Forms) + 'static,
+    ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        let root = self.0.clone();
+        move |_, _, cx| {
+            let _ = root.update(cx, |r, cx| {
+                f(r.ctl.forms_mut());
+                cx.notify();
             });
         }
     }
@@ -452,7 +466,14 @@ fn body(
                         size.get().0,
                     ))
                     .into_any_element(),
-                _ => label(p, vm.tab.label()).into_any_element(),
+                TabVm::Settings(v) => div()
+                    .id("body-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(crate::gpui_views::tabs::settings::render(
+                        v, forms, inputs, p, acts,
+                    ))
+                    .into_any_element(),
             }),
     )
 }

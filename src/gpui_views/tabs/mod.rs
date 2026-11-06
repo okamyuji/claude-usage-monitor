@@ -3,3 +3,4 @@ pub mod analytics;
 pub mod calendar;
 pub mod diagnostics;
 pub mod profiles;
+pub mod settings;

@@ -1,7 +1,7 @@
 //! GPUI版の画面を、egui_kittestと同じ名前の呼び出しで操作するハーネス。
 //! GPUIのテスト窓は読み上げ用の木を作らないため、部品が描くたびに残す記録（`probe`）と目印（`debug_selector`）で探す。
 use super::gui::GuiEnv;
-use claude_usage_monitor::controllers::gui::app::GuiController;
+use claude_usage_monitor::controllers::gui::app::{GuiController, GuiDeps};
 use claude_usage_monitor::gpui_views::app::CumonRoot;
 use claude_usage_monitor::gpui_views::probe::{self, Role};
 use gpui::{
@@ -101,8 +101,17 @@ impl GuiEnv {
 
     /// 大きさを指定して動かす。伸縮の確認に使う。
     pub fn gpui_harness_sized(&self, w: f32, h: f32) -> GpuiHarness {
+        self.gpui_harness_of(self.deps(), w, h)
+    }
+
+    /// 依存を差し替えて動かす。読めない自動起動や、返らない取得を作るときに使う。
+    pub fn gpui_harness_with(&self, deps: GuiDeps) -> GpuiHarness {
+        self.gpui_harness_of(deps, 1280.0, 820.0)
+    }
+
+    fn gpui_harness_of(&self, deps: GuiDeps, w: f32, h: f32) -> GpuiHarness {
         let mut cx = gpui_cx();
-        let ctl = GuiController::new(self.deps());
+        let ctl = GuiController::new(deps);
         let mut root = None;
         let window = cx.add_window(|w, cx| {
             let r = cx.new(|cx| CumonRoot::new(ctl, w, cx));
