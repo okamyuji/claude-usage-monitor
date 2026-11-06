@@ -3,6 +3,7 @@ use crate::controllers::gui::app::{Action, AppVm, Forms, GuiController, REFRESH_
 use crate::controllers::gui::dashboard::memory::MemAction;
 use crate::gpui_views::fonts::{BODY_FAMILY, body_fallbacks, install};
 use crate::gpui_views::header;
+use crate::gpui_views::input::FormInputs;
 use crate::gpui_views::plot::PlotState;
 use crate::gpui_views::theme::{GAP_X, Palette, color, palette};
 use crate::gpui_views::widgets::{self, frame_start, label, text};
@@ -11,9 +12,9 @@ use crate::views::layout::drag_ratio;
 use gpui::{
     App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, Pixels, Render, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds, WindowKind,
-    WindowOptions, canvas, div, point, px, size,
+    ParentElement as _, Pixels, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds,
+    WindowKind, WindowOptions, canvas, div, point, px, size,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -71,6 +72,8 @@ pub struct CumonRoot {
     body: Rc<Cell<(f32, f32)>>,
     split_drag: Option<SplitDrag>,
     focus: FocusHandle,
+    pub(crate) inputs: FormInputs,
+    session_scroll: ScrollHandle,
     _tick: Task<()>,
     _appearance: Subscription,
 }
@@ -104,6 +107,8 @@ impl CumonRoot {
             body: Rc::new(Cell::new((0.0, 0.0))),
             split_drag: None,
             focus,
+            inputs: FormInputs::new(window, cx),
+            session_scroll: ScrollHandle::new(),
             _tick: tick,
             _appearance: appearance,
         }
@@ -117,6 +122,11 @@ impl CumonRoot {
     /// 書き換えられるcontroller。
     pub fn controller_mut(&mut self) -> &mut GuiController {
         &mut self.ctl
+    }
+
+    /// 文字の入力欄の値を、描く順に返す。
+    pub fn input_values(&self, cx: &App) -> Vec<String> {
+        self.inputs.values(cx)
     }
 
     /// 操作を渡し、新しい値で描き直す。
@@ -179,16 +189,28 @@ impl Render for CumonRoot {
             }
         });
         let focus = self.focus.clone();
+        self.inputs.sync(self.ctl.forms(), window, cx);
         let Self {
             ctl,
             plots,
             body: body_size,
+            inputs,
+            session_scroll,
             ..
         } = self;
         let vm = ctl.vm();
         let forms = ctl.forms();
         let dark = is_dark(vm.theme, window.appearance());
         let p = palette(dark);
+        // gpui-componentの部品（入力欄、スクロールバー）は自分のテーマで描くので、明暗をアプリに合わせる。
+        if gpui_component::ActiveTheme::theme(&**cx).is_dark() != dark {
+            let mode = if dark {
+                gpui_component::ThemeMode::Dark
+            } else {
+                gpui_component::ThemeMode::Light
+            };
+            gpui_component::Theme::change(mode, Some(window), cx);
+        }
         let mut plots = Plots { map: plots, cx };
         let mut root = div()
             .size_full()
@@ -219,7 +241,15 @@ impl Render for CumonRoot {
                     .py(px(8.0))
                     .child(header::render(vm, p, dark, &acts)),
             )
-            .child(body(vm, forms, p, &acts, &mut plots, body_size))
+            .child(body(
+                vm,
+                forms,
+                p,
+                &acts,
+                &mut plots,
+                (inputs, session_scroll),
+                body_size,
+            ))
             .child(status(vm, p))
             .children(confirm)
     }
@@ -259,6 +289,7 @@ fn body(
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
+    (inputs, scroll): (&FormInputs, &ScrollHandle),
     size: &Rc<Cell<(f32, f32)>>,
 ) -> impl IntoElement {
     let measured = size.clone();
@@ -280,10 +311,16 @@ fn body(
             .size_full()
             .child(measure)
             .child(match &vm.body {
-                TabVm::Dashboard(d) => {
-                    crate::gpui_views::dashboard::render(d, forms, p, acts, plots, size.get())
-                        .into_any_element()
-                }
+                TabVm::Dashboard(d) => crate::gpui_views::dashboard::render(
+                    d,
+                    forms,
+                    p,
+                    acts,
+                    plots,
+                    (inputs, scroll),
+                    size.get(),
+                )
+                .into_any_element(),
                 TabVm::Diagnostics(v) => div()
                     .id("body-scroll")
                     .size_full()
@@ -488,6 +525,41 @@ pub(crate) mod tests {
             Role::Label,
             "デーモンを起動できません: テスト"
         ));
+    }
+
+    #[test]
+    fn redraw_keeps_text_being_composed_in_the_input() {
+        use gpui::EntityInputHandler as _;
+        let home = tempfile::tempdir().unwrap();
+        let (_d, ctl) = controller(home.path());
+        let mut cx = crate::test_support::gpui_cx();
+        let (root, vcx) = open(&mut cx, ctl);
+        let input = root.read_with(vcx, |r, _| r.inputs.session_query.clone());
+        // IMEが変換中の文字を置く。変換中は変更の通知が出ないので、controllerの値は空のまま。
+        input.update_in(vcx, |s, window, cx| {
+            s.replace_and_mark_text_in_range(None, "やかん", None, window, cx)
+        });
+        root.update(vcx, |_, cx| cx.notify());
+        vcx.run_until_parked();
+        assert_eq!(
+            input.read_with(vcx, |s, _| s.value().to_string()),
+            "やかん",
+            "描き直しで変換中の文字を消さない"
+        );
+    }
+
+    #[test]
+    fn component_theme_follows_the_app_theme() {
+        use gpui_component::ActiveTheme as _;
+        let home = tempfile::tempdir().unwrap();
+        let (_d, ctl) = controller(home.path());
+        let mut cx = crate::test_support::gpui_cx();
+        let (root, vcx) = open(&mut cx, ctl);
+        for (t, dark) in [(Theme::Dark, true), (Theme::Light, false)] {
+            root.update(vcx, |r, cx| r.act(Action::SetTheme(t), cx));
+            vcx.run_until_parked();
+            assert_eq!(vcx.update(|_, cx| cx.theme().is_dark()), dark, "{t:?}");
+        }
     }
 
     #[test]

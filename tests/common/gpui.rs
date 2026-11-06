@@ -150,6 +150,15 @@ impl GpuiHarness {
         self.root.update(&mut self.cx, |r, _| f(r.controller_mut()))
     }
 
+    /// `n`番目の文字の入力欄の値。
+    pub fn input_value(&mut self, n: usize) -> String {
+        self.root
+            .read_with(&self.cx, |r, cx| r.input_values(cx))
+            .into_iter()
+            .nth(n)
+            .unwrap_or_else(|| panic!("{n}番目の入力欄が無い"))
+    }
+
     /// キーを押す（`escape`など、GPUIのキーの名前）。
     pub fn press_key(&mut self, key: &str) {
         self.cx.simulate_keystrokes(key);

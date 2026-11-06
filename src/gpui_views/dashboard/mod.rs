@@ -1,11 +1,13 @@
 //! ダッシュボードの配置（spec 7.2節の3段）。区画の中身は同じディレクトリの各ファイルが描く。
 pub mod cards;
 pub mod memory;
+pub mod sessions;
 pub mod trend;
 
 use crate::controllers::gui::app::Forms;
 use crate::controllers::gui::dashboard::DashboardVm;
 use crate::gpui_views::app::{Acts, Plots};
+use crate::gpui_views::input::FormInputs;
 use crate::gpui_views::probe::Role;
 use crate::gpui_views::theme::{GAP_X, GAP_Y, Palette, color};
 use crate::gpui_views::widgets::{card, probed, text};
@@ -14,7 +16,7 @@ use crate::views::layout::{
 };
 use gpui::{
     AnyElement, CursorStyle, Div, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Styled as _, div, px,
+    ParentElement as _, ScrollHandle, Styled as _, div, px,
 };
 
 /// ダッシュボードを描く。`width`と`height`は本文の大きさ。
@@ -24,6 +26,7 @@ pub fn render(
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
+    (inputs, scroll): (&FormInputs, &ScrollHandle),
     (width, height): (f32, f32),
 ) -> Div {
     let trend_h = if vm.trend_open {
@@ -40,8 +43,12 @@ pub fn render(
         .flex_shrink_0()
         .flex()
         .gap(GAP_X)
-        // shortcut: 左は履歴の一覧（Task 6）を移すまで空のカード。
-        .child(card(p, false).w(px(lw)).h_full())
+        .child(
+            card(p, false)
+                .w(px(lw))
+                .h_full()
+                .child(sessions::render(vm, inputs, scroll, p, acts)),
+        )
         .child(splitter(p, acts, avail, lw))
         .child(
             card(p, false)

@@ -5,6 +5,7 @@ pub mod dashboard;
 pub mod fonts;
 pub mod header;
 pub mod icons;
+pub mod input;
 pub mod plot;
 pub mod probe;
 pub mod tabs;
