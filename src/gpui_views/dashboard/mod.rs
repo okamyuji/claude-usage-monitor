@@ -1,5 +1,6 @@
 //! ダッシュボードの配置（spec 7.2節の3段）。区画の中身は同じディレクトリの各ファイルが描く。
 pub mod cards;
+pub mod detail;
 pub mod memory;
 pub mod sessions;
 pub mod trend;
@@ -10,13 +11,13 @@ use crate::gpui_views::app::{Acts, Plots};
 use crate::gpui_views::input::FormInputs;
 use crate::gpui_views::probe::Role;
 use crate::gpui_views::theme::{GAP_X, GAP_Y, Palette, color};
-use crate::gpui_views::widgets::{card, probed, text};
+use crate::gpui_views::widgets::{card, probed};
 use crate::views::layout::{
     GAP, MIN_MIDDLE, SPLITTER, TREND_COLLAPSED, split_widths, trend_height,
 };
 use gpui::{
-    AnyElement, CursorStyle, Div, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, ScrollHandle, Styled as _, div, px,
+    CursorStyle, Div, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    ScrollHandle, Styled as _, div, px,
 };
 
 /// ダッシュボードを描く。`width`と`height`は本文の大きさ。
@@ -26,7 +27,7 @@ pub fn render(
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
-    (inputs, scroll): (&FormInputs, &ScrollHandle),
+    (inputs, scroll, detail_ui): (&FormInputs, &ScrollHandle, &detail::DetailUi),
     (width, height): (f32, f32),
 ) -> Div {
     let trend_h = if vm.trend_open {
@@ -50,12 +51,13 @@ pub fn render(
                 .child(sessions::render(vm, inputs, scroll, p, acts)),
         )
         .child(splitter(p, acts, avail, lw))
-        .child(
-            card(p, false)
-                .w(px(rw))
-                .h_full()
-                .children(detail_placeholder(vm, p)),
-        );
+        .child(card(p, false).w(px(rw)).h_full().child(detail::render(
+            vm.detail.as_ref(),
+            forms,
+            detail_ui,
+            p,
+            acts,
+        )));
     let trend_area = card(p, false)
         .w_full()
         .h(px(trend_h))
@@ -74,18 +76,6 @@ pub fn render(
         .child(middle)
         .child(div().h(px(GAP - f32::from(GAP_Y))))
         .child(trend_area)
-}
-
-// shortcut: 詳細（Task 7）を移すまでは、未選択のときの案内だけを出す。
-fn detail_placeholder(vm: &DashboardVm, p: &Palette) -> Option<AnyElement> {
-    vm.detail.is_none().then(|| {
-        text(
-            "左の一覧からセッションを選んでください",
-            crate::gpui_views::theme::BODY,
-            p.weak,
-        )
-        .into_any_element()
-    })
 }
 
 /// 中段の境界のつまみ。ドラッグすると比率が変わり、ウィンドウの幅に比例して伸縮する。

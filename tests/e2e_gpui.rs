@@ -816,3 +816,232 @@ mod memory_rows_e2e {
         });
     }
 }
+
+fn live_depth(h: &mut GpuiHarness) -> u8 {
+    use claude_usage_monitor::controllers::gui::app::TabVm;
+    h.with_state(|c| match &c.vm().body {
+        TabVm::Dashboard(d) => {
+            d.detail
+                .as_ref()
+                .unwrap()
+                .live
+                .as_ref()
+                .unwrap()
+                .lines
+                .last()
+                .unwrap()
+                .depth
+        }
+        other => panic!("{other:?}"),
+    })
+}
+
+#[test]
+fn active_session_opens_live_log_and_streams_subagent_lines() {
+    let env = gui_env(now());
+    let proj = seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("go-reviewer「メモリ機能のレビュー」を起動");
+    h.get_by_label("レート制限");
+    append(
+        &proj.join("s1/subagents/agent-a1.jsonl"),
+        r#"{"type":"assistant","timestamp":"2026-09-26T02:59:30.000Z","sessionId":"s1","message":{"id":"s9","content":[{"type":"tool_use","id":"t9","name":"Grep","input":{"pattern":"mutex"}}]}}"#,
+    );
+    h.run();
+    h.get_by_label_contains("mutex");
+    assert_eq!(live_depth(&mut h), 1);
+}
+
+#[test]
+fn live_log_stays_at_bottom_while_appending() {
+    let env = gui_env(now());
+    let proj = seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    let line = |i: usize| {
+        format!(
+            r#"{{"type":"assistant","timestamp":"2026-09-26T02:59:{:02}.000Z","sessionId":"s1","message":{{"id":"x{i}","content":[{{"type":"tool_use","id":"tx{i}","name":"Grep","input":{{"pattern":"needle{i}"}}}}]}}}}"#,
+            i % 60
+        )
+    };
+    for i in 0..60 {
+        append(&proj.join("s1.jsonl"), &line(i));
+    }
+    h.run();
+    h.run();
+    let visible = |h: &GpuiHarness, needle: &str| {
+        let line = h.get_by_label_contains(needle).bounds();
+        let trend = h.get_by_label("推移").bounds();
+        line.bottom() <= trend.top()
+    };
+    assert!(visible(&h, "needle59"), "開いた直後は最後の行が見える");
+    append(&proj.join("s1.jsonl"), &line(60));
+    h.run();
+    h.run();
+    assert!(visible(&h, "needle60"), "追記しても下端のまま");
+    assert!(
+        h.query_by_label("最新へ戻る").is_none(),
+        "下端にいる間は出さない"
+    );
+    let at = h.get_by_label_contains("needle60").bounds().center();
+    h.scroll_at(f32::from(at.x), f32::from(at.y), 2000.0);
+    h.run();
+    assert!(!visible(&h, "needle60"), "上へ戻すと最後の行は見えない");
+    h.get_by_label("最新へ戻る").click();
+    h.run();
+    h.run();
+    assert!(visible(&h, "needle60"), "最新へ戻るで最後の行へ戻る");
+    assert!(h.query_by_label("最新へ戻る").is_none());
+}
+
+#[test]
+fn job_timeline_appears_in_live_log() {
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let p = env.store.ensure_default().unwrap();
+    env.store
+        .upsert_job(&claude_usage_monitor::models::domain::records::JobRecord {
+            job_id: "j1".into(),
+            profile_id: p.id,
+            session_id: Some("s1".into()),
+            name: None,
+            state: "working".into(),
+            detail: Some("2/8件目".into()),
+            in_flight_tasks: 1,
+            tokens: None,
+            created_at: None,
+            updated_at: now(),
+        })
+        .unwrap();
+    append(
+        &env.home.path().join(".claude/jobs/j1/timeline.jsonl"),
+        r#"{"at":"2026-09-26T02:59:40.000Z","state":"working","detail":"2/8件目"}"#,
+    );
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label_contains("ジョブ: working（2/8件目）");
+}
+
+#[test]
+fn history_row_opens_turns_beside_the_list() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("Read: src/main.rs");
+    h.get_by_label("レート制限");
+    h.get_by_label("推移");
+    h.get_all_by_label("内訳").nth(1).unwrap().click();
+    h.run();
+    h.get_by_label_contains("入力 1.20k / 出力 10");
+}
+
+#[test]
+fn replay_next_button_changes_displayed_turn() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    h.get_by_label_contains("1 / 3");
+    assert_eq!(h.replay_slider_value(), Some(0.0));
+    h.get_by_label_contains("次のターン").click();
+    h.run();
+    h.get_by_label_contains("2 / 3");
+    assert_eq!(
+        h.replay_slider_value(),
+        Some(1.0),
+        "つまみも次のターンへ動く"
+    );
+    h.get_by_label_contains("現在: Read: src/main.rs");
+    h.get_by_label("推移");
+}
+
+#[test]
+fn replay_slider_is_named_and_seeks() {
+    use claude_usage_monitor::gpui_views::probe::Role;
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    let s = h.get_by_role_and_label(Role::Slider, "再生位置").bounds();
+    h.click_at(f32::from(s.right()) - 2.0, f32::from(s.center().y));
+    h.run();
+    h.get_by_label_contains("3 / 3");
+}
+
+#[test]
+fn detail_tabs_show_summary_and_live_filters() {
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    for label in ["ツール", "本文", "エラーのみ", "発生元"] {
+        h.get_by_label(label);
+    }
+    h.get_by_label_contains("行を保持（最大2,000行）");
+    h.get_by_label("概要").click();
+    h.run();
+    h.get_by_label("要約");
+    h.get_by_label("依頼の一覧");
+    // モデルの表はeguiのGridと同じく行の順に読む。見出しの行がすべて先に来る。
+    let labels = h.labels();
+    let at = |s: &str| labels.iter().position(|l| *l == s).unwrap();
+    assert!(at("claude-opus-5-5") > at("要求"), "{labels:?}");
+    for label in [
+        "入力",
+        "出力",
+        "キャッシュ読込",
+        "コスト",
+        "キャッシュヒット率",
+    ] {
+        h.get_by_label(label);
+    }
+}
+
+#[test]
+fn live_source_combo_opens_filters_and_closes() {
+    use claude_usage_monitor::gpui_views::probe::Role;
+    let env = gui_env(now());
+    seed_live_session(&env);
+    let mut h = env.gpui_harness();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    assert!(
+        h.query_by_label("すべて").is_none(),
+        "閉じているときは候補を出さない"
+    );
+    h.get_by_role_and_label(Role::ComboBox, "発生元").click();
+    h.run();
+    h.get_by_label("すべて");
+    h.get_by_role_and_label(Role::Tab, "本体").click();
+    h.run();
+    assert_eq!(
+        h.with_state(|c| c.forms().live_filter.source.clone()),
+        Some("本体".to_string())
+    );
+    assert!(h.query_by_label("すべて").is_none(), "選ぶと閉じる");
+    h.get_by_role_and_label(Role::ComboBox, "発生元").click();
+    h.run();
+    h.get_by_label("すべて");
+    h.click_at(5.0, 400.0);
+    h.run();
+    assert!(h.query_by_label("すべて").is_none(), "外を押すと閉じる");
+}

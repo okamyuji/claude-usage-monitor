@@ -150,6 +150,12 @@ impl GpuiHarness {
         self.root.update(&mut self.cx, |r, _| f(r.controller_mut()))
     }
 
+    /// 再生位置のスライダーの値。
+    pub fn replay_slider_value(&mut self) -> Option<f32> {
+        self.root
+            .read_with(&self.cx, |r, cx| r.replay_slider_value(cx))
+    }
+
     /// `n`番目の文字の入力欄の値。
     pub fn input_value(&mut self, n: usize) -> String {
         self.root
@@ -162,6 +168,23 @@ impl GpuiHarness {
     /// キーを押す（`escape`など、GPUIのキーの名前）。
     pub fn press_key(&mut self, key: &str) {
         self.cx.simulate_keystrokes(key);
+        self.cx.run_until_parked();
+    }
+
+    /// 窓の中の位置でホイールを`dy`だけ回す（正の値で上へ戻る）。
+    pub fn scroll_at(&mut self, x: f32, y: f32, dy: f32) {
+        self.cx.simulate_event(gpui::ScrollEvent {
+            position: point(px(x), px(y)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(dy))),
+            ..Default::default()
+        });
+        self.run();
+    }
+
+    /// 窓の中の位置を押す。
+    pub fn click_at(&mut self, x: f32, y: f32) {
+        self.cx
+            .simulate_click(point(px(x), px(y)), Modifiers::default());
         self.cx.run_until_parked();
     }
 
@@ -202,6 +225,11 @@ impl GpuiHarness {
     fn missing(&self, what: &str) -> ! {
         let names: Vec<&str> = self.seen.iter().map(|(_, l)| l.as_str()).collect();
         panic!("{what} が見つからない。描いた部品: {names:?}")
+    }
+
+    /// 描いた部品の名前を、描いた順（読み上げの順）に返す。
+    pub fn labels(&self) -> Vec<&str> {
+        self.seen.iter().map(|(_, l)| l.as_str()).collect()
     }
 
     /// 名前が完全に一致する部品。

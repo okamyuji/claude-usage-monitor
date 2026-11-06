@@ -2,9 +2,11 @@
 //!
 //! 文字はeguiと同じく選んで写せるようにする。部品は描くたびに役割と名前を`probe`へ積み、
 //! 同じ値を目印（`debug_selector`）と読み上げ用の名前に付ける。
-use crate::gpui_views::fonts::ICON_FAMILY;
+use crate::gpui_views::fonts::{ICON_FAMILY, MONO_FAMILY, mono_fallbacks};
 use crate::gpui_views::probe::{self, Role};
-use crate::gpui_views::theme::{BODY, BUTTON, DARK, HEADING, Palette, SMALL, WIDGET_RADIUS, color};
+use crate::gpui_views::theme::{
+    BODY, BUTTON, DARK, HEADING, MONO, Palette, SMALL, WIDGET_RADIUS, color,
+};
 use crate::models::domain::display::Severity;
 use gpui::{
     App, AppContext as _, ClickEvent, Div, ElementId, InteractiveElement as _, ParentElement as _,
@@ -96,6 +98,62 @@ pub fn small(p: &Palette, s: &str) -> Stateful<Div> {
 /// 区画の見出し。
 pub fn section(p: &Palette, s: &str) -> Stateful<Div> {
     text(s, HEADING, strong_color(p))
+}
+
+/// 選択の欄（eguiの`ComboBox`）。選んでいる値と下向きの印を出す。名前は読み上げ用で、画面では右に別のラベルとして出す。
+pub fn combo(p: &Palette, id: impl Into<ElementId>, name: &str, current: &str) -> Stateful<Div> {
+    let (bg, hover, fg) = button_colors(p);
+    tagged(id, Role::ComboBox, name)
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(6.0))
+        .py(px(2.0))
+        .rounded(WIDGET_RADIUS)
+        .bg(color(bg))
+        .hover(move |s| s.bg(color(hover)))
+        .text_color(color(fg))
+        .text_size(BUTTON)
+        .cursor_pointer()
+        .child(current.to_string())
+        // eguiのComboBoxの印は描くだけで読み上げに出ないので、`icon`（ラベルとして記録する）を使わない。
+        .child(
+            div()
+                .font_family(ICON_FAMILY)
+                .child(crate::gpui_views::icons::CARET_DOWN),
+        )
+}
+
+/// 等幅の文字（eguiの`monospace`）。
+pub fn mono(s: &str, hex: u32) -> Stateful<Div> {
+    let mut d = text(s, MONO, hex).font_family(MONO_FAMILY);
+    d.text_style().font_fallbacks = Some(mono_fallbacks());
+    d
+}
+
+/// 時刻と本文を1つのラベルにした行。時刻は等幅の淡い色で、本文は区画の幅で折り返す。
+/// 読み上げではeguiと同じく「時刻  本文」の1つの文字として読ませる。
+pub fn timed(p: &Palette, t: &str, s: &str) -> Stateful<Div> {
+    let mut time = div()
+        .flex_shrink_0()
+        .font_family(MONO_FAMILY)
+        .text_size(MONO)
+        .text_color(color(p.weak))
+        .child(SelectableText::new(next_id(), t.to_string()));
+    time.text_style().font_fallbacks = Some(mono_fallbacks());
+    tagged(next_id(), Role::Label, &format!("{t}  {s}"))
+        .flex()
+        .items_start()
+        .gap(px(8.0))
+        .child(time)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(BODY)
+                .text_color(color(p.text))
+                .child(SelectableText::new(next_id(), s.to_string())),
+        )
 }
 
 /// 長い文言を末尾で省略する。全文は乗ったときのツールチップに出す。

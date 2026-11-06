@@ -1,6 +1,8 @@
 //! 画面の枠（上部バー、本文、状態表示）とGPUIのアプリ。
 use crate::controllers::gui::app::{Action, AppVm, Forms, GuiController, REFRESH_SECS, TabVm};
+use crate::controllers::gui::dashboard::live_log::LiveAction;
 use crate::controllers::gui::dashboard::memory::MemAction;
+use crate::gpui_views::dashboard::detail::DetailUi;
 use crate::gpui_views::fonts::{BODY_FAMILY, body_fallbacks, install};
 use crate::gpui_views::header;
 use crate::gpui_views::input::FormInputs;
@@ -73,6 +75,7 @@ pub struct CumonRoot {
     split_drag: Option<SplitDrag>,
     focus: FocusHandle,
     pub(crate) inputs: FormInputs,
+    pub(crate) detail_ui: DetailUi,
     session_scroll: ScrollHandle,
     _tick: Task<()>,
     _appearance: Subscription,
@@ -108,6 +111,7 @@ impl CumonRoot {
             split_drag: None,
             focus,
             inputs: FormInputs::new(window, cx),
+            detail_ui: DetailUi::default(),
             session_scroll: ScrollHandle::new(),
             _tick: tick,
             _appearance: appearance,
@@ -122,6 +126,11 @@ impl CumonRoot {
     /// 書き換えられるcontroller。
     pub fn controller_mut(&mut self) -> &mut GuiController {
         &mut self.ctl
+    }
+
+    /// 再生位置のスライダーの値。
+    pub fn replay_slider_value(&self, cx: &App) -> Option<f32> {
+        self.detail_ui.slider_value(cx)
     }
 
     /// 文字の入力欄の値を、描く順に返す。
@@ -152,6 +161,30 @@ impl Acts {
     pub fn send(&self, a: Action, _: &mut Window, cx: &mut App) {
         // 窓を閉じた後に届いた操作は、受け取る画面が無いので捨てる。
         let _ = self.0.update(cx, |r, cx| r.act(a, cx));
+    }
+
+    /// `Forms`を`f`で書き換えてから`a`を届ける受け口。チェックや選択のように、入力欄の値と操作を一緒に変えるときに使う。
+    pub fn edit(
+        &self,
+        f: impl Fn(&mut Forms) + 'static,
+        a: Action,
+    ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        let root = self.0.clone();
+        move |_, _, cx| {
+            let _ = root.update(cx, |r, cx| {
+                f(r.ctl.forms_mut());
+                r.detail_ui.source_open = false;
+                r.act(a.clone(), cx);
+            });
+        }
+    }
+
+    /// 発生元の候補の一覧を開く、または閉じる。
+    pub fn set_source_open(&self, open: bool, _: &mut Window, cx: &mut App) {
+        let _ = self.0.update(cx, |r, cx| {
+            r.detail_ui.source_open = open;
+            cx.notify();
+        });
     }
 
     /// 中段のつまみのドラッグを始める。動きと離す操作は根のビューが窓全体で受ける。
@@ -190,12 +223,32 @@ impl Render for CumonRoot {
         });
         let focus = self.focus.clone();
         self.inputs.sync(self.ctl.forms(), window, cx);
+        let (replay, jump) = match &self.ctl.vm().body {
+            TabVm::Dashboard(d) => {
+                let detail = d.detail.as_ref();
+                (
+                    detail
+                        .and_then(|d| d.replay.as_ref())
+                        .map(|r| (r.len, r.position)),
+                    detail
+                        .and_then(|d| d.live.as_ref())
+                        .is_some_and(|l| l.jump_to_bottom),
+                )
+            }
+            _ => (None, false),
+        };
+        self.detail_ui.prepare(replay, jump, window, cx);
+        if jump {
+            // eguiは最下端へ送った描画の後にJumpDoneを返す。GPUIでは送る指示を出したここで返す。
+            self.ctl.handle(Action::Live(LiveAction::JumpDone));
+        }
         let Self {
             ctl,
             plots,
             body: body_size,
             inputs,
             session_scroll,
+            detail_ui,
             ..
         } = self;
         let vm = ctl.vm();
@@ -247,7 +300,7 @@ impl Render for CumonRoot {
                 p,
                 &acts,
                 &mut plots,
-                (inputs, session_scroll),
+                (inputs, session_scroll, detail_ui),
                 body_size,
             ))
             .child(status(vm, p))
@@ -289,7 +342,7 @@ fn body(
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
-    (inputs, scroll): (&FormInputs, &ScrollHandle),
+    (inputs, scroll, detail_ui): (&FormInputs, &ScrollHandle, &DetailUi),
     size: &Rc<Cell<(f32, f32)>>,
 ) -> impl IntoElement {
     let measured = size.clone();
@@ -317,7 +370,7 @@ fn body(
                     p,
                     acts,
                     plots,
-                    (inputs, scroll),
+                    (inputs, scroll, detail_ui),
                     size.get(),
                 )
                 .into_any_element(),
