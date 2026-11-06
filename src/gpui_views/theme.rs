@@ -82,6 +82,13 @@ pub fn series(c: Option<usize>, p: &Palette) -> u32 {
     c.map_or(p.weak, |i| SERIES[i % SERIES.len()])
 }
 
+/// `hex`の色を不透明度`a`倍にする（eguiの`gamma_multiply`と同じ見た目）。
+pub fn with_alpha(hex: u32, a: f32) -> gpui::Hsla {
+    let mut c: gpui::Hsla = color(hex).into();
+    c.a *= a;
+    c
+}
+
 /// 表示中のテーマの色。
 pub fn palette(dark: bool) -> &'static Palette {
     if dark { &DARK } else { &LIGHT }

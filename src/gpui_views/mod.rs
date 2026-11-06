@@ -1,4 +1,5 @@
 //! GPUIで描く画面。
+pub mod a11y;
 pub mod app;
 pub mod app_menu;
 pub mod dashboard;

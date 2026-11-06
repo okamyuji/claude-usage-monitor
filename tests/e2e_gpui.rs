@@ -1045,3 +1045,227 @@ fn live_source_combo_opens_filters_and_closes() {
     h.run();
     assert!(h.query_by_label("すべて").is_none(), "外を押すと閉じる");
 }
+
+mod calendar_e2e {
+    use super::*;
+
+    fn open_calendar(env: &common::gui::GuiEnv) -> GpuiHarness {
+        let mut h = env.gpui_harness();
+        h.get_by_label("カレンダー").click();
+        h.run();
+        assert_eq!(h.with_state(|c| c.vm().tab), Tab::Calendar);
+        h
+    }
+
+    #[test]
+    fn calendar_tab_shows_week_legend_and_bands() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let h = open_calendar(&env);
+        h.get_by_label("2026年9/20〜9/26");
+        h.get_by_label("09/20(日)");
+        h.get_by_label("09/26(土)");
+        h.get_by_label("1 セッション");
+        h.get_by_label("app 1");
+        h.get_by_label_contains("設計の相談");
+        h.get_by_label("帯を押すと詳細を出します");
+    }
+
+    #[test]
+    fn calendar_color_by_and_week_navigation() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label("プロファイル別").click();
+        h.run();
+        h.get_by_label("default 1");
+        assert!(h.query_by_label("app 1").is_none());
+        h.get_by_label_contains("前週").click();
+        h.run();
+        h.get_by_label("2026年9/13〜9/19");
+        h.get_by_label("この週の記録はありません");
+        h.get_by_label("今週へ").click();
+        h.run();
+        h.get_by_label("2026年9/20〜9/26");
+    }
+
+    #[test]
+    fn next_week_is_disabled_on_this_week() {
+        let env = gui_env(now());
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("次週").click();
+        h.run();
+        h.get_by_label("2026年9/20〜9/26");
+    }
+
+    #[test]
+    fn headless_runs_are_hidden_until_checked() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        seed_session_with_turns(&env, "h1", "一括の要約", SessionKind::Headless, None);
+        let mut h = open_calendar(&env);
+        assert!(h.query_by_label_contains("一括の要約").is_none());
+        h.get_by_label("1 セッション");
+        h.get_by_label("ヘッドレスも出す（1件）").click();
+        h.run();
+        h.get_by_label_contains("一括の要約");
+        h.get_by_label("2 セッション");
+    }
+
+    #[test]
+    fn calendar_band_opens_detail_without_touching_dashboard_selection() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("ターン").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+        assert_eq!(
+            h.with_state(|c| c.calendar_selected().map(str::to_string)),
+            Some("s1".to_string())
+        );
+        h.get_by_label_contains("のターン");
+        h.get_by_label("ダッシュボード").click();
+        h.run();
+        assert_eq!(
+            h.with_state(|c| c.dash_selected().map(str::to_string)),
+            None
+        );
+        h.get_by_label("左の一覧からセッションを選んでください");
+        h.get_by_label("カレンダー").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+    }
+
+    #[test]
+    fn calendar_detail_replay_has_its_own_slider() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = env.gpui_harness();
+        h.get_by_label("履歴").click();
+        h.run();
+        h.get_by_label("設計の相談").click();
+        h.run();
+        h.get_by_label("再生").click();
+        h.run();
+        h.get_by_label_contains("次のターン").click();
+        h.run();
+        assert_eq!(h.replay_slider_value(), Some(1.0));
+        h.get_by_label("カレンダー").click();
+        h.run();
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("再生").click();
+        h.run();
+        h.get_by_label_contains("1 / 3");
+        assert_eq!(
+            h.replay_slider_value(),
+            Some(0.0),
+            "カレンダーの詳細のつまみは、ダッシュボードの位置を持ち込まない"
+        );
+        h.get_by_label_contains("次のターン").click();
+        h.run();
+        h.get_by_label_contains("2 / 3");
+        assert_eq!(
+            h.replay_slider_value(),
+            Some(1.0),
+            "つまみも次のターンへ動く"
+        );
+    }
+
+    #[test]
+    fn calendar_band_opens_summary_with_recap() {
+        use claude_usage_monitor::models::domain::records::NoteRecord;
+        use claude_usage_monitor::models::domain::transcript::NoteKind;
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        seed_session_with_turns(&env, "s2", "別の作業", SessionKind::Interactive, None);
+        env.store
+            .upsert_note(&NoteRecord {
+                uuid: "n1".into(),
+                session_id: "s1".into(),
+                ts: now(),
+                kind: NoteKind::Recap,
+                text: "トップページを速くしました".into(),
+            })
+            .unwrap();
+        for id in ["s1", "s2"] {
+            env.store.set_ai_title(id, &format!("{id}の題名")).unwrap();
+        }
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("要約");
+        h.get_by_label_contains("トップページを速くしました");
+        h.get_by_label("依頼");
+        h.get_by_label("依頼の一覧");
+        h.get_by_label("ツール名");
+        assert!(h.query_by_label("s1の題名").is_none());
+        h.get_by_label_contains("別の作業").click();
+        h.run();
+        h.get_by_label_contains("離席中の要約はありません");
+        h.get_by_label("s2の題名");
+    }
+
+    #[test]
+    fn moving_week_clears_calendar_detail() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        let mut h = open_calendar(&env);
+        h.get_by_label_contains("設計の相談").click();
+        h.run();
+        h.get_by_label("ターン").click();
+        h.run();
+        h.get_by_label("Read: src/main.rs");
+        h.get_by_label_contains("前週").click();
+        h.run();
+        h.get_by_label("帯を押すと詳細を出します");
+        assert_eq!(
+            h.with_state(|c| c.calendar_selected().map(str::to_string)),
+            None
+        );
+    }
+
+    #[test]
+    fn headless_only_week_is_not_called_empty() {
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "h1", "一括の要約", SessionKind::Headless, None);
+        let h = open_calendar(&env);
+        h.get_by_label("0 セッション");
+        h.get_by_label("ヘッドレスも出す（1件）");
+        assert!(h.query_by_label("この週の記録はありません").is_none());
+    }
+
+    #[test]
+    fn calendar_renders_in_light_and_dark() {
+        use claude_usage_monitor::controllers::gui::app::Action;
+        use claude_usage_monitor::models::domain::settings::Theme;
+        let env = gui_env(now());
+        seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+        for t in [Theme::Light, Theme::Dark] {
+            let mut h = env.gpui_harness();
+            h.with_state_mut(|c| c.handle(Action::SetTheme(t)));
+            h.get_by_label("カレンダー").click();
+            h.run();
+            assert_eq!(h.with_state(|c| c.vm().theme), t);
+            h.get_by_label_contains("設計の相談");
+            h.get_by_label("2026年9/20〜9/26");
+        }
+    }
+
+    #[test]
+    fn calendar_splitter_moves_only_the_calendar_ratio() {
+        let env = gui_env(now());
+        let mut h = open_calendar(&env);
+        let (dash, cal) =
+            h.with_state_mut(|c| (c.forms_mut().split_ratio, c.forms_mut().calendar_split));
+        h.get_by_label("左右の境界").drag_by(-80.0);
+        h.run();
+        let (dash2, cal2) =
+            h.with_state_mut(|c| (c.forms_mut().split_ratio, c.forms_mut().calendar_split));
+        assert_eq!(dash2, dash, "ダッシュボードの比率は変えない");
+        assert!(cal2 < cal, "{cal} -> {cal2}");
+    }
+}

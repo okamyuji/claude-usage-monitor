@@ -10,7 +10,7 @@ use crate::gpui_views::plot::math::{
 pub use crate::gpui_views::plot::state::PlotState;
 use crate::gpui_views::plot::state::{DragKind, rect, tooltip_origin};
 use crate::gpui_views::probe::Role;
-use crate::gpui_views::theme::{BODY, Palette, SMALL, color};
+use crate::gpui_views::theme::{BODY, Palette, SMALL, color, with_alpha};
 use crate::gpui_views::widgets::{tagged, text};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, DispatchPhase, Entity, Hsla, InteractiveElement as _,
@@ -145,12 +145,6 @@ impl Plot {
         self.hlines.push((y, hex));
         self
     }
-}
-
-fn with_alpha(hex: u32, a: f32) -> Hsla {
-    let mut c: Hsla = color(hex).into();
-    c.a *= a;
-    c
 }
 
 fn run(text: &str, c: Hsla) -> TextRun {

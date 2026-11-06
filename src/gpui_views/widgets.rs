@@ -2,6 +2,7 @@
 //!
 //! 文字はeguiと同じく選んで写せるようにする。部品は描くたびに役割と名前を`probe`へ積み、
 //! 同じ値を目印（`debug_selector`）と読み上げ用の名前に付ける。
+use crate::gpui_views::a11y::DisabledExt as _;
 use crate::gpui_views::fonts::{ICON_FAMILY, MONO_FAMILY, mono_fallbacks};
 use crate::gpui_views::probe::{self, Role};
 use crate::gpui_views::theme::{
@@ -190,7 +191,10 @@ impl gpui::Render for Tip {
     }
 }
 
-fn tip(p: &Palette, s: &str) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
+pub(crate) fn tip(
+    p: &Palette,
+    s: &str,
+) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView + 'static {
     let text = SharedString::from(s.to_string());
     let colors = (p.text, p.card, p.border);
     move |_, cx| {
@@ -298,6 +302,22 @@ pub fn icon_button(
         .on_click(on_click)
 }
 
+/// 押せないボタン（eguiの`add_enabled(false, Button)`）。淡く描き、読み上げでも無効として読ませる。
+pub fn disabled_button(p: &Palette, id: impl Into<ElementId>, s: &str) -> impl gpui::IntoElement {
+    let (bg, _, fg) = button_colors(p);
+    // eguiの無効のボタンは、乗せても色が変わらず、押しても何もしない。
+    tagged(id, Role::Button, s)
+        .px(px(10.0))
+        .py(px(4.0))
+        .rounded(WIDGET_RADIUS)
+        .bg(color(bg))
+        .text_size(BUTTON)
+        .text_color(color(fg))
+        .child(s.to_string())
+        .opacity(0.5)
+        .a11y_disabled(true)
+}
+
 /// 小さいボタン（eguiの`small_button`）。文字は補足の大きさで、上下の余白を持たない。
 pub fn small_button(
     p: &Palette,
@@ -399,7 +419,7 @@ mod tests {
     use super::*;
     use crate::gpui_views::probe::{self, Role};
     use crate::gpui_views::theme::LIGHT;
-    use gpui::{Context, IntoElement, Modifiers, Render, Window, div};
+    use gpui::{Context, Modifiers, Render, Window, div};
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -408,7 +428,7 @@ mod tests {
     }
 
     impl Render for Parts {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
             frame_start();
             let c = self.clicks.clone();
             div()

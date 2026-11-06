@@ -64,6 +64,7 @@ struct SplitDrag {
     start_x: f32,
     avail: f32,
     left: f32,
+    place: fn(&mut Forms) -> &mut f32,
 }
 
 /// 根のビュー。controllerを持ち、描き直しと操作の受け口になる。
@@ -76,7 +77,10 @@ pub struct CumonRoot {
     focus: FocusHandle,
     pub(crate) inputs: FormInputs,
     pub(crate) detail_ui: DetailUi,
+    /// カレンダーの詳細。eguiのスクロールの状態は親のuiごとに別なので、タブごとに持つ。
+    calendar_detail_ui: DetailUi,
     session_scroll: ScrollHandle,
+    calendar_scroll: ScrollHandle,
     _tick: Task<()>,
     _appearance: Subscription,
 }
@@ -112,7 +116,9 @@ impl CumonRoot {
             focus,
             inputs: FormInputs::new(window, cx),
             detail_ui: DetailUi::default(),
+            calendar_detail_ui: DetailUi::default(),
             session_scroll: ScrollHandle::new(),
+            calendar_scroll: ScrollHandle::new(),
             _tick: tick,
             _appearance: appearance,
         }
@@ -130,7 +136,22 @@ impl CumonRoot {
 
     /// 再生位置のスライダーの値。
     pub fn replay_slider_value(&self, cx: &App) -> Option<f32> {
-        self.detail_ui.slider_value(cx)
+        self.active_detail().slider_value(cx)
+    }
+
+    fn active_detail(&self) -> &DetailUi {
+        match self.ctl.vm().body {
+            TabVm::Calendar(_) => &self.calendar_detail_ui,
+            _ => &self.detail_ui,
+        }
+    }
+
+    /// 表示中のタブの詳細の状態。
+    pub(crate) fn active_detail_mut(&mut self) -> &mut DetailUi {
+        match self.ctl.vm().body {
+            TabVm::Calendar(_) => &mut self.calendar_detail_ui,
+            _ => &mut self.detail_ui,
+        }
     }
 
     /// 文字の入力欄の値を、描く順に返す。
@@ -173,7 +194,7 @@ impl Acts {
         move |_, _, cx| {
             let _ = root.update(cx, |r, cx| {
                 f(r.ctl.forms_mut());
-                r.detail_ui.source_open = false;
+                r.active_detail_mut().source_open = false;
                 r.act(a.clone(), cx);
             });
         }
@@ -182,18 +203,26 @@ impl Acts {
     /// 発生元の候補の一覧を開く、または閉じる。
     pub fn set_source_open(&self, open: bool, _: &mut Window, cx: &mut App) {
         let _ = self.0.update(cx, |r, cx| {
-            r.detail_ui.source_open = open;
+            r.active_detail_mut().source_open = open;
             cx.notify();
         });
     }
 
     /// 中段のつまみのドラッグを始める。動きと離す操作は根のビューが窓全体で受ける。
-    pub fn drag_split(&self, x: Pixels, avail: f32, left: f32, _: &mut Window, cx: &mut App) {
+    /// `(avail, left, place)`は押したときの空き幅、左の幅、書き換える比率の場所。
+    pub fn drag_split(
+        &self,
+        x: Pixels,
+        (avail, left, place): (f32, f32, fn(&mut Forms) -> &mut f32),
+        _: &mut Window,
+        cx: &mut App,
+    ) {
         let _ = self.0.update(cx, |r, _| {
             r.split_drag = Some(SplitDrag {
                 start_x: f32::from(x),
                 avail,
                 left,
+                place,
             })
         });
     }
@@ -210,7 +239,7 @@ impl Render for CumonRoot {
                 return;
             }
             let dx = f32::from(ev.position.x) - d.start_x;
-            r.ctl.forms_mut().split_ratio = drag_ratio(d.avail, d.left, dx);
+            *(d.place)(r.ctl.forms_mut()) = drag_ratio(d.avail, d.left, dx);
             cx.notify();
         });
         let on_up = cx.listener(|r, _: &MouseUpEvent, _, _| r.split_drag = None);
@@ -223,21 +252,18 @@ impl Render for CumonRoot {
         });
         let focus = self.focus.clone();
         self.inputs.sync(self.ctl.forms(), window, cx);
-        let (replay, jump) = match &self.ctl.vm().body {
-            TabVm::Dashboard(d) => {
-                let detail = d.detail.as_ref();
-                (
-                    detail
-                        .and_then(|d| d.replay.as_ref())
-                        .map(|r| (r.len, r.position)),
-                    detail
-                        .and_then(|d| d.live.as_ref())
-                        .is_some_and(|l| l.jump_to_bottom),
-                )
-            }
-            _ => (None, false),
+        let detail = match &self.ctl.vm().body {
+            TabVm::Dashboard(d) => d.detail.as_ref(),
+            TabVm::Calendar(c) => c.detail.as_ref(),
+            _ => None,
         };
-        self.detail_ui.prepare(replay, jump, window, cx);
+        let replay = detail
+            .and_then(|d| d.replay.as_ref())
+            .map(|r| (r.len, r.position));
+        let jump = detail
+            .and_then(|d| d.live.as_ref())
+            .is_some_and(|l| l.jump_to_bottom);
+        self.active_detail_mut().prepare(replay, jump, window, cx);
         if jump {
             // eguiは最下端へ送った描画の後にJumpDoneを返す。GPUIでは送る指示を出したここで返す。
             self.ctl.handle(Action::Live(LiveAction::JumpDone));
@@ -248,7 +274,9 @@ impl Render for CumonRoot {
             body: body_size,
             inputs,
             session_scroll,
+            calendar_scroll,
             detail_ui,
+            calendar_detail_ui,
             ..
         } = self;
         let vm = ctl.vm();
@@ -300,7 +328,13 @@ impl Render for CumonRoot {
                 p,
                 &acts,
                 &mut plots,
-                (inputs, session_scroll, detail_ui),
+                (
+                    inputs,
+                    session_scroll,
+                    calendar_scroll,
+                    detail_ui,
+                    calendar_detail_ui,
+                ),
                 body_size,
             ))
             .child(status(vm, p))
@@ -342,7 +376,13 @@ fn body(
     p: &'static Palette,
     acts: &Acts,
     plots: &mut Plots,
-    (inputs, scroll, detail_ui): (&FormInputs, &ScrollHandle, &DetailUi),
+    (inputs, scroll, calendar_scroll, detail_ui, calendar_detail_ui): (
+        &FormInputs,
+        &ScrollHandle,
+        &ScrollHandle,
+        &DetailUi,
+        &DetailUi,
+    ),
     size: &Rc<Cell<(f32, f32)>>,
 ) -> impl IntoElement {
     let measured = size.clone();
@@ -372,6 +412,15 @@ fn body(
                     plots,
                     (inputs, scroll, detail_ui),
                     size.get(),
+                )
+                .into_any_element(),
+                TabVm::Calendar(c) => crate::gpui_views::tabs::calendar::render(
+                    c,
+                    forms,
+                    (calendar_scroll, calendar_detail_ui),
+                    p,
+                    acts,
+                    size.get().0,
                 )
                 .into_any_element(),
                 TabVm::Diagnostics(v) => div()

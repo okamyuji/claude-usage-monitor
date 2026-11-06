@@ -35,29 +35,16 @@ pub fn render(
     } else {
         TREND_COLLAPSED
     };
-    // 左、つまみ、右の間には部品の間隔が2つ入るので、その分を引いてから分ける（eguiの`item_spacing.x`）。
-    let avail = width - 2.0 * f32::from(GAP_X);
-    let (lw, rw) = split_widths(avail, forms.split_ratio);
-    let middle = div()
-        .flex_1()
-        .min_h(px(MIN_MIDDLE))
-        .flex_shrink_0()
-        .flex()
-        .gap(GAP_X)
-        .child(
-            card(p, false)
-                .w(px(lw))
-                .h_full()
-                .child(sessions::render(vm, inputs, scroll, p, acts)),
-        )
-        .child(splitter(p, acts, avail, lw))
-        .child(card(p, false).w(px(rw)).h_full().child(detail::render(
-            vm.detail.as_ref(),
-            forms,
-            detail_ui,
-            p,
-            acts,
-        )));
+    let middle = split(
+        p,
+        acts,
+        (forms.split_ratio, dash_ratio),
+        width,
+        sessions::render(vm, inputs, scroll, p, acts),
+        detail::render(vm.detail.as_ref(), forms, detail_ui, p, acts),
+    )
+    .min_h(px(MIN_MIDDLE))
+    .flex_shrink_0();
     let trend_area = card(p, false)
         .w_full()
         .h(px(trend_h))
@@ -78,9 +65,46 @@ pub fn render(
         .child(trend_area)
 }
 
+/// ダッシュボードの分割比の場所。
+pub fn dash_ratio(f: &mut Forms) -> &mut f32 {
+    &mut f.split_ratio
+}
+
+/// カレンダーの分割比の場所。タブごとに持ち、片方のつまみでもう片方の幅が変わらないようにする。
+pub fn calendar_ratio(f: &mut Forms) -> &mut f32 {
+    &mut f.calendar_split
+}
+
+/// 左右に分けた2つのカードとつまみ。`(ratio, place)`は今の比率と、つまみで書き換える比率の場所。
+pub fn split(
+    p: &'static Palette,
+    acts: &Acts,
+    (ratio, place): (f32, fn(&mut Forms) -> &mut f32),
+    width: f32,
+    left: impl IntoElement,
+    right: impl IntoElement,
+) -> Div {
+    // 左、つまみ、右の間には部品の間隔が2つ入るので、その分を引いてから分ける（eguiの`item_spacing.x`）。
+    let avail = width - 2.0 * f32::from(GAP_X);
+    let (lw, rw) = split_widths(avail, ratio);
+    div()
+        .flex_1()
+        .flex()
+        .gap(GAP_X)
+        .child(card(p, false).w(px(lw)).h_full().child(left))
+        .child(splitter(p, acts, avail, lw, place))
+        .child(card(p, false).w(px(rw)).h_full().child(right))
+}
+
 /// 中段の境界のつまみ。ドラッグすると比率が変わり、ウィンドウの幅に比例して伸縮する。
 /// eguiのつまみは名前を持たないので、読み上げ用の名前は付けず、テスト用の記録だけを残す。
-fn splitter(p: &Palette, acts: &Acts, avail: f32, left: f32) -> impl IntoElement {
+fn splitter(
+    p: &Palette,
+    acts: &Acts,
+    avail: f32,
+    left: f32,
+    place: fn(&mut Forms) -> &mut f32,
+) -> impl IntoElement {
     let (border, accent) = (p.border, p.accent);
     let down = acts.clone();
     let line = div()
@@ -96,7 +120,7 @@ fn splitter(p: &Palette, acts: &Acts, avail: f32, left: f32) -> impl IntoElement
         .justify_center()
         .cursor(CursorStyle::ResizeLeftRight)
         .on_mouse_down(MouseButton::Left, move |ev, w, cx| {
-            down.drag_split(ev.position.x, avail, left, w, cx)
+            down.drag_split(ev.position.x, (avail, left, place), w, cx)
         })
         .child(line)
 }

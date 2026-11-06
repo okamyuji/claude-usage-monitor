@@ -94,7 +94,7 @@ impl DetailUi {
             let sub = cx.subscribe(&state, |root, _, ev: &SliderEvent, cx| {
                 let SliderEvent::Change(v) = ev else { return };
                 let p = v.start().round() as usize;
-                root.detail_ui.seen_position = p;
+                root.active_detail_mut().seen_position = p;
                 root.controller_mut().forms_mut().replay_position = p;
                 root.act(Action::Dash(DashAction::Replay(ReplayAction::Seek(p))), cx);
             });
