@@ -359,12 +359,12 @@ mod tests {
     #[test]
     fn credential_debug_hides_token() {
         let c = Credential {
-            access_token: "secret-token".into(),
+            access_token: "not-a-real-token".into(),
             expires_at: None,
             subscription_type: Some("max".into()),
         };
         let shown = format!("{c:?}");
-        assert!(!shown.contains("secret-token"));
+        assert!(!shown.contains("not-a-real-token"));
         assert!(shown.contains("max"));
     }
 }

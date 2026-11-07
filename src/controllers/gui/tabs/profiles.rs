@@ -138,7 +138,7 @@ mod tests {
 
     fn cred(expires: Option<chrono::DateTime<Utc>>) -> Result<Credential, CredentialError> {
         Ok(Credential {
-            access_token: "secret".into(),
+            access_token: "not-a-real-token".into(),
             expires_at: expires,
             subscription_type: Some("max".into()),
         })
@@ -170,7 +170,7 @@ mod tests {
             ("認証情報なし（ログインが必要です）", "—")
         );
         assert!(s.dir.ends_with(".claude-sub"));
-        assert!(!format!("{vm:?}").contains("secret"));
+        assert!(!format!("{vm:?}").contains("not-a-real-token"));
     }
 
     #[test]

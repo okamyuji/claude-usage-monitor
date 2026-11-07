@@ -159,7 +159,7 @@ mod tests {
     fn fake_security(dir: &Path) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let p = dir.join("security");
-        std::fs::write(&p, "#!/bin/sh\n[ \"$3\" = \"svc\" ] && [ \"$4\" = \"-w\" ] && { echo ' secret '; exit 0; }\nexit 44\n").unwrap();
+        std::fs::write(&p, "#!/bin/sh\n[ \"$3\" = \"svc\" ] && [ \"$4\" = \"-w\" ] && { echo ' not-a-real-token '; exit 0; }\nexit 44\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
     }
@@ -169,7 +169,10 @@ mod tests {
     fn security_cli_reads_trimmed_password_or_none() {
         let d = tempfile::tempdir().unwrap();
         let cli = SecurityCli::with_program(fake_security(d.path()));
-        assert_eq!(cli.read("svc").unwrap().as_deref(), Some("secret"));
+        assert_eq!(
+            cli.read("svc").unwrap().as_deref(),
+            Some("not-a-real-token")
+        );
         assert_eq!(cli.read("other").unwrap(), None);
     }
 

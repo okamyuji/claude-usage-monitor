@@ -385,13 +385,13 @@ mod tests {
         let clock = Arc::new(FixedClock::at(Utc::now()));
         let snap = parse_usage(include_str!("../../../tests/fixtures/usage_ok.json")).unwrap();
         let api = Arc::new(FakeApi {
-            responses: HashMap::from([("t".to_string(), Ok(snap))]),
+            responses: HashMap::from([("not-a-real-token".to_string(), Ok(snap))]),
             calls: Mutex::new(vec![]),
         });
         let creds = Arc::new(FakeCreds(HashMap::from([(
             "default".to_string(),
             Ok(Credential {
-                access_token: "t".into(),
+                access_token: "not-a-real-token".into(),
                 expires_at: None,
                 subscription_type: None,
             }),
@@ -476,13 +476,13 @@ mod tests {
     ) -> (Daemon, Arc<FakeApi>) {
         let snap = parse_usage(include_str!("../../../tests/fixtures/usage_ok.json")).unwrap();
         let api = Arc::new(FakeApi {
-            responses: HashMap::from([("t".to_string(), Ok(snap))]),
+            responses: HashMap::from([("not-a-real-token".to_string(), Ok(snap))]),
             calls: Mutex::new(vec![]),
         });
         let creds = Arc::new(FakeCreds(HashMap::from([(
             "default".to_string(),
             Ok(Credential {
-                access_token: "t".into(),
+                access_token: "not-a-real-token".into(),
                 expires_at: None,
                 subscription_type: None,
             }),
