@@ -144,6 +144,14 @@ impl GpuiHarness {
         }
     }
 
+    /// `tick`を呼ばずに、タイマーの時計だけを`ms`進める。
+    pub fn advance_timers(&mut self, ms: u64) {
+        self.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(ms));
+        self.cx.run_until_parked();
+    }
+
     /// 1回描き直す。
     pub fn step(&mut self) {
         self.run();
@@ -157,6 +165,12 @@ impl GpuiHarness {
     /// controllerを書き換える。
     pub fn with_state_mut<R>(&mut self, f: impl FnOnce(&mut GuiController) -> R) -> R {
         self.root.update(&mut self.cx, |r, _| f(r.controller_mut()))
+    }
+
+    /// 前の描画がダークで描いたか。根のビューは描くたびに部品のテーマを画面の明暗へ合わせる。
+    pub fn drawn_dark(&mut self) -> bool {
+        self.cx
+            .update(|_, cx| gpui_component::ActiveTheme::theme(cx).is_dark())
     }
 
     /// 再生位置のスライダーの値。

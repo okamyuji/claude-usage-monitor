@@ -1,13 +1,19 @@
 //! グラフの操作の状態と、操作で範囲を動かす計算。描画はelement.rsに置く。
 use crate::views::plot::math::{self, Range2, Rect, to_screen};
 use gpui::{
-    Bounds, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollEvent,
-    point, px,
+    Bounds, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent,
+    Pixels, Point, ScrollEvent, point, px,
 };
 use std::collections::HashSet;
 
 /// ホバーのツールチップとポインタの間。
 const TOOLTIP_GAP: f32 = 12.0;
+/// クリックとみなす動きの上限。これを超えて動くまで、移動と矩形の拡大を始めない（eguiの`max_click_dist`）。
+const MAX_CLICK_DIST: f32 = 6.0;
+/// ホイール1行の量（eguiの`line_scroll_speed`）。
+const LINE_SCROLL: f32 = 40.0;
+/// 修飾キー付きのスクロールで、e倍の拡大になる量（eguiの`scroll_zoom_speed`の逆数）。
+const SCROLL_ZOOM_PER_E: f64 = 200.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DragKind {
@@ -21,6 +27,8 @@ pub(crate) struct Drag {
     pub(crate) kind: DragKind,
     pub(crate) start: Point<Pixels>,
     pub(crate) last: Point<Pixels>,
+    /// クリックの範囲を超えて動いたか。軸のドラッグは押したときから動いたものとする。
+    pub(crate) moved: bool,
 }
 
 /// 1つのグラフの状態。描画をまたいで持つ。
@@ -77,16 +85,19 @@ impl PlotState {
 
     pub(crate) fn mouse_down(&mut self, ev: &MouseDownEvent) {
         let Some(f) = self.frame else { return };
-        if ev.button == MouseButton::Left && ev.click_count >= 2 {
+        let at = ev.position;
+        if ev.button == MouseButton::Left && ev.click_count >= 2 && f.contains(&at) {
             self.range = None;
             self.drag = None;
             return;
         }
-        let at = ev.position;
+        // 軸の領域は枠と同じ幅（x軸）と高さ（y軸）で、左下の角はどちらでもない。
+        let in_x = at.x >= f.left() && at.x < f.right();
+        let in_y = at.y >= f.top() && at.y < f.bottom();
         let kind = match ev.button {
             MouseButton::Right if f.contains(&at) => DragKind::Box,
-            MouseButton::Left if at.y > f.bottom() => DragKind::Axis(0),
-            MouseButton::Left if at.x < f.left() => DragKind::Axis(1),
+            MouseButton::Left if at.y > f.bottom() && in_x => DragKind::Axis(0),
+            MouseButton::Left if at.x < f.left() && in_y => DragKind::Axis(1),
             MouseButton::Left if f.contains(&at) => DragKind::Pan,
             _ => return,
         };
@@ -94,6 +105,7 @@ impl PlotState {
             kind,
             start: at,
             last: at,
+            moved: matches!(kind, DragKind::Axis(_)),
         });
     }
 
@@ -115,6 +127,15 @@ impl PlotState {
         if ev.pressed_button.is_none() {
             self.drag = None;
             return;
+        }
+        if !d.moved {
+            let off = ev.position - d.start;
+            d.moved = f32::from(off.x).hypot(f32::from(off.y)) > MAX_CLICK_DIST;
+            if !d.moved {
+                d.last = ev.position;
+                self.drag = Some(d);
+                return;
+            }
         }
         let delta = ev.position - d.last;
         let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
@@ -145,7 +166,7 @@ impl PlotState {
         let Some(d) = self.drag.take() else {
             return false;
         };
-        if d.kind != DragKind::Box || ev.button != MouseButton::Right {
+        if d.kind != DragKind::Box || ev.button != MouseButton::Right || !d.moved {
             return true;
         }
         let Some((r, rc)) = self.current() else {
@@ -158,26 +179,76 @@ impl PlotState {
         true
     }
 
+    /// ホイール。`zoom`（⌘）なら拡大し、そうでなければ動かす。⇧は横だけ、⌥は縦だけにする。
     pub(crate) fn scroll(&mut self, ev: &ScrollEvent, zoom: bool) {
         let Some((r, rc)) = self.current() else {
             return;
         };
-        let d = ev.delta.pixel_delta(px(16.0));
+        let d = ev.delta.pixel_delta(px(LINE_SCROLL));
         let (dx, dy) = (f32::from(d.x), f32::from(d.y));
+        let axis = only_axis(&ev.modifiers);
+        let (dx, dy) = match axis {
+            Some(0) => (dx + dy, 0.0),
+            Some(_) => (0.0, dx + dy),
+            None => (dx, dy),
+        };
         if zoom {
-            // 修飾キー付きのスクロールは、200pxでe倍になる拡大に読み替える。
-            let f = ((dy as f64) / 200.0).exp();
-            let at = (f32::from(ev.position.x), f32::from(ev.position.y));
-            self.set(math::zoom(&r, rc, at, (f, f)));
+            let z = (f64::from(dx + dy) / SCROLL_ZOOM_PER_E).exp();
+            self.zoom_at(ev.position, z, axis);
         } else {
             self.set(math::pan(&r, rc, (dx, dy)));
         }
+    }
+
+    /// トラックパッドのピンチ。広げると`exp(delta)`倍に拡大する。⇧と⌥はホイールと同じ。
+    pub(crate) fn pinch(&mut self, ev: &PinchEvent) {
+        self.zoom_at(
+            ev.position,
+            f64::from(ev.delta).exp(),
+            only_axis(&ev.modifiers),
+        );
+    }
+
+    fn zoom_at(&mut self, at: Point<Pixels>, z: f64, axis: Option<usize>) {
+        let Some((r, rc)) = self.current() else {
+            return;
+        };
+        let factor = match axis {
+            Some(0) => (z, 1.0),
+            Some(_) => (1.0, z),
+            None => (z, z),
+        };
+        self.set(math::zoom(
+            &r,
+            rc,
+            (f32::from(at.x), f32::from(at.y)),
+            factor,
+        ));
     }
 
     pub(crate) fn toggle(&mut self, name: &str) {
         if !self.hidden.remove(name) {
             self.hidden.insert(name.to_string());
         }
+    }
+
+    /// 凡例の⌥クリック。ほかの系列がすべて隠れていれば全部を出し、そうでなければ`name`だけを残す。
+    pub(crate) fn focus(&mut self, name: &str, names: &[String]) {
+        let others = || names.iter().filter(|n| n.as_str() != name);
+        if others().all(|n| self.hidden.contains(n)) {
+            self.hidden.clear();
+        } else {
+            self.hidden = others().cloned().collect();
+        }
+    }
+}
+
+/// ⇧だけなら横（0）、⌥だけなら縦（1）。
+fn only_axis(m: &Modifiers) -> Option<usize> {
+    match (m.shift, m.alt) {
+        (true, false) => Some(0),
+        (false, true) => Some(1),
+        _ => None,
     }
 }
 
@@ -272,6 +343,36 @@ mod tests {
         // 枠の左端と下端の線の上。左端は枠の中、下端は枠の外で軸でもない。
         assert_eq!(at(MouseButton::Left, 10.0, 50.0), Some(DragKind::Pan));
         assert_eq!(at(MouseButton::Left, 100.0, 120.0), None);
+        // 左下の角はどちらの軸でもない。
+        assert_eq!(at(MouseButton::Left, 5.0, 130.0), None);
+    }
+
+    #[test]
+    fn double_click_resets_only_inside_the_frame() {
+        let dbl = |x: f32, y: f32| {
+            let mut s = plot();
+            s.range = Some(R);
+            s.mouse_down(&MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(x), px(y)),
+                modifiers: Modifiers::default(),
+                click_count: 2,
+                first_mouse: false,
+            });
+            s.is_auto()
+        };
+        assert!(dbl(100.0, 50.0));
+        assert!(!dbl(100.0, 130.0));
+    }
+
+    #[test]
+    fn alt_click_keeps_only_that_series_then_shows_all_again() {
+        let names = ["a".to_string(), "b".to_string(), "c".to_string()];
+        let mut s = plot();
+        s.focus("a", &names);
+        assert!(!s.is_hidden("a") && s.is_hidden("b") && s.is_hidden("c"));
+        s.focus("a", &names);
+        assert!(s.hidden.is_empty());
     }
 
     #[test]
@@ -302,11 +403,13 @@ mod tests {
     fn box_zooms_only_when_released_with_the_right_button() {
         let mut s = plot();
         down(&mut s, MouseButton::Right, 50.0, 40.0);
+        drag_to(&mut s, 150.0, 100.0);
         assert!(up(&mut s, MouseButton::Left, 150.0, 100.0));
         assert_eq!(s.range, None);
 
         let mut s = plot();
         down(&mut s, MouseButton::Right, 50.0, 40.0);
+        drag_to(&mut s, 150.0, 100.0);
         assert!(up(&mut s, MouseButton::Right, 150.0, 100.0));
         let rc = rect(s.frame.unwrap());
         assert_eq!(

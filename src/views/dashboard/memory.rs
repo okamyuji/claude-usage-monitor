@@ -6,7 +6,8 @@ use crate::views::app::Acts;
 use crate::views::theme::{BODY, GAP_X, GAP_Y, Palette, color};
 use crate::views::widgets::{button, card, help, label, small_button, strong, text};
 use gpui::{
-    Div, InteractiveElement as _, MouseButton, ParentElement as _, Stateful, Styled as _, div, hsla,
+    Div, InteractiveElement as _, MouseButton, ParentElement as _, Role, Stateful,
+    StatefulInteractiveElement as _, Styled as _, div, hsla,
 };
 
 /// Desktopのカード。
@@ -31,6 +32,8 @@ pub fn desktop(d: &DesktopMemoryVm, p: &'static Palette, acts: &Acts) -> Div {
 /// 確認ダイアログ。窓全体を覆い、枠の外を押したときはキャンセルとして扱う。
 pub fn confirm(c: &ConfirmExit, p: &'static Palette, acts: &Acts) -> Stateful<Div> {
     let dialog = card(p, false)
+        .id("confirm-dialog")
+        .role(Role::Dialog)
         .flex()
         .flex_col()
         .gap(GAP_Y)
@@ -73,6 +76,8 @@ pub fn confirm(c: &ConfirmExit, p: &'static Palette, acts: &Acts) -> Stateful<Di
         .justify_center()
         // 背景は黒で、アルファは100（255中）。
         .bg(hsla(0.0, 0.0, 0.0, 100.0 / 255.0))
+        // 後ろの部品へ押す操作もホイールも届かないようにする。
+        .occlude()
         .on_mouse_down(MouseButton::Left, move |_, w, cx| {
             cancel.send(Action::Memory(MemAction::Cancel), w, cx)
         })

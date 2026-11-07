@@ -454,8 +454,32 @@ pub fn checkbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::views::a11y::node_of;
     use crate::views::probe::{self, Role};
     use crate::views::theme::LIGHT;
+
+    #[test]
+    fn toggles_and_disabled_buttons_expose_their_state() {
+        let none = |_: &ClickEvent, _: &mut Window, _: &mut App| {};
+        for on in [true, false] {
+            let want = Some(if on { Toggled::True } else { Toggled::False });
+            let tab = node_of(selectable(&LIGHT, "t", on, "5時間", none));
+            assert_eq!(
+                (tab.role(), tab.label(), tab.toggled()),
+                (gpui::Role::Button, Some("5時間"), want)
+            );
+            let check = node_of(checkbox(&LIGHT, "c", on, "通知", none));
+            assert_eq!(
+                (check.role(), check.label(), check.toggled()),
+                (gpui::Role::CheckBox, Some("通知"), want)
+            );
+        }
+        let next = node_of(disabled_button(&LIGHT, "n", "次週"));
+        assert_eq!(
+            (next.role(), next.label(), next.is_disabled()),
+            (gpui::Role::Button, Some("次週"), true)
+        );
+    }
     use gpui::{Context, Modifiers, Render, Window, div};
     use std::cell::Cell;
     use std::rc::Rc;

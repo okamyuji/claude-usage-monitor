@@ -14,9 +14,9 @@ use crate::views::probe::Role;
 use crate::views::theme::{BODY, Palette, SMALL, color, with_alpha};
 use crate::views::widgets::{tagged, text};
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, DispatchPhase, Entity, Hsla, InteractiveElement as _,
-    IntoElement, Length, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    PathBuilder, Pixels, Point, RenderOnce, ShapedLine, SharedString,
+    App, BorderStyle, Bounds, ContentMask, DispatchPhase, Div, Entity, Hsla,
+    InteractiveElement as _, IntoElement, Length, MouseButton, MouseMoveEvent, MouseUpEvent,
+    ParentElement as _, PathBuilder, Pixels, Point, RenderOnce, ShapedLine, SharedString,
     StatefulInteractiveElement as _, Styled as _, TextAlign, TextRun, Window, canvas, div, fill,
     font, outline, point, px, size,
 };
@@ -163,6 +163,79 @@ struct Layout {
     y_marks: Vec<(f64, f64)>,
 }
 
+/// 凡例。押すと系列を隠し、⌥で押すとその系列だけを残す。乗せた系列の線は太くなる。
+fn legend_box(lines: &[Line], state: &Entity<PlotState>, p: &Palette, cx: &App) -> Div {
+    let names: Vec<String> = lines
+        .iter()
+        .filter(|l| !l.name.is_empty())
+        .map(|l| l.name.to_string())
+        .collect();
+    let entries = lines.iter().filter(|l| !l.name.is_empty()).map(|l| {
+        let name = l.name.clone();
+        let names = names.clone();
+        let hidden = state.read(cx).is_hidden(&name);
+        let (toggle_state, hover_state) = (state.clone(), state.clone());
+        let (toggle_name, hover_name) = (name.clone(), name.clone());
+        tagged(
+            SharedString::from(format!("legend-{name}")),
+            Role::CheckBox,
+            &name,
+        )
+        .aria_toggled(if hidden {
+            gpui::Toggled::False
+        } else {
+            gpui::Toggled::True
+        })
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .text_size(SMALL)
+        .text_color(color(if hidden { p.weak } else { p.text }))
+        .cursor_pointer()
+        .child(
+            div()
+                .size(px(10.0))
+                .rounded_full()
+                .bg(color(p.track))
+                .flex()
+                .items_center()
+                .justify_center()
+                .children((!hidden).then(|| div().size(px(6.0)).rounded_full().bg(color(l.color)))),
+        )
+        .child(name.to_string())
+        // 凡例はグラフの上に載った別の部品なので、押してもグラフの移動やダブルクリックにしない。
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        .on_click(move |ev, _, cx| {
+            let alt = ev.modifiers().alt;
+            toggle_state.update(cx, |s, cx| {
+                if alt {
+                    s.focus(&toggle_name, &names);
+                } else {
+                    s.toggle(&toggle_name);
+                }
+                cx.notify();
+            })
+        })
+        .on_hover(move |on, _, cx| {
+            hover_state.update(cx, |s, cx| {
+                s.legend_hover = on.then(|| hover_name.to_string());
+                cx.notify();
+            })
+        })
+    });
+    div()
+        .absolute()
+        .top(px(4.0))
+        .right(px(4.0))
+        .p(px(4.0))
+        .rounded(px(4.0))
+        .bg(with_alpha(p.card, 0.75))
+        .flex()
+        .flex_col()
+        .children(entries)
+}
+
 impl RenderOnce for Plot {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = self.palette;
@@ -210,7 +283,7 @@ impl RenderOnce for Plot {
         let cross = near.as_ref().map(|(_, pt)| *pt);
         let drag_box = st
             .drag
-            .filter(|d| d.kind == DragKind::Box)
+            .filter(|d| d.kind == DragKind::Box && d.moved)
             .map(|d| (d.start, hover.unwrap_or(d.last)));
 
         let layout_state = self.state.clone();
@@ -292,66 +365,9 @@ impl RenderOnce for Plot {
         .absolute()
         .size_full();
 
-        let legend = self.legend.then(|| {
-            let entries = self.lines.iter().filter(|l| !l.name.is_empty()).map(|l| {
-                let name = l.name.clone();
-                let hidden = self.state.read(cx).is_hidden(&name);
-                let (toggle_state, hover_state) = (self.state.clone(), self.state.clone());
-                let (toggle_name, hover_name) = (name.clone(), name.clone());
-                tagged(
-                    SharedString::from(format!("legend-{name}")),
-                    Role::CheckBox,
-                    &name,
-                )
-                .aria_toggled(if hidden {
-                    gpui::Toggled::False
-                } else {
-                    gpui::Toggled::True
-                })
-                .flex()
-                .items_center()
-                .gap(px(3.0))
-                .text_size(SMALL)
-                .text_color(color(if hidden { p.weak } else { p.text }))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .size(px(10.0))
-                        .rounded_full()
-                        .bg(color(p.track))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .children(
-                            (!hidden)
-                                .then(|| div().size(px(6.0)).rounded_full().bg(color(l.color))),
-                        ),
-                )
-                .child(name.to_string())
-                .on_click(move |_, _, cx| {
-                    toggle_state.update(cx, |s, cx| {
-                        s.toggle(&toggle_name);
-                        cx.notify();
-                    })
-                })
-                .on_hover(move |on, _, cx| {
-                    hover_state.update(cx, |s, cx| {
-                        s.legend_hover = on.then(|| hover_name.to_string());
-                        cx.notify();
-                    })
-                })
-            });
-            div()
-                .absolute()
-                .top(px(4.0))
-                .right(px(4.0))
-                .p(px(4.0))
-                .rounded(px(4.0))
-                .bg(with_alpha(p.card, 0.75))
-                .flex()
-                .flex_col()
-                .children(entries)
-        });
+        let legend = self
+            .legend
+            .then(|| legend_box(&self.lines, &self.state, p, cx));
 
         let tip = tooltip.map(|t| {
             let lines: Vec<&str> = t.lines().collect();
@@ -372,7 +388,7 @@ impl RenderOnce for Plot {
                 .child(text(&t, BODY, p.text))
         });
 
-        let (s1, s2) = (state.clone(), state.clone());
+        let (s1, s2, s3) = (state.clone(), state.clone(), state.clone());
         div()
             .id(self.id)
             .relative()
@@ -395,8 +411,14 @@ impl RenderOnce for Plot {
             })
             .on_scroll(move |ev, _, cx| {
                 let zoom = ev.modifiers.secondary(cx);
-                state.update(cx, |s, cx| {
+                s3.update(cx, |s, cx| {
                     s.scroll(ev, zoom);
+                    cx.notify();
+                })
+            })
+            .on_pinch(move |ev, _, cx| {
+                state.update(cx, |s, cx| {
+                    s.pinch(ev);
                     cx.notify();
                 })
             })
@@ -855,6 +877,179 @@ mod tests {
         assert_eq!(
             tooltip_origin(outer, point(px(190.0), px(90.0)), tip),
             point(px(120.0), px(50.0))
+        );
+    }
+
+    #[test]
+    fn click_with_small_jitter_keeps_the_auto_range() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let c = frame_center(&state, vcx);
+        let j = c + point(px(2.0), px(1.0));
+        mouse_down(vcx, c, MouseButton::Left, 1);
+        vcx.simulate_mouse_move(j, Some(MouseButton::Left), Modifiers::default());
+        vcx.simulate_mouse_up(j, MouseButton::Left, Modifiers::default());
+        vcx.run_until_parked();
+        assert!(
+            state.read_with(vcx, |s, _| s.is_auto()),
+            "2pxの手ぶれで自動の範囲から外れた"
+        );
+    }
+
+    #[test]
+    fn double_click_on_the_legend_keeps_the_zoom() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let c = frame_center(&state, vcx);
+        mouse_down(vcx, c, MouseButton::Left, 1);
+        vcx.simulate_mouse_move(
+            c + point(px(40.0), px(0.0)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        vcx.simulate_mouse_up(
+            c + point(px(40.0), px(0.0)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        vcx.run_until_parked();
+        assert!(!state.read_with(vcx, |s, _| s.is_auto()));
+        let b = vcx.debug_bounds("checkbox:a").expect("legend");
+        mouse_down(vcx, b.center(), MouseButton::Left, 1);
+        vcx.simulate_mouse_up(b.center(), MouseButton::Left, Modifiers::default());
+        mouse_down(vcx, b.center(), MouseButton::Left, 2);
+        vcx.simulate_mouse_up(b.center(), MouseButton::Left, Modifiers::default());
+        vcx.run_until_parked();
+        assert!(
+            !state.read_with(vcx, |s, _| s.is_auto()),
+            "凡例のダブルクリックで範囲が戻った"
+        );
+    }
+
+    #[test]
+    fn double_click_on_the_x_axis_keeps_the_zoom() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let c = frame_center(&state, vcx);
+        mouse_down(vcx, c, MouseButton::Left, 1);
+        vcx.simulate_mouse_move(
+            c + point(px(40.0), px(0.0)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        vcx.simulate_mouse_up(
+            c + point(px(40.0), px(0.0)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        vcx.run_until_parked();
+        let f = state.read_with(vcx, |s, _| s.frame().unwrap());
+        let ax = point(f.center().x, f.bottom() + px(8.0));
+        mouse_down(vcx, ax, MouseButton::Left, 2);
+        vcx.simulate_mouse_up(ax, MouseButton::Left, Modifiers::default());
+        vcx.run_until_parked();
+        assert!(
+            !state.read_with(vcx, |s, _| s.is_auto()),
+            "x軸のダブルクリックで範囲が戻った"
+        );
+    }
+
+    #[test]
+    fn one_wheel_line_pans_forty_points() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let before = shown(&state, vcx);
+        let f = state.read_with(vcx, |s, _| s.frame().unwrap());
+        let c = f.center();
+        vcx.simulate_mouse_move(c, None, Modifiers::default());
+        vcx.simulate_event(ScrollEvent {
+            position: c,
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            ..Default::default()
+        });
+        vcx.run_until_parked();
+        let after = shown(&state, vcx);
+        let moved_px =
+            (after.y.0 - before.y.0) / before.height() * f64::from(f32::from(f.size.height));
+        assert!(
+            (moved_px.abs() - 40.0).abs() < 0.5,
+            "ホイール1行で{moved_px}pt動いた（40ptのはず）"
+        );
+    }
+
+    #[test]
+    fn trackpad_pinch_zooms_in() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let before = shown(&state, vcx);
+        let c = frame_center(&state, vcx);
+        vcx.simulate_mouse_move(c, None, Modifiers::default());
+        vcx.simulate_event(gpui::PinchEvent {
+            position: c,
+            delta: 0.5,
+            ..Default::default()
+        });
+        vcx.run_until_parked();
+        let after = shown(&state, vcx);
+        assert!(
+            after.width() < before.width(),
+            "ピンチで拡大しない: {before:?} -> {after:?}"
+        );
+    }
+
+    #[test]
+    fn alt_click_on_the_legend_shows_only_that_series() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let b = vcx.debug_bounds("checkbox:a").expect("legend");
+        let alt = Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        vcx.simulate_click(b.center(), alt);
+        vcx.run_until_parked();
+        let (a, bb) = state.read_with(vcx, |s, _| (s.is_hidden("a"), s.is_hidden("b")));
+        assert!(!a && bb, "⌥クリックでaだけが残らない: a={a} b={bb}");
+    }
+
+    #[test]
+    fn cmd_shift_scroll_zooms_only_the_x_axis() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let before = shown(&state, vcx);
+        let c = frame_center(&state, vcx);
+        vcx.simulate_mouse_move(c, None, Modifiers::default());
+        let mut m = vcx.update(|_, cx| Modifiers::secondary_key(cx));
+        m.shift = true;
+        vcx.simulate_event(ScrollEvent {
+            position: c,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(100.0))),
+            modifiers: m,
+            ..Default::default()
+        });
+        vcx.run_until_parked();
+        let z = shown(&state, vcx);
+        assert!(
+            z.width() < before.width() && z.y == before.y,
+            "⌘⇧スクロールでx軸だけが拡大しない: {before:?} -> {z:?}"
+        );
+    }
+
+    #[test]
+    fn tiny_right_drag_does_not_box_zoom() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let before = shown(&state, vcx);
+        let c = frame_center(&state, vcx);
+        let e = c + point(px(3.0), px(2.0));
+        mouse_down(vcx, c, MouseButton::Right, 1);
+        vcx.simulate_mouse_move(e, Some(MouseButton::Right), Modifiers::default());
+        vcx.simulate_mouse_up(e, MouseButton::Right, Modifiers::default());
+        vcx.run_until_parked();
+        let z = shown(&state, vcx);
+        assert!(
+            state.read_with(vcx, |s, _| s.is_auto()),
+            "3x2pxの右ドラッグで拡大した: {before:?} -> {z:?}"
         );
     }
 }

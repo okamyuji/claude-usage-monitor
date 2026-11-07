@@ -13,6 +13,7 @@ use claude_usage_monitor::controllers::gui::dashboard::DashAction;
 use claude_usage_monitor::controllers::gui::dashboard::sessions::DetailTab;
 use claude_usage_monitor::controllers::gui::tabs::calendar::CalendarAction;
 
+use claude_usage_monitor::models::domain::settings::Theme;
 use claude_usage_monitor::models::repositories::db::SqliteStore;
 use claude_usage_monitor::views::app::CumonRoot;
 use common::gui::{FakeAutostart, FakeDaemon, FakeProcessTree, FixedClock, NoCatalog, NoCreds};
@@ -120,6 +121,8 @@ fn write_readme_images() {
     );
     std::fs::create_dir_all(&out).unwrap();
     let mut shot = Shot::open(GuiController::new(deps(&data, &home)));
+    // READMEの画像はOSの明暗に左右されないよう、いつもライトで撮る。
+    shot.act(Action::SetTheme(Theme::Light));
     shot.save(&out, "dashboard.png");
     let live = shot.with_vm(|b| match b {
         TabVm::Dashboard(d) => d

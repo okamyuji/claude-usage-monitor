@@ -62,32 +62,15 @@ pub struct CumonRoot {
     calendar_detail_ui: DetailUi,
     session_scroll: ScrollHandle,
     calendar_scroll: ScrollHandle,
-    _tick: Task<()>,
+    /// 描き直しのタイマー。再生を始めたときと止めたときに張り直す。
+    tick: Task<()>,
     _appearance: Subscription,
 }
 
 impl CumonRoot {
     /// controllerを受け取って作り、描き直しのタイマーと窓の明暗の監視を始める。
     pub fn new(ctl: GuiController, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let tick = cx.spawn(async move |this, cx| {
-            loop {
-                let Ok(playing) = this.read_with(cx, |r, _| r.ctl.vm().replay_playing()) else {
-                    break;
-                };
-                cx.background_executor()
-                    .timer(crate::views::layout::redraw_every(playing))
-                    .await;
-                if this
-                    .update(cx, |r, cx| {
-                        r.ctl.tick();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        let tick = Self::start_ticks(cx);
         let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
@@ -102,7 +85,7 @@ impl CumonRoot {
             calendar_detail_ui: DetailUi::default(),
             session_scroll: ScrollHandle::new(),
             calendar_scroll: ScrollHandle::new(),
-            _tick: tick,
+            tick,
             _appearance: appearance,
         }
     }
@@ -144,15 +127,51 @@ impl CumonRoot {
 
     /// 操作を渡し、新しい値で描き直す。
     pub fn act(&mut self, a: Action, cx: &mut Context<Self>) {
+        let was = self.ctl.vm().replay_playing();
         self.ctl.handle(a);
         self.ctl.tick();
+        // 1秒の待ちの途中で再生を始めても、すぐ短い間隔で進める。
+        if self.ctl.vm().replay_playing() != was {
+            self.tick = Self::start_ticks(cx);
+        }
         cx.notify();
+    }
+
+    /// 操作が無くても`tick`を呼んで描き直す。間隔は再生中かで変える。
+    fn start_ticks(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(playing) = this.read_with(cx, |r, _| r.ctl.vm().replay_playing()) else {
+                    break;
+                };
+                cx.background_executor()
+                    .timer(crate::views::layout::redraw_every(playing))
+                    .await;
+                if this
+                    .update(cx, |r, cx| {
+                        r.ctl.tick();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
     }
 }
 
 /// 画面の部品から根のビューへ操作を届ける口。
 #[derive(Clone)]
 pub struct Acts(WeakEntity<CumonRoot>);
+
+#[cfg(test)]
+impl Acts {
+    /// 届け先の無い受け口。部品の形だけを確かめるテストで使う。
+    pub(crate) fn detached() -> Self {
+        Acts(WeakEntity::new_invalid())
+    }
+}
 
 impl Acts {
     /// 押したときに`a`を届ける受け口。
@@ -495,16 +514,16 @@ pub fn launch(ctl: GuiController, cx: &mut App) -> gpui::Result<()> {
 }
 
 /// アプリを起動し、窓を開く。窓を閉じたら終わる。
-pub fn open(ctl: GuiController) -> gpui::Result<()> {
-    let failed = std::rc::Rc::new(std::cell::RefCell::new(None));
-    let out = failed.clone();
+///
+/// 起動に失敗したら、その場で理由を出して終了コード1で終える。
+/// macOSの`quit`は`NSApplication`の`terminate:`でプロセスを終えるため、呼び出し元へエラーを返せない。
+pub fn open(ctl: GuiController) {
     gpui_platform::application().run(move |cx: &mut App| {
         if let Err(e) = launch(ctl, cx) {
-            *out.borrow_mut() = Some(e);
-            cx.quit();
+            eprintln!("cumon: GUIを起動できません: {e}");
+            std::process::exit(1);
         }
     });
-    failed.borrow_mut().take().map_or(Ok(()), Err)
 }
 
 #[cfg(test)]

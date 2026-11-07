@@ -202,8 +202,7 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
 /// ウィンドウを開く部分はテストで動かせないため、組み立ては`build_gui`に寄せて単体テストで確かめる。
 fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
     let ctl = build_gui(p, store)?;
-    claude_usage_monitor::views::app::open(ctl)
-        .map_err(|e| other(format!("GUIを起動できません: {e}")))?;
+    claude_usage_monitor::views::app::open(ctl);
     Ok(ExitCode::SUCCESS)
 }
 

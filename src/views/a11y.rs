@@ -113,17 +113,19 @@ impl<E: Element> Element for Disabled<E> {
     }
 }
 
+/// 要素が読み上げに出す役割、名前、状態。
+#[cfg(test)]
+pub(crate) fn node_of(e: impl IntoElement) -> accesskit::Node {
+    let e = e.into_element();
+    let mut node = accesskit::Node::new(e.a11y_role().unwrap_or(gpui::Role::Unknown));
+    e.write_a11y_info(&mut node);
+    node
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{StatefulInteractiveElement as _, div};
-
-    fn node_of(e: impl IntoElement) -> accesskit::Node {
-        let e = e.into_element();
-        let mut node = accesskit::Node::new(e.a11y_role().unwrap_or(gpui::Role::Unknown));
-        e.write_a11y_info(&mut node);
-        node
-    }
 
     #[test]
     fn disabled_writes_the_flag_and_keeps_role_and_name() {

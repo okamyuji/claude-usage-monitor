@@ -10,7 +10,10 @@ use crate::views::plot::{Plot, PlotState};
 use crate::views::theme::{GAP_X, Palette, SMALL};
 use crate::views::widgets::{help, icon, section, selectable, small_button, text};
 use chrono::FixedOffset;
-use gpui::{Entity, IntoElement, ParentElement as _, SharedString, Styled as _, div, px, relative};
+use gpui::{
+    Div, Entity, IntoElement, ParentElement as _, SharedString, Stateful, Styled as _, div, px,
+    relative,
+};
 
 /// グラフの最小の高さ（下限）。
 const MIN_PLOT: f32 = 60.0;
@@ -27,16 +30,7 @@ pub fn render(
     } else {
         (icons::CARET_RIGHT, "開く")
     };
-    let current = vm.trend.as_ref().map(|t| t.range);
-    let ranges = [TrendRange::Hours5, TrendRange::Hours24, TrendRange::Days7].map(|r| {
-        selectable(
-            p,
-            r.label(),
-            current == Some(r),
-            r.label(),
-            acts.on(Action::Dash(DashAction::SetTrendRange(r))),
-        )
-    });
+    let ranges = range_buttons(vm.trend_range, p, acts);
     let head = div()
         .flex()
         .items_center()
@@ -124,12 +118,39 @@ fn panel(
         .child(div().flex_1().min_h(px(MIN_PLOT)).child(plot))
 }
 
+/// 範囲の切り替え。折りたたみ中も選んだ範囲を選択の状態で出す。
+fn range_buttons(selected: TrendRange, p: &Palette, acts: &Acts) -> [Stateful<Div>; 3] {
+    [TrendRange::Hours5, TrendRange::Hours24, TrendRange::Days7].map(|r| {
+        selectable(
+            p,
+            r.label(),
+            selected == r,
+            r.label(),
+            acts.on(Action::Dash(DashAction::SetTrendRange(r))),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::controllers::gui::app::{Action, Tab, TabVm};
     use crate::views::app::tests::{click, controller, open};
     use crate::views::probe::{self, Role};
+
+    #[test]
+    fn range_buttons_mark_only_the_chosen_range_as_toggled() {
+        use crate::views::a11y::node_of;
+        let toggled = |b| node_of(b).toggled();
+        let [h5, h24, d7] = range_buttons(
+            TrendRange::Hours24,
+            &crate::views::theme::LIGHT,
+            &Acts::detached(),
+        );
+        assert_eq!(toggled(h5), Some(gpui::Toggled::False));
+        assert_eq!(toggled(h24), Some(gpui::Toggled::True));
+        assert_eq!(toggled(d7), Some(gpui::Toggled::False));
+    }
 
     #[test]
     fn graph_help_explains_marker_lines() {

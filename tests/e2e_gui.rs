@@ -308,6 +308,48 @@ mod memory_e2e {
     }
 
     #[test]
+    fn backdrop_click_cancels_without_reaching_widgets_behind() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("終了する");
+        let tab = h
+            .get_all_by_label("カレンダー")
+            .next()
+            .expect("tab")
+            .bounds()
+            .center();
+        h.click_at(f32::from(tab.x), f32::from(tab.y));
+        h.run();
+        let on_dash = h.with_state(|c| matches!(c.vm().body, TabVm::Dashboard(_)));
+        assert!(
+            h.query_by_label("終了する").is_none(),
+            "背景を押すとダイアログは閉じる"
+        );
+        assert!(on_dash, "背景を押した操作が後ろのタブに届いた");
+    }
+
+    #[test]
+    fn escape_closes_the_dialog_after_typing_in_search() {
+        let env = desktop_env();
+        let mut h = env.gpui_harness();
+        h.get_by_label("履歴").click();
+        h.run();
+        h.get_by_label("検索").type_text("x");
+        h.run();
+        h.get_by_label("Desktopを終了").click();
+        h.run();
+        h.get_by_label("終了する");
+        h.press_key("escape");
+        h.run();
+        assert!(
+            h.query_by_label("終了する").is_none(),
+            "検索欄にフォーカスがあるとEscで閉じない"
+        );
+    }
+
+    #[test]
     fn cancel_does_not_request_exit() {
         let env = desktop_env();
         let mut h = env.gpui_harness();
@@ -371,6 +413,7 @@ fn dashboard_renders_in_light_and_dark() {
         let mut h = env.gpui_harness();
         h.with_state_mut(|c| c.handle(Action::SetTheme(t)));
         h.run();
+        assert_eq!(h.drawn_dark(), t == Theme::Dark, "{t:?}");
         assert_eq!(h.with_state(|c| c.vm().theme), t);
         for label in ["ダッシュボード", "レート制限", "セッション", "推移"] {
             h.get_by_label(label);
@@ -969,6 +1012,24 @@ fn replay_next_button_changes_displayed_turn() {
 }
 
 #[test]
+fn replay_starts_stepping_without_waiting_for_the_idle_redraw() {
+    let env = gui_env(now());
+    seed_session_with_turns(&env, "s1", "設計の相談", SessionKind::Interactive, None);
+    let mut h = env.gpui_harness();
+    h.get_by_label("履歴").click();
+    h.run();
+    h.get_by_label("設計の相談").click();
+    h.run();
+    h.get_by_label("再生").click();
+    h.run();
+    h.get_by_label_contains("再生する").click();
+    env.advance(chrono::Duration::seconds(1));
+    // 再生中の描き直しは50msごと。止まっているときの1秒を待たずに進む。
+    h.advance_timers(60);
+    assert_eq!(h.replay_slider_value(), Some(1.0));
+}
+
+#[test]
 fn replay_slider_is_named_and_seeks() {
     use claude_usage_monitor::views::probe::Role;
     let env = gui_env(now());
@@ -1249,6 +1310,7 @@ mod calendar_e2e {
             h.with_state_mut(|c| c.handle(Action::SetTheme(t)));
             h.get_by_label("カレンダー").click();
             h.run();
+            assert_eq!(h.drawn_dark(), t == Theme::Dark, "{t:?}");
             assert_eq!(h.with_state(|c| c.vm().theme), t);
             h.get_by_label_contains("設計の相談");
             h.get_by_label("2026年9/20〜9/26");
