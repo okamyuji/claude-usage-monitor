@@ -108,8 +108,9 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/cumon-mutants.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT TERM
 # 作業ツリーで消したがgitの索引に残るファイルは、tarが読めずに止まるので渡さない。
+# `[ -e ] &&`にすると、最後のファイルが消えていたときにループが1で終わり、pipefailで止まるので`if`で書く。
 git -C "$root" ls-files -z --cached --others --exclude-standard \
-  | while IFS= read -r -d '' f; do [ -e "$root/$f" ] && printf '%s\0' "$f"; done \
+  | while IFS= read -r -d '' f; do if [ -e "$root/$f" ]; then printf '%s\0' "$f"; fi; done \
   | tar -C "$root" --null -T - -cf - \
   | tar -C "$work" -xf -
 CARGO_TARGET_DIR="$root/target/mutants" "${run[@]}" cargo mutants -d "$work" --in-place \
