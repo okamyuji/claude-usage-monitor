@@ -122,4 +122,19 @@ mod tests {
         );
         assert_eq!(process_name(std::path::Path::new("")), "cumon");
     }
+
+    #[test]
+    fn install_registers_the_menu_and_the_keys() {
+        let cx = crate::test_support::gpui_cx();
+        cx.update(|cx| {
+            install(cx);
+            let menus = cx
+                .get_menus()
+                .expect("テスト用のプラットフォームはメニューを持つ");
+            assert_eq!(menus.len(), 1);
+            assert_eq!(menus[0].items.len(), 9);
+            let quit = gpui::Keystroke::parse("cmd-q").expect("キー");
+            assert_eq!(cx.all_bindings_for_input(&[quit]).len(), 1);
+        });
+    }
 }

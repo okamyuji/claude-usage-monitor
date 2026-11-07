@@ -2,7 +2,6 @@
 use crate::controllers::gui::app::{Action, AppVm, Forms, GuiController, REFRESH_SECS, TabVm};
 use crate::controllers::gui::dashboard::live_log::LiveAction;
 use crate::controllers::gui::dashboard::memory::MemAction;
-use crate::models::domain::settings::Theme;
 use crate::views::dashboard::detail::DetailUi;
 use crate::views::fonts::{BODY_FAMILY, body_fallbacks, install};
 use crate::views::header;
@@ -15,30 +14,12 @@ use gpui::{
     App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
     ParentElement as _, Pixels, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowAppearance, WindowBounds,
-    WindowKind, WindowOptions, canvas, div, point, px, size,
+    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowKind,
+    WindowOptions, canvas, div, point, px, size,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
-
-/// テーマの選択と窓の明暗から、ダークで描くかを決める。
-pub fn is_dark(t: Theme, appearance: WindowAppearance) -> bool {
-    match t {
-        Theme::Light => false,
-        Theme::Dark => true,
-        Theme::System => matches!(
-            appearance,
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        ),
-    }
-}
-
-/// 操作が無くても描き直す間隔。5秒ごとの読み直しと経過時間の表示を進めるため。再生中は短くする。
-pub fn redraw_every(playing: bool) -> Duration {
-    Duration::from_millis(if playing { 50 } else { 1000 })
-}
 
 /// グラフごとの状態。グラフの題名で引き、描画をまたいで持つ。
 pub struct Plots<'a> {
@@ -93,7 +74,9 @@ impl CumonRoot {
                 let Ok(playing) = this.read_with(cx, |r, _| r.ctl.vm().replay_playing()) else {
                     break;
                 };
-                cx.background_executor().timer(redraw_every(playing)).await;
+                cx.background_executor()
+                    .timer(crate::views::layout::redraw_every(playing))
+                    .await;
                 if this
                     .update(cx, |r, cx| {
                         r.ctl.tick();
@@ -295,7 +278,7 @@ impl Render for CumonRoot {
         } = self;
         let vm = ctl.vm();
         let forms = ctl.forms();
-        let dark = is_dark(vm.theme, window.appearance());
+        let dark = crate::views::theme::is_dark(vm.theme, window.appearance());
         let p = palette(dark);
         // gpui-componentの部品（入力欄、スクロールバー）は自分のテーマで描くので、明暗をアプリに合わせる。
         if gpui_component::ActiveTheme::theme(&**cx).is_dark() != dark {
@@ -553,11 +536,12 @@ pub fn open(ctl: GuiController) -> gpui::Result<()> {
 pub(crate) mod tests {
     use super::*;
     use crate::controllers::gui::app::Tab;
+    use crate::models::domain::settings::Theme;
     use crate::test_support::{FakeCreds, FakeDaemon, FixedClock, gui_deps, temp_store};
     use crate::views::icons;
     use crate::views::probe::{self, Role};
     use chrono::{TimeZone, Utc};
-    use gpui::{Modifiers, TestAppContext, VisualTestContext, WindowAppearance};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -713,17 +697,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dark_follows_choice_or_window_appearance() {
-        use WindowAppearance::*;
-        assert!(is_dark(Theme::Dark, Light));
-        assert!(!is_dark(Theme::Light, Dark));
-        assert!(is_dark(Theme::System, Dark));
-        assert!(is_dark(Theme::System, VibrantDark));
-        assert!(!is_dark(Theme::System, Light));
-        assert!(!is_dark(Theme::System, VibrantLight));
-    }
-
-    #[test]
     fn launch_opens_one_window_with_the_shell() {
         let home = tempfile::tempdir().unwrap();
         let (_d, ctl) = controller(home.path());
@@ -761,11 +734,5 @@ pub(crate) mod tests {
         assert_eq!(parse_origin("1552"), None);
         assert_eq!(parse_origin("a,b"), None);
         assert_eq!(parse_origin("1,2,3"), None);
-    }
-
-    #[test]
-    fn redraw_interval_is_short_only_while_replaying() {
-        assert_eq!(redraw_every(false), std::time::Duration::from_millis(1000));
-        assert_eq!(redraw_every(true), std::time::Duration::from_millis(50));
     }
 }

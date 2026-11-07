@@ -5,7 +5,8 @@
 use crate::views::fonts::BODY_FAMILY;
 use crate::views::plot::format::tick_label;
 use crate::views::plot::math::{
-    Range2, auto_color, auto_range, grid_marks, label_alpha, nearest, strength, to_screen,
+    GRID_SPACING, Range2, auto_color, auto_range, grid_alpha, grid_marks, label_alpha, nearest,
+    to_screen,
 };
 pub use crate::views::plot::state::PlotState;
 use crate::views::plot::state::{DragKind, rect, tooltip_origin};
@@ -21,13 +22,9 @@ use gpui::{
 };
 use std::rc::Rc;
 
-/// 線どうしの最小の間隔と、濃さが最大になる間隔。
-const GRID_SPACING: (f32, f32) = (8.0, 300.0);
 /// x軸とy軸の数字を出す間隔。
 const X_LABEL_SPACING: (f32, f32) = (60.0, 80.0);
 const Y_LABEL_SPACING: (f32, f32) = (20.0, 30.0);
-/// 格子の濃さの指数。
-const GRID_FADE: f32 = 0.5;
 /// 近い点として拾う半径。
 const HOVER_RADIUS: f32 = 5.0;
 /// x軸の数字の行の高さ。
@@ -445,11 +442,6 @@ fn x_spacing(l: &Layout, step: f64) -> f32 {
 
 fn y_spacing(l: &Layout, step: f64) -> f32 {
     (step / l.range.height()) as f32 * f32::from(l.frame.size.height)
-}
-
-fn grid_alpha(spacing: f32) -> Option<f32> {
-    (spacing > GRID_SPACING.0)
-        .then(|| strength(spacing, GRID_SPACING.0, GRID_SPACING.1).powf(GRID_FADE))
 }
 
 fn paint_grid(l: &Layout, p: &Palette, window: &mut Window) {

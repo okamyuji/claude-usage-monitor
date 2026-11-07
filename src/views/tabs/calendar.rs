@@ -5,7 +5,7 @@ use crate::views::app::Acts;
 use crate::views::dashboard::detail::{self, DetailUi};
 use crate::views::dashboard::{calendar_ratio, split};
 use crate::views::icons;
-use crate::views::layout::GAP;
+use crate::views::layout::{DENSITY_PX, GAP, band_place};
 use crate::views::probe::Role;
 use crate::views::theme::{BODY, GAP_X, GAP_Y, Palette, SMALL, color, series, with_alpha};
 use crate::views::widgets::{
@@ -21,8 +21,6 @@ use gpui::{
 const HOUR_PX: f32 = 40.0;
 /// 左端の時刻の目盛りの幅。
 const AXIS_PX: f32 = 44.0;
-/// 日の列の左端に置く濃淡の幅。
-const DENSITY_PX: f32 = 6.0;
 /// 曜日の見出しの高さ。
 const HEAD_PX: f32 = 22.0;
 /// 時刻の目盛りの文字の大きさ（11）。
@@ -310,22 +308,6 @@ fn paint_grid(
     }
 }
 
-/// 帯の外側（割合）と内側（ピクセル）の置き方。
-/// 式は`left = x + DENSITY + 1 + lane_w * lane`、`width = lane_w - 1`、`lane_w = (col - DENSITY - 2) / lanes`で、
-/// 列の幅に比例する部分（外側の割合）と、ピクセルの部分（内側の左右の寄せ）に分ける。
-/// 戻り値は（外側の左端と幅の割合、内側の左と右の寄せ）。
-pub fn band_place(day: usize, lane: usize, lanes: usize) -> ((f32, f32), (f32, f32)) {
-    let lanes = lanes.max(1) as f32;
-    let lane = lane as f32;
-    let col = 1.0 / 7.0;
-    let outer = (col * day as f32 + col * lane / lanes, col / lanes);
-    let shrink = (DENSITY_PX + 2.0) / lanes;
-    let left = DENSITY_PX + 1.0 - lane * shrink;
-    // 内側の幅は 外側の幅 - shrink - 1 になる。右の寄せは残り。
-    let right = shrink + 1.0 - left;
-    (outer, (left, right))
-}
-
 /// 帯。説明を部品名にして読み上げと検索ができるようにする。
 fn band(b: &BandVm, day: usize, p: &'static Palette, acts: &Acts) -> impl IntoElement {
     let c = series(b.color, p);
@@ -358,36 +340,4 @@ fn band(b: &BandVm, day: usize, p: &'static Palette, acts: &Acts) -> impl IntoEl
                     b.seg_start,
                 )))),
         )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 実装とは独立に書いた式で、列の幅`col`での帯の左端と幅を出して実装を確かめる。
-    fn reference_band(day: usize, lane: usize, lanes: usize, col: f32) -> (f32, f32) {
-        let inner = (col - DENSITY_PX - 2.0).max(1.0);
-        let lane_w = inner / lanes.max(1) as f32;
-        let left = col * day as f32 + DENSITY_PX + 1.0 + lane_w * lane as f32;
-        (left, (lane_w - 1.0).max(1.0))
-    }
-
-    proptest::proptest! {
-        #[test]
-        fn prop_band_place_matches_reference(
-            day in 0usize..7,
-            lanes in 1usize..5,
-            lane_seed in 0usize..5,
-            col in 40.0f32..400.0,
-        ) {
-            let lane = lane_seed % lanes;
-            let ((x, w), (l, r)) = band_place(day, lane, lanes);
-            let width = col * 7.0;
-            let left = x * width + l;
-            let right = (x + w) * width - r;
-            let (el, ew) = reference_band(day, lane, lanes, col);
-            proptest::prop_assert!((left - el).abs() < 1e-3, "{left} {el}");
-            proptest::prop_assert!((right - left - ew).abs() < 1e-3, "{} {ew}", right - left);
-        }
-    }
 }

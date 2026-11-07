@@ -258,6 +258,17 @@ pub fn nearest(
         .map(|(i, j, _)| (i, j))
 }
 
+/// 線どうしの最小の間隔と、濃さが最大になる間隔。
+pub const GRID_SPACING: (f32, f32) = (8.0, 300.0);
+/// 格子の濃さの指数。
+pub const GRID_FADE: f32 = 0.5;
+
+/// 格子の線の濃さ。間隔が最小より狭い線は描かない。
+pub fn grid_alpha(spacing: f32) -> Option<f32> {
+    (spacing > GRID_SPACING.0)
+        .then(|| strength(spacing, GRID_SPACING.0, GRID_SPACING.1).powf(GRID_FADE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,5 +485,58 @@ mod tests {
             prop_assert!(marks.windows(2).all(|m| m[0].0 < m[1].0));
             prop_assert!(marks.iter().all(|m| lo <= m.0 + m.1 * 1e-9 && m.0 <= lo + w + m.1 * 1e-9));
         }
+    }
+
+    #[test]
+    fn grid_alpha_hides_dense_lines_and_fades_by_spacing() {
+        assert_eq!(grid_alpha(GRID_SPACING.0), None);
+        assert_eq!(grid_alpha(GRID_SPACING.1), Some(1.0));
+        let mid = grid_alpha(100.0).unwrap();
+        assert!(mid > 0.0 && mid < 1.0, "{mid}");
+        assert!(
+            (mid - strength(100.0, GRID_SPACING.0, GRID_SPACING.1).powf(GRID_FADE)).abs() < 1e-6
+        );
+    }
+
+    #[test]
+    fn half_infinite_axis_is_neither_valid_nor_kept() {
+        assert!(
+            !Range2 {
+                x: (0.0, f64::INFINITY),
+                y: (0.0, 1.0)
+            }
+            .is_valid()
+        );
+        assert_eq!(sanitize((0.0, f64::INFINITY), (0.0, 1.0)), (-1.0, 1.0));
+    }
+
+    #[test]
+    fn grid_marks_still_marks_at_an_epsilon_step() {
+        assert!(!grid_marks(0.0, 1e-14, f64::EPSILON).is_empty());
+    }
+
+    #[test]
+    fn hsv_covers_every_sector_and_wraps_negative_hues() {
+        // 色相0.75は第4区画で、(t, p, v)を返す。負の色相は1を足した色相と同じ色。
+        assert_eq!(rgb_from_hsv(0.75, 1.0, 1.0), [0.5, 0.0, 1.0]);
+        assert_eq!(rgb_from_hsv(-0.25, 1.0, 1.0), rgb_from_hsv(0.75, 1.0, 1.0));
+    }
+
+    #[test]
+    fn gamma_is_linear_near_black() {
+        assert_eq!(gamma_u8(0.0), 0);
+        assert_eq!(gamma_u8(0.001), 3);
+    }
+
+    #[test]
+    fn nearest_measures_screen_distance_from_the_cursor() {
+        let g = r((0.0, 10.0), (0.0, 100.0));
+        let p: &[[f64; 2]] = &[[5.0, 50.0]];
+        // (5,50)は画面の(110,70)。カーソルとの距離は3で、半径3.5の中、半径2.9の外。
+        assert_eq!(nearest(&[p], &g, RECT, (113.0, 70.0), 3.5), Some((0, 0)));
+        assert_eq!(nearest(&[p], &g, RECT, (113.0, 70.0), 2.9), None);
+        // 左に90、上に90離れた点は、どちらも半径5の外。
+        assert_eq!(nearest(&[p], &g, RECT, (200.0, 70.0), 5.0), None);
+        assert_eq!(nearest(&[p], &g, RECT, (110.0, 160.0), 5.0), None);
     }
 }

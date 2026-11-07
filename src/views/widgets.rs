@@ -230,11 +230,6 @@ pub fn severity_color(s: Severity, p: &Palette) -> u32 {
     }
 }
 
-/// バーの塗りの割合。0から1に収める。
-pub fn bar_fill(ratio: f32) -> f32 {
-    ratio.clamp(0.0, 1.0)
-}
-
 /// 空き幅いっぱいに伸びる使用率バー。
 pub fn usage_bar(ratio: f32, hex: u32, p: &Palette) -> Div {
     div()
@@ -245,7 +240,7 @@ pub fn usage_bar(ratio: f32, hex: u32, p: &Palette) -> Div {
         .child(
             div()
                 .h_full()
-                .w(relative(bar_fill(ratio)))
+                .w(relative(crate::views::layout::bar_fill(ratio)))
                 .rounded(px(3.0))
                 .bg(color(hex)),
         )
@@ -548,12 +543,5 @@ mod tests {
         assert_eq!(severity_color(Severity::Normal, &LIGHT), LIGHT.accent);
         assert_eq!(severity_color(Severity::Warning, &DARK), DARK.warn);
         assert_eq!(severity_color(Severity::Critical, &LIGHT), LIGHT.err);
-    }
-
-    #[test]
-    fn bar_ratio_is_clamped() {
-        assert_eq!(bar_fill(1.5), 1.0);
-        assert_eq!(bar_fill(-0.2), 0.0);
-        assert_eq!(bar_fill(0.25), 0.25);
     }
 }

@@ -68,7 +68,7 @@ fi
 mutant_files=()
 for f in "$@"; do
   case "$f" in
-    src/views/layout.rs|src/views/probe.rs|src/views/theme.rs|src/views/icons.rs|src/views/input.rs|src/views/*/math.rs|src/views/*/format.rs|src/views/*/state.rs) mutant_files+=("$f") ;;
+    src/views/layout.rs|src/views/probe.rs|src/views/theme.rs|src/views/icons.rs|src/views/input.rs|src/views/app_menu.rs|src/views/*/math.rs|src/views/*/format.rs|src/views/*/state.rs) mutant_files+=("$f") ;;
     src/views/*|src/main.rs) ;;
     *) mutant_files+=("$f") ;;
   esac

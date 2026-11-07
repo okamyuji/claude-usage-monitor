@@ -72,6 +72,35 @@ pub fn flex_columns(avail: f32, fixed: &[Option<f32>]) -> Vec<f32> {
     fixed.iter().map(|w| w.unwrap_or(rest)).collect()
 }
 
+/// 日の列の左端に置く濃淡の幅。
+pub const DENSITY_PX: f32 = 6.0;
+
+/// 帯の外側（割合）と内側（ピクセル）の置き方。
+/// 式は`left = x + DENSITY + 1 + lane_w * lane`、`width = lane_w - 1`、`lane_w = (col - DENSITY - 2) / lanes`で、
+/// 列の幅に比例する部分（外側の割合）と、ピクセルの部分（内側の左右の寄せ）に分ける。
+/// 戻り値は（外側の左端と幅の割合、内側の左と右の寄せ）。
+pub fn band_place(day: usize, lane: usize, lanes: usize) -> ((f32, f32), (f32, f32)) {
+    let lanes = lanes.max(1) as f32;
+    let lane = lane as f32;
+    let col = 1.0 / 7.0;
+    let outer = (col * day as f32 + col * lane / lanes, col / lanes);
+    let shrink = (DENSITY_PX + 2.0) / lanes;
+    let left = DENSITY_PX + 1.0 - lane * shrink;
+    // 内側の幅は 外側の幅 - shrink - 1 になる。右の寄せは残り。
+    let right = shrink + 1.0 - left;
+    (outer, (left, right))
+}
+
+/// バーの塗りの割合。0から1に収める。
+pub fn bar_fill(ratio: f32) -> f32 {
+    ratio.clamp(0.0, 1.0)
+}
+
+/// 操作が無くても描き直す間隔。5秒ごとの読み直しと経過時間の表示を進めるため。再生中は短くする。
+pub fn redraw_every(playing: bool) -> std::time::Duration {
+    std::time::Duration::from_millis(if playing { 50 } else { 1000 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +206,46 @@ mod tests {
         ) {
             let r = drag_ratio(avail, left, dx);
             proptest::prop_assert!((0.0..=1.0).contains(&r), "{r}");
+        }
+    }
+
+    #[test]
+    fn bar_ratio_is_clamped() {
+        assert_eq!(bar_fill(1.5), 1.0);
+        assert_eq!(bar_fill(-0.2), 0.0);
+        assert_eq!(bar_fill(0.25), 0.25);
+    }
+
+    #[test]
+    fn redraw_interval_is_short_only_while_replaying() {
+        assert_eq!(redraw_every(false), std::time::Duration::from_millis(1000));
+        assert_eq!(redraw_every(true), std::time::Duration::from_millis(50));
+    }
+
+    /// 実装とは独立に書いた式で、列の幅`col`での帯の左端と幅を出して実装を確かめる。
+    fn reference_band(day: usize, lane: usize, lanes: usize, col: f32) -> (f32, f32) {
+        let inner = (col - DENSITY_PX - 2.0).max(1.0);
+        let lane_w = inner / lanes.max(1) as f32;
+        let left = col * day as f32 + DENSITY_PX + 1.0 + lane_w * lane as f32;
+        (left, (lane_w - 1.0).max(1.0))
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_band_place_matches_reference(
+            day in 0usize..7,
+            lanes in 1usize..5,
+            lane_seed in 0usize..5,
+            col in 40.0f32..400.0,
+        ) {
+            let lane = lane_seed % lanes;
+            let ((x, w), (l, r)) = band_place(day, lane, lanes);
+            let width = col * 7.0;
+            let left = x * width + l;
+            let right = (x + w) * width - r;
+            let (el, ew) = reference_band(day, lane, lanes, col);
+            proptest::prop_assert!((left - el).abs() < 1e-3, "{left} {el}");
+            proptest::prop_assert!((right - left - ew).abs() < 1e-3, "{} {ew}", right - left);
         }
     }
 }

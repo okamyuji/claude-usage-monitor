@@ -118,9 +118,32 @@ pub const RADIUS: Pixels = px(8.0);
 /// 部品の角丸。
 pub const WIDGET_RADIUS: Pixels = px(6.0);
 
+/// テーマの選択と窓の明暗から、ダークで描くかを決める。
+pub fn is_dark(
+    t: crate::models::domain::settings::Theme,
+    appearance: gpui::WindowAppearance,
+) -> bool {
+    match t {
+        crate::models::domain::settings::Theme::Light => false,
+        crate::models::domain::settings::Theme::Dark => true,
+        crate::models::domain::settings::Theme::System => matches!(
+            appearance,
+            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_alpha_scales_only_the_alpha() {
+        let base: gpui::Hsla = color(0x3366CC).into();
+        let c = with_alpha(0x3366CC, 0.4);
+        assert_eq!((c.h, c.s, c.l), (base.h, base.s, base.l));
+        assert!((c.a - base.a * 0.4).abs() < 1e-6, "{}", c.a);
+    }
 
     #[test]
     fn palette_and_series_pick_by_theme_and_index() {
@@ -146,5 +169,17 @@ mod tests {
         assert_eq!((c.g * 255.0).round() as u8, 0x69);
         assert_eq!((c.b * 255.0).round() as u8, 0xda);
         assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn dark_follows_choice_or_window_appearance() {
+        use crate::models::domain::settings::Theme;
+        use gpui::WindowAppearance::*;
+        assert!(is_dark(Theme::Dark, Light));
+        assert!(!is_dark(Theme::Light, Dark));
+        assert!(is_dark(Theme::System, Dark));
+        assert!(is_dark(Theme::System, VibrantDark));
+        assert!(!is_dark(Theme::System, Light));
+        assert!(!is_dark(Theme::System, VibrantLight));
     }
 }
