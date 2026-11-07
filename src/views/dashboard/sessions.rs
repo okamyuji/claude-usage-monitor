@@ -1,6 +1,5 @@
 //! セッション一覧（spec 7.2節の中段の左）。稼働中と履歴を切り替える。
 use crate::controllers::gui::app::Action;
-use crate::controllers::gui::app::Forms;
 use crate::controllers::gui::dashboard::memory::MemAction;
 use crate::controllers::gui::dashboard::runs::RunItem;
 use crate::controllers::gui::dashboard::sessions::{DetailTab, SessionItem};
@@ -8,33 +7,84 @@ use crate::controllers::gui::dashboard::{DashAction, DashboardVm, ListMode};
 use crate::models::domain::activity::RunKind;
 use crate::models::domain::display::help as h;
 use crate::models::domain::transcript::SessionKind;
-use crate::views::layout::{GAP, flex_columns};
-use crate::views::theme::Palette;
-use crate::views::widgets::cell;
-use crate::views::widgets::{badge, help, pal, section, trunc};
-use egui::Sense;
-use egui::{Color32, RichText, Ui};
+use crate::views::app::Acts;
+use crate::views::input::{Field, FormInputs};
+use crate::views::probe::Role;
+use crate::views::theme::{BODY, GAP_X, GAP_Y, Palette, SMALL, color};
+use crate::views::widgets::{
+    badge, help, label, probed, section, selectable, small_button, table_row, text, truncate, weak,
+};
+use gpui::{
+    AnyElement, Div, InteractiveElement as _, IntoElement, ParentElement as _, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
+};
+use gpui_component::input::Input;
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
+
+/// 履歴の列（入力、開始、経過、コンテキスト、Token、コスト、ターン）。`None`の入力の列だけが伸びる。
+const HISTORY_COLUMNS: [Option<f32>; 7] = [
+    None,
+    Some(72.0),
+    Some(56.0),
+    Some(64.0),
+    Some(56.0),
+    Some(64.0),
+    Some(40.0),
+];
+const HISTORY_HEADS: [&str; 7] = [
+    "入力",
+    "開始",
+    "経過",
+    "コンテキスト",
+    "Token",
+    "コスト",
+    "ターン",
+];
 
 /// 一覧を描く。
-pub fn show(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    header(ui, vm, acts);
-    if vm.mode == ListMode::History {
-        filters(ui, vm, forms, acts);
-    }
-    ui.separator();
-    ui.scope(|ui| {
-        // 浮動のスクロールバーは右端に寄ると帯だけが現れ、行のボタンと見分けにくい。溝の見える常設の形にする。溝は extreme_bg_color で塗られ、カード背景と同色で見えないため、溝の色を差し替える。
-        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-        let track = pal(ui).track;
-        ui.visuals_mut().extreme_bg_color = track;
-        egui::ScrollArea::vertical()
-            .id_salt("session_list")
-            .auto_shrink([false, false])
-            .show(ui, |ui| match vm.mode {
-                ListMode::Active => active(ui, vm, acts),
-                ListMode::History => history(ui, vm, acts),
-            });
-    });
+pub fn render(
+    vm: &DashboardVm,
+    inputs: &FormInputs,
+    scroll: &ScrollHandle,
+    p: &'static Palette,
+    acts: &Acts,
+) -> Div {
+    let rows: Vec<AnyElement> = match vm.mode {
+        ListMode::Active => active(vm, p, acts),
+        ListMode::History => history(vm, p, acts),
+    };
+    // 浮動のスクロールバーは右端に寄ると帯だけが現れ、行のボタンと見分けにくい。溝の見える常設の形にする。
+    let list = div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .child(
+            div()
+                .id("session_list")
+                .size_full()
+                .track_scroll(scroll)
+                .overflow_y_scroll()
+                // 常設のスクロールバーが取る幅（内側の余白4 + バーの幅6）だけ中身を詰める。
+                .pr(px(10.0))
+                .flex()
+                .flex_col()
+                .gap(GAP_Y)
+                .children(rows),
+        )
+        .child(Scrollbar::vertical(scroll).mode(ScrollbarMode::Always));
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(header(vm, p, acts))
+        .children((vm.mode == ListMode::History).then(|| filters(vm, inputs, p, acts)))
+        .child(separator(p))
+        .child(list)
+}
+
+fn separator(p: &Palette) -> Div {
+    div().h(px(1.0)).w_full().bg(color(p.border))
 }
 
 /// 見出しのⓘ。終了の操作がある稼働中の表示でだけ、サブエージェントを止められない理由も出す。
@@ -45,24 +95,32 @@ fn list_help(mode: ListMode) -> &'static str {
     }
 }
 
-fn header(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        section(ui, "セッション");
-        let n = vm.active.iter().filter(|r| r.depth == 0).count();
-        for (m, text) in [
-            (ListMode::Active, format!("稼働中 {n}")),
-            (ListMode::History, "履歴".to_string()),
-        ] {
-            if ui.selectable_label(vm.mode == m, text).clicked() {
-                acts.push(Action::Dash(DashAction::SetListMode(m)));
-            }
-        }
-        help(ui, list_help(vm.mode));
+fn header(vm: &DashboardVm, p: &'static Palette, acts: &Acts) -> Div {
+    let n = vm.active.iter().filter(|r| r.depth == 0).count();
+    let modes = [
+        (ListMode::Active, format!("稼働中 {n}")),
+        (ListMode::History, "履歴".to_string()),
+    ]
+    .map(|(m, t)| {
+        selectable(
+            p,
+            SharedString::from(format!("mode:{m:?}")),
+            vm.mode == m,
+            &t,
+            acts.on(Action::Dash(DashAction::SetListMode(m))),
+        )
     });
+    div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(section(p, "セッション"))
+        .children(modes)
+        .child(help(p, list_help(vm.mode)))
 }
 
 /// 種別のバッジの色。バックグラウンドの実行は青、対話は灰（spec 7.3節）。
-pub fn kind_colors(k: RunKind, p: &Palette) -> (Color32, Color32) {
+pub fn kind_colors(k: RunKind, p: &Palette) -> (u32, u32) {
     match k {
         RunKind::Interactive => (p.text, p.track),
         RunKind::Headless | RunKind::Job | RunKind::Subagent => (p.accent, p.accent_soft),
@@ -70,7 +128,7 @@ pub fn kind_colors(k: RunKind, p: &Palette) -> (Color32, Color32) {
 }
 
 /// 状態のバッジの色。応答生成中とツール実行中は緑、入力待ちは黄、それ以外は灰（spec 7.3節）。
-pub fn state_colors(state: &str, p: &Palette) -> (Color32, Color32) {
+pub fn state_colors(state: &str, p: &Palette) -> (u32, u32) {
     match state {
         "応答生成中" | "ツール実行中" => (p.ok, p.ok_soft),
         "入力待ち" => (p.warn, p.warn_soft),
@@ -78,57 +136,61 @@ pub fn state_colors(state: &str, p: &Palette) -> (Color32, Color32) {
     }
 }
 
-fn active(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
+fn active(vm: &DashboardVm, p: &'static Palette, acts: &Acts) -> Vec<AnyElement> {
     if vm.active.is_empty() {
-        ui.label(RichText::new("稼働中の実行はありません").color(pal(ui).weak));
+        return vec![weak(p, "稼働中の実行はありません").into_any_element()];
     }
-    for r in &vm.active {
-        run_row(
-            ui,
-            r,
-            vm.selected.as_deref() == Some(r.session_id.as_str()),
-            acts,
-        );
-    }
+    vm.active
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let selected = vm.selected.as_deref() == Some(r.session_id.as_str());
+            run_row(i, r, selected, p, acts).into_any_element()
+        })
+        .collect()
 }
 
-fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    let indent = 16.0 * r.depth as f32;
-    ui.horizontal(|ui| {
-        ui.add_space(indent);
-        let (fg, bg) = kind_colors(r.kind, p);
-        badge(ui, r.kind.label(), fg, bg);
-        let (fg, bg) = state_colors(&r.state, p);
-        badge(ui, &r.state, fg, bg);
-        if r.memory.as_ref().is_some_and(|m| m.desktop) {
-            badge(ui, "Desktop", p.accent, p.accent_soft);
-        }
-        // ボタンを先に右端へ置き、残りの幅で題名を省略する。題名を先に置くと、省略した題名が幅を使い切ってボタンが枠の外に出る。
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if let Some(m) = &r.memory
-                && ui.small_button("プロセスを終了").clicked()
-            {
-                acts.push(Action::Memory(MemAction::Ask(m.exit.clone())));
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let title = RichText::new(&r.title).strong().color(if selected {
-                    p.accent
-                } else {
-                    p.text
-                });
-                if ui
-                    .add(egui::Label::new(title).truncate().sense(Sense::click()))
-                    .clicked()
-                {
-                    acts.push(Action::Dash(DashAction::Select(
-                        r.session_id.clone(),
-                        DetailTab::LiveLog,
-                    )));
-                }
-            });
-        });
-    });
+/// 選べる題名。押すと`a`を届ける。選んでいる行はアクセント色にする。
+fn title(s: &str, selected: bool, p: &Palette, acts: &Acts, a: Action) -> impl IntoElement {
+    let t = text(s, BODY, if selected { p.accent } else { p.text })
+        .cursor_pointer()
+        .on_click(acts.on(a));
+    truncate(p, t, s)
+}
+
+fn run_row(i: usize, r: &RunItem, selected: bool, p: &'static Palette, acts: &Acts) -> Div {
+    let indent = px(16.0 * r.depth as f32);
+    let (kfg, kbg) = kind_colors(r.kind, p);
+    let (sfg, sbg) = state_colors(&r.state, p);
+    // ボタンを右端に置き、残りの幅で題名を省略する。
+    let head = div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .pl(indent)
+        .child(badge(r.kind.label(), kfg, kbg))
+        .child(badge(&r.state, sfg, sbg))
+        .children(
+            r.memory
+                .as_ref()
+                .filter(|m| m.desktop)
+                .map(|_| badge("Desktop", p.accent, p.accent_soft)),
+        )
+        .child(div().flex_1().min_w_0().flex().child(title(
+            &r.title,
+            selected,
+            p,
+            acts,
+            Action::Dash(DashAction::Select(r.session_id.clone(), DetailTab::LiveLog)),
+        )))
+        .children(r.memory.as_ref().map(|m| {
+            small_button(
+                p,
+                SharedString::from(format!("exit:{i}")),
+                "プロセスを終了",
+                acts.on(Action::Memory(MemAction::Ask(m.exit.clone()))),
+            )
+        }));
     let context = format!("コンテキスト {}", r.context);
     let meta: Vec<&str> = [
         r.project.as_str(),
@@ -141,225 +203,138 @@ fn run_row(ui: &mut Ui, r: &RunItem, selected: bool, acts: &mut Vec<Action>) {
     .into_iter()
     .filter(|s| !s.is_empty())
     .collect();
-    ui.horizontal(|ui| {
-        ui.add_space(indent);
-        trunc(ui, RichText::new(meta.join(" · ")).small().color(p.weak));
-    });
-    if let Some(d) = &r.detail {
-        ui.horizontal(|ui| {
-            ui.add_space(indent);
-            trunc(ui, RichText::new(d).small());
-        });
-    }
-    ui.add_space(4.0);
+    let meta = meta.join(" · ");
+    div()
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .pb(px(4.0))
+        .child(head)
+        .child(
+            div()
+                .pl(indent)
+                .min_w_0()
+                .child(truncate(p, text(&meta, SMALL, p.weak), &meta)),
+        )
+        .children(r.detail.as_deref().map(|d| {
+            div()
+                .pl(indent)
+                .min_w_0()
+                .child(truncate(p, text(d, SMALL, p.text), d))
+        }))
 }
 
-fn filters(ui: &mut Ui, vm: &DashboardVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        let l = ui.label("検索");
-        let w = ui.available_width();
-        if ui
-            .add(egui::TextEdit::singleline(&mut forms.session_query).desired_width(w))
-            .labelled_by(l.id)
-            .changed()
-        {
-            acts.push(Action::Dash(DashAction::Search));
-        }
+fn filters(vm: &DashboardVm, inputs: &FormInputs, p: &'static Palette, acts: &Acts) -> Div {
+    let search = div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(label(p, "検索"))
+        .child(
+            probed("session-query", Role::TextInput, "検索")
+                .flex_1()
+                .child(Input::new(inputs.get(Field::SessionQuery)).aria_label("検索")),
+        );
+    let kinds = [
+        ("全種別", None),
+        ("対話", Some(SessionKind::Interactive)),
+        ("ヘッドレス", Some(SessionKind::Headless)),
+        ("ジョブ", Some(SessionKind::BackgroundJob)),
+    ]
+    .map(|(t, k)| {
+        selectable(
+            p,
+            SharedString::from(format!("kind:{t}")),
+            vm.kind == k,
+            t,
+            acts.on(Action::Dash(DashAction::SetKind(k))),
+        )
     });
-    ui.horizontal_wrapped(|ui| {
-        for (text, k) in [
-            ("全種別", None),
-            ("対話", Some(SessionKind::Interactive)),
-            ("ヘッドレス", Some(SessionKind::Headless)),
-            ("ジョブ", Some(SessionKind::BackgroundJob)),
-        ] {
-            if ui.selectable_label(vm.kind == k, text).clicked() {
-                acts.push(Action::Dash(DashAction::SetKind(k)));
-            }
-        }
-        ui.separator();
-        if ui
-            .selectable_label(vm.profile.is_none(), "全プロファイル")
-            .clicked()
-        {
-            acts.push(Action::Dash(DashAction::SetProfile(None)));
-        }
-        for (id, name) in &vm.profiles {
-            if ui.selectable_label(vm.profile == Some(*id), name).clicked() {
-                acts.push(Action::Dash(DashAction::SetProfile(Some(*id))));
-            }
-        }
+    let profiles = vm.profiles.iter().map(|(id, name)| {
+        selectable(
+            p,
+            SharedString::from(format!("profile:{id}")),
+            vm.profile == Some(*id),
+            name,
+            acts.on(Action::Dash(DashAction::SetProfile(Some(*id)))),
+        )
     });
+    let chips = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(GAP_X)
+        .children(kinds)
+        .child(div().w(px(1.0)).h(px(16.0)).bg(color(p.border)))
+        .child(selectable(
+            p,
+            "profile:all",
+            vm.profile.is_none(),
+            "全プロファイル",
+            acts.on(Action::Dash(DashAction::SetProfile(None))),
+        ))
+        .children(profiles);
+    div()
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(search)
+        .child(chips)
 }
 
-/// 履歴の列（入力、開始、経過、コンテキスト、Token、コスト、ターン）。入力の列だけが伸びる。
-const HISTORY_COLUMNS: [Option<f32>; 7] = [
-    None,
-    Some(72.0),
-    Some(56.0),
-    Some(64.0),
-    Some(56.0),
-    Some(64.0),
-    Some(40.0),
-];
-
-fn history(ui: &mut Ui, vm: &DashboardVm, acts: &mut Vec<Action>) {
-    let p = pal(ui);
+fn history(vm: &DashboardVm, p: &'static Palette, acts: &Acts) -> Vec<AnyElement> {
     if vm.history.is_empty() {
-        ui.label(RichText::new("条件に合う完了したセッションはありません").color(p.weak));
-        return;
+        return vec![weak(p, "条件に合う完了したセッションはありません").into_any_element()];
     }
+    let mut out = Vec::with_capacity(vm.history.len() + 2);
     if vm.history_limited {
-        ui.label(
-            RichText::new("新しい順に1,000件を表示しています")
-                .small()
-                .color(p.weak),
-        );
+        out.push(text("新しい順に1,000件を表示しています", SMALL, p.weak).into_any_element());
     }
-    let widths = flex_columns(ui.available_width(), &HISTORY_COLUMNS);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = GAP / 2.0;
-        for (w, t) in widths.iter().zip([
-            "入力",
-            "開始",
-            "経過",
-            "コンテキスト",
-            "Token",
-            "コスト",
-            "ターン",
-        ]) {
-            cell(ui, *w, |ui| {
-                ui.label(RichText::new(t).small().color(p.weak))
-            });
-        }
-    });
+    out.push(
+        table_row(
+            &HISTORY_COLUMNS,
+            HISTORY_HEADS
+                .iter()
+                // 見出しは折り返さず、狭い列では隣へはみ出して描く。
+                .map(|t| {
+                    text(t, SMALL, p.weak)
+                        .whitespace_nowrap()
+                        .into_any_element()
+                })
+                .collect(),
+        )
+        .into_any_element(),
+    );
     for i in &vm.history {
-        history_row(
-            ui,
-            i,
-            &widths,
-            vm.selected.as_deref() == Some(i.session_id.as_str()),
-            acts,
-        );
+        let selected = vm.selected.as_deref() == Some(i.session_id.as_str());
+        out.push(history_row(i, selected, p, acts).into_any_element());
     }
+    out
 }
 
-fn history_row(
-    ui: &mut Ui,
-    i: &SessionItem,
-    widths: &[f32],
-    selected: bool,
-    acts: &mut Vec<Action>,
-) {
-    let p = pal(ui);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = GAP / 2.0;
-        let title = RichText::new(&i.title).color(if selected { p.accent } else { p.text });
-        let clicked = cell(ui, widths[0], |ui| {
-            ui.add(egui::Label::new(title).truncate().sense(Sense::click()))
-                .clicked()
-        });
-        if clicked {
-            acts.push(Action::Dash(DashAction::Select(
-                i.session_id.clone(),
-                DetailTab::Turns,
-            )));
-        }
-        for (w, v) in widths[1..].iter().zip([
-            &i.started, &i.elapsed, &i.context, &i.tokens, &i.cost, &i.turns,
-        ]) {
-            cell(ui, *w, |ui| trunc(ui, RichText::new(v).small()));
-        }
-    });
+fn history_row(i: &SessionItem, selected: bool, p: &'static Palette, acts: &Acts) -> Div {
+    let mut cells = vec![
+        title(
+            &i.title,
+            selected,
+            p,
+            acts,
+            Action::Dash(DashAction::Select(i.session_id.clone(), DetailTab::Turns)),
+        )
+        .into_any_element(),
+    ];
+    for v in [
+        &i.started, &i.elapsed, &i.context, &i.tokens, &i.cost, &i.turns,
+    ] {
+        cells.push(truncate(p, text(v, SMALL, p.text), v).into_any_element());
+    }
+    table_row(&HISTORY_COLUMNS, cells)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controllers::gui::dashboard::memory::{ConfirmExit, SessionMemory};
-    use crate::models::domain::memory::{Target, Victim};
     use crate::views::theme::LIGHT;
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
-
-    type RowState = (RunItem, Vec<Action>);
-
-    fn item(memory: Option<SessionMemory>, depth: u8) -> RunItem {
-        RunItem {
-            session_id: "s1".into(),
-            kind: if depth == 0 {
-                RunKind::Headless
-            } else {
-                RunKind::Subagent
-            },
-            state: "ツール実行中".into(),
-            title: "設計の相談".into(),
-            project: "p".into(),
-            context: "10%".into(),
-            elapsed: "5分".into(),
-            tokens: "1k".into(),
-            cost: "$0.10".into(),
-            detail: None,
-            depth,
-            memory,
-        }
-    }
-
-    fn mem() -> SessionMemory {
-        SessionMemory {
-            text: "400MB".into(),
-            desktop: false,
-            exit: ConfirmExit {
-                victim: Victim {
-                    pid: 4242,
-                    start_time: 1,
-                    target: Target::TerminalSession,
-                },
-                title: "設計の相談".into(),
-                memory: "400MB".into(),
-                resume: None,
-            },
-        }
-    }
-
-    fn row(it: RunItem) -> Harness<'static, RowState> {
-        Harness::builder()
-            .with_context_setup(crate::views::app::install_fonts)
-            .build_ui_state(
-                |ui, s: &mut RowState| run_row(ui, &s.0, false, &mut s.1),
-                (it, Vec::new()),
-            )
-    }
-
-    #[test]
-    fn exit_button_asks_for_confirmation() {
-        let mut h = row(item(Some(mem()), 0));
-        h.get_by_label("プロセスを終了").click();
-        h.run();
-        assert_eq!(h.state().1, [Action::Memory(MemAction::Ask(mem().exit))]);
-    }
-
-    #[test]
-    fn rows_without_a_process_have_no_exit_button() {
-        for it in [item(None, 0), item(None, 1)] {
-            let h = row(it);
-            assert!(h.query_by_label("プロセスを終了").is_none());
-        }
-    }
-
-    #[test]
-    fn clicking_the_title_selects_the_run() {
-        let mut h = row(item(Some(mem()), 0));
-        h.get_by_label("設計の相談").click();
-        h.run();
-        assert_eq!(
-            h.state().1,
-            [Action::Dash(DashAction::Select(
-                "s1".into(),
-                DetailTab::LiveLog
-            ))]
-        );
-    }
 
     #[test]
     fn list_help_mentions_subagents_only_for_active_runs() {

@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn unreachable_host_is_transport_error_without_token() {
         let api = HttpUsageApi::new("http://127.0.0.1:1", Duration::from_millis(500));
-        let err = api.fetch("secret-token").unwrap_err();
+        let err = api.fetch("not-a-real-token").unwrap_err();
         assert!(matches!(err, UsageApiError::Transport(_)));
-        assert!(!err.to_string().contains("secret-token"));
+        assert!(!err.to_string().contains("not-a-real-token"));
     }
 }

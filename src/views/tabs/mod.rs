@@ -1,4 +1,4 @@
-//! 上部タブのうち、ダッシュボード以外の画面の描画。
+//! ダッシュボード以外のタブ。
 pub mod analytics;
 pub mod calendar;
 pub mod diagnostics;

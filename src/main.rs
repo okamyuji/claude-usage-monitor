@@ -27,8 +27,6 @@ use claude_usage_monitor::models::gateways::usage_api::{
 };
 use claude_usage_monitor::models::ports::ProfileRepo;
 use claude_usage_monitor::models::repositories::db::SqliteStore;
-use claude_usage_monitor::views::app::{CumonApp, apply_theme, install_fonts};
-use claude_usage_monitor::views::theme;
 use claude_usage_monitor::views::tray::run_with_tray;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -204,25 +202,7 @@ fn build_gui(p: &Paths, store: SqliteStore) -> Result<GuiController, CliError> {
 /// ウィンドウを開く部分はテストで動かせないため、組み立ては`build_gui`に寄せて単体テストで確かめる。
 fn run_gui(p: &Paths, store: SqliteStore) -> Result<ExitCode, CliError> {
     let ctl = build_gui(p, store)?;
-    let options = eframe::NativeOptions {
-        // テストのビルドで開発用の依存がwgpuを有効にしても、本番は実測で省メモリだったglowで描く（spec 3章の決定表）。
-        renderer: eframe::Renderer::Glow,
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 820.0])
-            .with_title("Claude Usage Monitor"),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "claude-usage-monitor",
-        options,
-        Box::new(move |cc| {
-            install_fonts(&cc.egui_ctx);
-            theme::apply(&cc.egui_ctx);
-            apply_theme(&cc.egui_ctx, ctl.vm().theme);
-            Ok(Box::new(CumonApp::new(ctl)))
-        }),
-    )
-    .map_err(|e| other(format!("GUIを起動できません: {e}")))?;
+    claude_usage_monitor::views::app::open(ctl);
     Ok(ExitCode::SUCCESS)
 }
 

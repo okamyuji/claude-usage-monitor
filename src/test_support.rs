@@ -353,3 +353,25 @@ impl crate::models::ports::Autostart for FakeAutostart {
         Ok(())
     }
 }
+
+/// この環境の本物の文字の仕組み。テスト窓の既定の文字の仕組みはフォントも幅も持たないため。
+pub(crate) fn gpui_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+    #[cfg(target_os = "macos")]
+    let text = std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
+    #[cfg(target_os = "linux")]
+    let text = std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
+        crate::views::fonts::BODY_FAMILY,
+    ));
+    text
+}
+
+/// 本物の文字の仕組みと同梱のフォントを持つGPUIのテスト用アプリ。LinuxのCIにはOSのフォントが無いため、同梱のものを登録する。
+pub(crate) fn gpui_cx() -> gpui::TestAppContext {
+    let cx = gpui::TestAppContext::build_with_text_system(
+        gpui::TestDispatcher::new(0),
+        None,
+        gpui_text_system(),
+    );
+    cx.update(|cx| crate::views::fonts::install(cx).expect("同梱のフォント"));
+    cx
+}

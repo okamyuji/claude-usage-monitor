@@ -1,4 +1,14 @@
 # OSの通知センターへ実際に通知を出す関数は、テストのたびに利用者の画面へ通知が出るため変異の対象から外す。
 # 通知の中身と回数は、ファイルへ書く通知役（CUMON_NOTIFY_LOG）でE2Eが確かめている。
 # OSへ終了を要求する関数も同じ理由で外す。照合（verify）は外さないので、無関係なプロセスへ送る変異はテストで止まる。
-exclude_re = ["impl Notifier for SystemNotifier", "impl ExitSender for SystemExitSender"]
+# Aboutの窓を出す関数は、主スレッドでしか動かず、テストのスレッドでは何もしないので変異を見分けられない。
+# 次の変異は出力が変わらないので、テストで見分けられない。
+# auto_colorの色相は黄金比の性質で、i*(φ-1)、i*(φ+1)、i/(φ-1)の小数部分が同じになる。
+# grid_marksの目盛は刻みの整数倍なので、別の目盛との差がちょうどeps（刻みの0.1倍）にならず、同じ位置に同じ刻みも並ばない。
+# grid_marksの2件は159行目の同じ形の変異（テストで見分ける）と区別するため行と列で指定する。math.rsの行がずれたら直す。
+exclude_re = [
+  "replace \\* with / in auto_color",
+  "replace - with [+/] in auto_color",
+  "plot/math.rs:177:48: replace < with <= in grid_marks",
+  "plot/math.rs:178:27: replace < with <= in grid_marks",
+  "impl Notifier for SystemNotifier", "impl ExitSender for SystemExitSender", "show_about"]

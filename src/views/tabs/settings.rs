@@ -1,265 +1,233 @@
-//! 設定タブの描画。
+//! 設定タブの描画。動作の設定とモデル情報（単価）の表示と編集。
 use crate::controllers::gui::app::{Action, Forms};
-use crate::controllers::gui::tabs::settings::{ModelDraft, SettingsAction, SettingsVm};
+use crate::controllers::gui::tabs::settings::{SettingsAction, SettingsVm};
 use crate::models::domain::settings::Theme;
-use crate::views::layout::{GAP, flex_columns};
-use crate::views::theme::card_frame;
-use crate::views::widgets::{cell, pal, section, trunc};
-use egui::{RichText, Ui};
-
-fn field(ui: &mut Ui, label: &str, value: &mut String) {
-    ui.horizontal(|ui| {
-        let l = ui.label(label);
-        ui.add(egui::TextEdit::singleline(value).desired_width(96.0))
-            .labelled_by(l.id);
-    });
-}
+use crate::views::app::Acts;
+use crate::views::input::{Field, FormInputs};
+use crate::views::layout::GAP;
+use crate::views::probe::Role;
+use crate::views::theme::{GAP_X, GAP_Y, Palette, SMALL, color};
+use crate::views::widgets::{
+    button, card, checkbox, disabled_button, label, link, probed, section, selectable,
+    small_button, strong, table_row, text, trunc, truncate, weak,
+};
+use gpui::{AnyElement, Div, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui_component::input::Input;
 
 /// 列（モデルID、単価、コンテキスト長、取得元、編集）。単価の列だけが伸びる。
 const COLUMNS: [Option<f32>; 5] = [Some(180.0), None, Some(96.0), Some(56.0), Some(56.0)];
+/// 入力欄の幅（96）。
+const INPUT_PX: f32 = 96.0;
 
 /// 設定タブを描く。
-pub fn show(ui: &mut Ui, vm: &SettingsVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    behavior_card(ui, vm, forms, acts);
-    ui.add_space(GAP);
-    models_card(ui, vm, forms, acts);
+pub fn render(
+    vm: &SettingsVm,
+    forms: &Forms,
+    inputs: &FormInputs,
+    p: &'static Palette,
+    acts: &Acts,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(GAP))
+        .child(behavior(vm, forms, inputs, p, acts))
+        .child(models(vm, forms, inputs, p, acts))
 }
 
-fn behavior_card(ui: &mut Ui, vm: &SettingsVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        section(ui, "動作");
-        let s = &mut forms.settings;
-        field(ui, "取得間隔（秒）", &mut s.interval);
-        field(ui, "通知閾値（%）", &mut s.threshold);
-        field(ui, "保持日数", &mut s.retention);
-        field(ui, "ヘッドレスの稼働判定（秒）", &mut s.headless);
-        field(ui, "ジョブの稼働判定（分）", &mut s.job);
-        ui.horizontal(|ui| {
-            ui.label("テーマ");
-            for (t, text) in [
-                (Theme::System, "OSに合わせる"),
-                (Theme::Light, "ライト"),
-                (Theme::Dark, "ダーク"),
-            ] {
-                ui.selectable_value(&mut s.theme, t, text);
-            }
-        });
-        autostart_row(ui, vm.autostart, acts);
-        if ui.button("保存").clicked() {
-            acts.push(Action::Settings(SettingsAction::Save));
-        }
-        if let Some(m) = &vm.message {
-            ui.label(m);
-        }
+/// 見出しと入力欄の1行。見出しを読み上げ用の名前にする。
+fn field(inputs: &FormInputs, p: &Palette, f: Field, name: &'static str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(label(p, name))
+        .child(
+            probed(format!("input:{name}"), Role::TextInput, name)
+                .w(px(INPUT_PX))
+                .child(Input::new(inputs.get(f)).aria_label(name)),
+        )
+}
+
+fn behavior(
+    vm: &SettingsVm,
+    forms: &Forms,
+    inputs: &FormInputs,
+    p: &'static Palette,
+    acts: &Acts,
+) -> Div {
+    let themes = [
+        (Theme::System, "OSに合わせる"),
+        (Theme::Light, "ライト"),
+        (Theme::Dark, "ダーク"),
+    ]
+    .map(|(t, s)| {
+        // 選ぶのは下書きだけで、保存するまで画面のテーマは変えない。
+        selectable(
+            p,
+            format!("theme:{s}"),
+            forms.settings.theme == t,
+            s,
+            acts.set(move |f| f.settings.theme = t),
+        )
     });
-}
-
-/// 自動起動の状態を読めないOSや権限では、切り替えを出さずに理由を示す。
-fn autostart_row(ui: &mut Ui, autostart: Option<bool>, acts: &mut Vec<Action>) {
-    let Some(mut on) = autostart else {
-        ui.label(RichText::new("ログイン時の起動の状態を読めません").color(pal(ui).weak));
-        return;
+    // 自動起動の状態を読めないOSや権限では、切り替えを出さずに理由を示す。
+    let autostart = match vm.autostart {
+        None => weak(p, "ログイン時の起動の状態を読めません"),
+        Some(on) => checkbox(
+            p,
+            "autostart",
+            on,
+            "ログイン時にデーモンを起動する",
+            acts.on(Action::Settings(SettingsAction::SetAutostart(!on))),
+        ),
     };
-    if ui
-        .checkbox(&mut on, "ログイン時にデーモンを起動する")
-        .changed()
-    {
-        acts.push(Action::Settings(SettingsAction::SetAutostart(on)));
-    }
+    card(p, false)
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(GAP_Y)
+        .child(section(p, "動作"))
+        .child(field(inputs, p, Field::Interval, "取得間隔（秒）"))
+        .child(field(inputs, p, Field::Threshold, "通知閾値（%）"))
+        .child(field(inputs, p, Field::Retention, "保持日数"))
+        .child(field(
+            inputs,
+            p,
+            Field::Headless,
+            "ヘッドレスの稼働判定（秒）",
+        ))
+        .child(field(inputs, p, Field::Job, "ジョブの稼働判定（分）"))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(GAP_X)
+                .child(label(p, "テーマ"))
+                .children(themes),
+        )
+        .child(autostart)
+        .child(button(
+            p,
+            "settings-save",
+            "保存",
+            acts.on(Action::Settings(SettingsAction::Save)),
+        ))
+        .children(vm.message.as_deref().map(|m| label(p, m)))
 }
 
-fn models_card(ui: &mut Ui, vm: &SettingsVm, forms: &mut Forms, acts: &mut Vec<Action>) {
-    let p = pal(ui);
-    card_frame(p, false).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        ui.horizontal(|ui| {
-            section(ui, "モデル情報");
-            ui.label(RichText::new(&vm.catalog).small().color(p.weak));
-            let label = if vm.refreshing {
-                "取得中…"
-            } else {
-                "今すぐ更新"
-            };
-            if ui
-                .add_enabled(!vm.refreshing, egui::Button::new(label))
-                .clicked()
-            {
-                acts.push(Action::Settings(SettingsAction::RefreshCatalog));
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.hyperlink_to("料金ページ", vm.pricing_url);
-            ui.hyperlink_to("モデル一覧", vm.models_url);
-            ui.label(
-                RichText::new(
-                    "単価はUSD/MTok（入力 / 出力 / キャッシュ読込 / 作成5分 / 作成1時間）",
+fn models(
+    vm: &SettingsVm,
+    forms: &Forms,
+    inputs: &FormInputs,
+    p: &'static Palette,
+    acts: &Acts,
+) -> Div {
+    let sa = Action::Settings;
+    let refresh = if vm.refreshing {
+        disabled_button(p, "catalog-refresh", "取得中…").into_any_element()
+    } else {
+        button(
+            p,
+            "catalog-refresh",
+            "今すぐ更新",
+            acts.on(sa(SettingsAction::RefreshCatalog)),
+        )
+        .into_any_element()
+    };
+    let head = div()
+        .flex()
+        .items_center()
+        .gap(GAP_X)
+        .child(section(p, "モデル情報"))
+        .child(text(&vm.catalog, SMALL, p.weak))
+        .child(refresh);
+    let links = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(GAP_X)
+        .child(link(p, "link-pricing", "料金ページ", vm.pricing_url))
+        .child(link(p, "link-models", "モデル一覧", vm.models_url))
+        .child(text(
+            "単価はUSD/MTok（入力 / 出力 / キャッシュ読込 / 作成5分 / 作成1時間）",
+            SMALL,
+            p.weak,
+        ));
+    let rows = vm.models.iter().map(|m| {
+        table_row(
+            &COLUMNS,
+            vec![
+                trunc(p, &m.prefix).into_any_element(),
+                truncate(p, text(&m.prices, SMALL, p.text), &m.prices).into_any_element(),
+                text(&m.context, SMALL, p.text).into_any_element(),
+                text(&m.source, SMALL, p.text).into_any_element(),
+                small_button(
+                    p,
+                    format!("model-edit:{}", m.prefix),
+                    "編集",
+                    acts.on(sa(SettingsAction::EditModel(m.prefix.clone()))),
                 )
-                .small()
-                .color(p.weak),
-            );
-        });
-        let widths = flex_columns(ui.available_width(), &COLUMNS);
-        for m in &vm.models {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP / 2.0;
-                cell(ui, widths[0], |ui| trunc(ui, &m.prefix));
-                cell(ui, widths[1], |ui| {
-                    trunc(ui, RichText::new(&m.prices).small())
-                });
-                cell(ui, widths[2], |ui| {
-                    ui.label(RichText::new(&m.context).small())
-                });
-                cell(ui, widths[3], |ui| {
-                    ui.label(RichText::new(&m.source).small())
-                });
-                cell(ui, widths[4], |ui| {
-                    if ui.small_button("編集").clicked() {
-                        acts.push(Action::Settings(SettingsAction::EditModel(
-                            m.prefix.clone(),
-                        )));
-                    }
-                });
-            });
-        }
-        if let Some(d) = &mut forms.model {
-            model_editor(ui, d, acts);
-        }
+                .into_any_element(),
+            ],
+        )
     });
+    card(p, false)
+        .flex()
+        .flex_col()
+        .gap(GAP_Y)
+        .child(head)
+        .child(links)
+        .children(rows)
+        .children(
+            forms
+                .model
+                .as_ref()
+                .map(|d| editor(&d.prefix, inputs, p, acts)),
+        )
 }
 
-fn model_editor(ui: &mut Ui, d: &mut ModelDraft, acts: &mut Vec<Action>) {
-    ui.separator();
-    ui.label(RichText::new(format!("{} を編集", d.prefix)).strong());
-    field(ui, "入力", &mut d.input);
-    field(ui, "出力", &mut d.output);
-    field(ui, "キャッシュ読込", &mut d.cache_read);
-    field(ui, "キャッシュ作成5分", &mut d.cache_write_5m);
-    field(ui, "キャッシュ作成1時間", &mut d.cache_write_1h);
-    field(ui, "コンテキスト長", &mut d.context);
-    ui.horizontal(|ui| {
-        if ui.button("単価を保存").clicked() {
-            acts.push(Action::Settings(SettingsAction::SaveModel));
-        }
-        if ui.button("やめる").clicked() {
-            acts.push(Action::Settings(SettingsAction::CancelModel));
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::controllers::gui::tabs::settings::{MODELS_URL, ModelRowView, PRICING_URL};
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
-
-    type State = (SettingsVm, Forms, Vec<Action>);
-
-    fn vm(autostart: Option<bool>, refreshing: bool) -> SettingsVm {
-        SettingsVm {
-            models: vec![ModelRowView {
-                prefix: "claude-opus-5-5".into(),
-                name: "Opus 5.5".into(),
-                prices: "4 / 20 / 0.2 / 5 / 8".into(),
-                context: "1000000".into(),
-                source: "公式".into(),
-            }],
-            catalog: "まだ取得していません".into(),
-            message: Some("保存しました".into()),
-            refreshing,
-            pricing_url: PRICING_URL,
-            models_url: MODELS_URL,
-            autostart,
-        }
-    }
-
-    fn harness(vm: SettingsVm, forms: Forms) -> Harness<'static, State> {
-        Harness::builder()
-            .with_context_setup(crate::views::app::install_fonts)
-            .build_ui_state(
-                |ui, s: &mut State| show(ui, &s.0, &mut s.1, &mut s.2),
-                (vm, forms, Vec::new()),
-            )
-    }
-
-    fn draft() -> ModelDraft {
-        ModelDraft {
-            prefix: "claude-opus-5-5".into(),
-            name: "Opus 5.5".into(),
-            input: "4".into(),
-            output: "20".into(),
-            cache_read: "0.2".into(),
-            cache_write_5m: "5".into(),
-            cache_write_1h: "8".into(),
-            context: "1000000".into(),
-        }
-    }
-
-    fn click(h: &mut Harness<'static, State>, label: &str) -> Vec<Action> {
-        h.get_by_label(label).click();
-        h.run();
-        std::mem::take(&mut h.state_mut().2)
-    }
-
-    #[test]
-    fn toggling_autostart_emits_new_state() {
-        let mut h = harness(vm(Some(false), false), Forms::default());
-        assert_eq!(
-            click(&mut h, "ログイン時にデーモンを起動する"),
-            vec![Action::Settings(SettingsAction::SetAutostart(true))]
-        );
-    }
-
-    #[test]
-    fn unreadable_autostart_shows_reason_instead_of_checkbox() {
-        let h = harness(vm(None, false), Forms::default());
-        h.get_by_label("ログイン時の起動の状態を読めません");
-        assert!(h.query_by_label("ログイン時にデーモンを起動する").is_none());
-    }
-
-    #[test]
-    fn save_edit_and_refresh_emit_actions() {
-        let mut h = harness(vm(Some(true), false), Forms::default());
-        h.get_by_label("保存しました");
-        assert_eq!(
-            click(&mut h, "保存"),
-            vec![Action::Settings(SettingsAction::Save)]
-        );
-        assert_eq!(
-            click(&mut h, "編集"),
-            vec![Action::Settings(SettingsAction::EditModel(
-                "claude-opus-5-5".into()
-            ))]
-        );
-        assert_eq!(
-            click(&mut h, "今すぐ更新"),
-            vec![Action::Settings(SettingsAction::RefreshCatalog)]
-        );
-    }
-
-    #[test]
-    fn refreshing_disables_refresh_button() {
-        let mut h = harness(vm(Some(true), true), Forms::default());
-        assert!(click(&mut h, "取得中…").is_empty());
-    }
-
-    #[test]
-    fn model_editor_saves_or_cancels() {
-        let forms = Forms {
-            model: Some(draft()),
-            ..Forms::default()
-        };
-        let mut h = harness(vm(Some(true), false), forms);
-        h.get_by_label("claude-opus-5-5 を編集");
-        assert_eq!(
-            click(&mut h, "単価を保存"),
-            vec![Action::Settings(SettingsAction::SaveModel)]
-        );
-        assert_eq!(
-            click(&mut h, "やめる"),
-            vec![Action::Settings(SettingsAction::CancelModel)]
-        );
-    }
+fn editor(prefix: &str, inputs: &FormInputs, p: &'static Palette, acts: &Acts) -> AnyElement {
+    let sa = Action::Settings;
+    div()
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(GAP_Y)
+        .child(div().w_full().h(px(1.0)).bg(color(p.border)))
+        .child(strong(p, &format!("{prefix} を編集")))
+        .child(field(inputs, p, Field::ModelInput, "入力"))
+        .child(field(inputs, p, Field::ModelOutput, "出力"))
+        .child(field(inputs, p, Field::ModelCacheRead, "キャッシュ読込"))
+        .child(field(
+            inputs,
+            p,
+            Field::ModelCacheWrite5m,
+            "キャッシュ作成5分",
+        ))
+        .child(field(
+            inputs,
+            p,
+            Field::ModelCacheWrite1h,
+            "キャッシュ作成1時間",
+        ))
+        .child(field(inputs, p, Field::ModelContext, "コンテキスト長"))
+        .child(
+            div()
+                .flex()
+                .gap(GAP_X)
+                .child(button(
+                    p,
+                    "model-save",
+                    "単価を保存",
+                    acts.on(sa(SettingsAction::SaveModel)),
+                ))
+                .child(button(
+                    p,
+                    "model-cancel",
+                    "やめる",
+                    acts.on(sa(SettingsAction::CancelModel)),
+                )),
+        )
+        .into_any_element()
 }

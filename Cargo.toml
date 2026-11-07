@@ -23,18 +23,21 @@ notify = "8.2.0"
 directories = "6.0.0"
 sha2 = "0.11.0"
 sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
-# 描画はglow（OpenGL）にする。macOSで実測したGUIの物理フットプリントが、wgpuの253MBに対してglowは191MBだった。
-# 既定機能からwgpuとWeb専用の読み上げだけを外し、アクセシビリティ（accesskit）とLinuxのwayland、x11は残す。
-eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "links", "wayland", "x11"] }
-egui = { version = "0.37.0", features = ["monochrome_emoji_fonts"] }
-egui_plot = "0.38.0"
-egui-phosphor = "0.14.0"
 notify-rust = "4.18.0"
 tray-icon = "0.26.1"
 auto-launch = "0.6.0"
 winit = "0.30.13"
+# gpui-componentがgpui-preを=で固定するため、gpui-preとその起動部も同じ版に=で固定する。
+gpui = { package = "gpui-pre", version = "=0.3.11" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11" }
+gpui-component = "=0.9.0"
+# 文字を選んで写す部品（SelectableText）を使う。gpui-componentが同じ版を使う。
+gpui-base = "=0.9.0"
 
 [dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+# README用の画像を画面外のMetalで描くtests/readme_images.rsが、描画の部品（current_headless_renderer）を使う。
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["test-support"] }
 tempfile = "3.27.0"
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
@@ -44,15 +47,23 @@ ureq = { version = "3.4.2", features = ["json"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 chrono = "0.4.45"
 sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
-# wgpuとsnapshotは、README用の画像を画面外で描くtests/readme_images.rsだけが使う。
-egui_kittest = { version = "0.37.0", features = ["eframe", "wgpu", "snapshot"] }
+proptest = "1.12.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSControl", "NSDockTile", "NSImage", "NSImageView", "NSResponder", "NSView"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry", "NSString"] }
+# シェーダを実行時にコンパイルし、ビルドにXcodeのMetal Toolchainを要らなくする。
+gpui_macos = { package = "gpui-pre-macos", version = "=0.3.11", features = ["runtime_shaders", "font-kit"] }
 
 # AppKitの呼び出しは主スレッドでしか動かず、標準のテストランナーは別スレッドで走らせるため。
 [[test]]
 name = "about_icon"
 harness = false
+
+# テスト窓の文字の仕組みはフォントも幅も持たないため、テストではこの環境の本物の文字の仕組みを使う。
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_apple = { package = "gpui-pre-apple", version = "=0.3.11" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.11" }

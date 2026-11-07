@@ -197,7 +197,7 @@ impl AppVm {
     }
 }
 
-/// 入力欄と描画側で動かす値の状態。eguiの入力欄は`&mut`で値を書き換えるため、ViewModelと分けて可変で渡す。
+/// 入力欄と描画側で動かす値の状態。入力欄が`&mut`で値を書き換えるため、ViewModelと分けて可変で渡す。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Forms {
     /// 中段の左の幅の比率。境界のつまみで変わる。
@@ -367,6 +367,11 @@ impl GuiController {
             }
         }
         self.refresh();
+    }
+
+    /// 入力欄の状態。
+    pub fn forms(&self) -> &Forms {
+        &self.forms
     }
 
     /// 入力欄の状態。テストで入力済みの状態を作るため公開する。
