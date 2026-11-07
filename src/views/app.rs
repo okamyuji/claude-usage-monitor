@@ -14,8 +14,8 @@ use gpui::{
     App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
     ParentElement as _, Pixels, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowKind,
-    WindowOptions, canvas, div, point, px, size,
+    Subscription, Task, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, canvas,
+    div, px, size,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -461,70 +461,45 @@ fn body(
     )
 }
 
-/// `x,y`を窓の左上の位置として読む。
-pub fn parse_origin(s: &str) -> Option<(f32, f32)> {
-    let (x, y) = s.split_once(',')?;
-    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-}
-
 /// アプリの既定のアイコン画像。
 #[cfg(target_os = "macos")]
 const APP_ICON: &[u8] = include_bytes!("../../assets/app-icon.tiff");
 
-/// 窓の設定。`verify`があれば、その位置に最前面で浮かべ、フォーカスを取らない。
-pub fn window_options(verify: Option<(f32, f32)>, cx: &App) -> WindowOptions {
-    let window_size = size(px(1280.0), px(820.0));
-    let bounds = match verify {
-        Some((x, y)) => Bounds::new(point(px(x), px(y)), window_size),
-        None => Bounds::centered(None, window_size, cx),
-    };
+/// 窓の設定。画面の中央に開く。
+pub fn window_options(cx: &App) -> WindowOptions {
+    let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some("Claude Usage Monitor".into()),
             ..Default::default()
         }),
-        focus: verify.is_none(),
-        kind: if verify.is_some() {
-            WindowKind::PopUp
-        } else {
-            WindowKind::Normal
-        },
         ..Default::default()
     }
 }
 
 /// 部品とフォントを用意して窓を開く。窓を閉じたらアプリを終える。
-pub fn launch(ctl: GuiController, verify: Option<(f32, f32)>, cx: &mut App) -> gpui::Result<()> {
+pub fn launch(ctl: GuiController, cx: &mut App) -> gpui::Result<()> {
     gpui_component::init(cx);
     install(cx)?;
     cx.on_window_closed(|cx, _| cx.quit()).detach();
-    cx.open_window(window_options(verify, cx), |w, cx| {
+    cx.open_window(window_options(cx), |w, cx| {
         let root = cx.new(|cx| CumonRoot::new(ctl, w, cx));
         cx.new(|cx| gpui_component::Root::new(root, w, cx))
     })?;
     crate::views::app_menu::install(cx);
     #[cfg(target_os = "macos")]
     crate::views::about_icon::set_dock_icon(APP_ICON);
-    if verify.is_none() {
-        cx.activate(true);
-    }
+    cx.activate(true);
     Ok(())
 }
 
 /// アプリを起動し、窓を開く。窓を閉じたら終わる。
-///
-/// `CUMON_GPUI_VERIFY=x,y`のときは、その位置に窓を最前面で浮かべ、フォーカスを取らない。
-/// GPUIは隠れた窓を描き直さないため、利用者の操作を奪わずに実機で確かめるには見える所に浮かべるしかない。
-// shortcut: 移す途中の実機確認だけで使う。GPUI版だけにするときに消す。
 pub fn open(ctl: GuiController) -> gpui::Result<()> {
-    let verify = std::env::var("CUMON_GPUI_VERIFY")
-        .ok()
-        .and_then(|v| parse_origin(&v));
     let failed = std::rc::Rc::new(std::cell::RefCell::new(None));
     let out = failed.clone();
     gpui_platform::application().run(move |cx: &mut App| {
-        if let Err(e) = launch(ctl, verify, cx) {
+        if let Err(e) = launch(ctl, cx) {
             *out.borrow_mut() = Some(e);
             cx.quit();
         }
@@ -541,7 +516,7 @@ pub(crate) mod tests {
     use crate::views::icons;
     use crate::views::probe::{self, Role};
     use chrono::{TimeZone, Utc};
-    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, TestAppContext, VisualTestContext, WindowKind};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -701,38 +676,25 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().unwrap();
         let (_d, ctl) = controller(home.path());
         let cx = crate::test_support::gpui_cx();
-        cx.update(|cx| launch(ctl, None, cx)).unwrap();
+        cx.update(|cx| launch(ctl, cx)).unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         assert!(probe::take().contains(&(Role::Tab, "ダッシュボード".into())));
     }
 
     #[test]
-    fn verify_window_floats_without_focus_at_the_given_origin() {
+    fn window_opens_centered_with_the_title_and_focus() {
         let cx = crate::test_support::gpui_cx();
         cx.update(|cx| {
-            let normal = window_options(None, cx);
-            assert!(normal.focus);
-            assert!(matches!(normal.kind, WindowKind::Normal));
-            let float = window_options(Some((1552.0, 40.0)), cx);
-            assert!(!float.focus);
-            assert!(matches!(float.kind, WindowKind::PopUp));
-            let Some(WindowBounds::Windowed(b)) = float.window_bounds else {
+            let o = window_options(cx);
+            assert!(o.focus);
+            assert!(matches!(o.kind, WindowKind::Normal));
+            let Some(WindowBounds::Windowed(b)) = o.window_bounds else {
                 panic!("窓の位置が無い");
             };
-            assert_eq!(b.origin, point(px(1552.0), px(40.0)));
             assert_eq!(b.size, size(px(1280.0), px(820.0)));
-            let title = float.titlebar.and_then(|t| t.title);
+            let title = o.titlebar.and_then(|t| t.title);
             assert_eq!(title.as_deref(), Some("Claude Usage Monitor"));
         });
-    }
-
-    #[test]
-    fn verify_origin_reads_x_and_y() {
-        assert_eq!(parse_origin("1552,40"), Some((1552.0, 40.0)));
-        assert_eq!(parse_origin(" -10 , 5 "), Some((-10.0, 5.0)));
-        assert_eq!(parse_origin("1552"), None);
-        assert_eq!(parse_origin("a,b"), None);
-        assert_eq!(parse_origin("1,2,3"), None);
     }
 }
