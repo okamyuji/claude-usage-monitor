@@ -40,6 +40,8 @@ pub struct PlotState {
     pub(crate) hover: Option<Point<Pixels>>,
     pub(crate) legend_hover: Option<String>,
     pub(crate) drag: Option<Drag>,
+    /// 今の押下がドラッグになったか。凡例は、ドラッグの後に離した操作をクリックにしない。
+    pub(crate) dragged: bool,
     /// 前の描画の範囲と枠。操作はこれを基準に範囲を動かす。
     pub(crate) shown: Option<Range2>,
     pub(crate) frame: Option<Bounds<Pixels>>,
@@ -86,6 +88,7 @@ impl PlotState {
     pub(crate) fn mouse_down(&mut self, ev: &MouseDownEvent) {
         let Some(f) = self.frame else { return };
         let at = ev.position;
+        self.dragged = false;
         if ev.button == MouseButton::Left && ev.click_count >= 2 && f.contains(&at) {
             self.range = None;
             self.drag = None;
@@ -129,12 +132,16 @@ impl PlotState {
             return;
         }
         if !d.moved {
-            let off = ev.position - d.start;
-            d.moved = f32::from(off.x).hypot(f32::from(off.y)) > MAX_CLICK_DIST;
+            d.moved = beyond_click(d.start, ev.position);
             if !d.moved {
                 d.last = ev.position;
                 self.drag = Some(d);
                 return;
+            }
+            self.dragged = true;
+            // 矩形の始点は、ドラッグと決まった時点の位置（egui_plotの`drag_started`の`hover_pos`）。
+            if d.kind == DragKind::Box {
+                d.start = ev.position;
             }
         }
         let delta = ev.position - d.last;
@@ -243,6 +250,11 @@ impl PlotState {
     }
 }
 
+fn beyond_click(a: Point<Pixels>, b: Point<Pixels>) -> bool {
+    let off = b - a;
+    f32::from(off.x).hypot(f32::from(off.y)) > MAX_CLICK_DIST
+}
+
 /// ⇧だけなら横（0）、⌥だけなら縦（1）。
 fn only_axis(m: &Modifiers) -> Option<usize> {
     match (m.shift, m.alt) {
@@ -347,6 +359,90 @@ mod tests {
         assert_eq!(at(MouseButton::Left, 5.0, 130.0), None);
     }
 
+    fn scroll(s: &mut PlotState, dx: f32, dy: f32, shift: bool, alt: bool, zoom: bool) {
+        let modifiers = Modifiers {
+            shift,
+            alt,
+            ..Default::default()
+        };
+        s.scroll(
+            &ScrollEvent {
+                position: point(px(110.0), px(70.0)),
+                delta: gpui::ScrollDelta::Pixels(point(px(dx), px(dy))),
+                modifiers,
+                ..Default::default()
+            },
+            zoom,
+        );
+    }
+
+    #[test]
+    fn wheel_moves_both_axes_shift_only_x_and_alt_only_y() {
+        let rc = rect(plot().frame.unwrap());
+        let moved = |shift, alt| {
+            let mut s = plot();
+            scroll(&mut s, 3.0, 4.0, shift, alt, false);
+            s.range
+        };
+        assert_eq!(moved(false, false), Some(math::pan(&R, rc, (3.0, 4.0))));
+        assert_eq!(moved(true, false), Some(math::pan(&R, rc, (7.0, 0.0))));
+        assert_eq!(moved(false, true), Some(math::pan(&R, rc, (0.0, 7.0))));
+        assert_eq!(moved(true, true), Some(math::pan(&R, rc, (3.0, 4.0))));
+    }
+
+    #[test]
+    fn zoom_wheel_scales_by_e_per_200_points_on_the_chosen_axes() {
+        let rc = rect(plot().frame.unwrap());
+        let at = (110.0, 70.0);
+        let z = (100.0_f64 / 200.0).exp();
+        let zoomed = |shift, alt| {
+            let mut s = plot();
+            scroll(&mut s, 40.0, 60.0, shift, alt, true);
+            s.range
+        };
+        assert_eq!(zoomed(false, false), Some(math::zoom(&R, rc, at, (z, z))));
+        assert_eq!(zoomed(true, false), Some(math::zoom(&R, rc, at, (z, 1.0))));
+        assert_eq!(zoomed(false, true), Some(math::zoom(&R, rc, at, (1.0, z))));
+    }
+
+    #[test]
+    fn pinch_scales_by_exp_of_the_magnification() {
+        let rc = rect(plot().frame.unwrap());
+        let pinch = |alt| {
+            let mut s = plot();
+            s.pinch(&PinchEvent {
+                position: point(px(110.0), px(70.0)),
+                delta: 0.5,
+                modifiers: Modifiers {
+                    alt,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            s.range
+        };
+        let z = f64::from(0.5f32).exp();
+        assert_eq!(
+            pinch(false),
+            Some(math::zoom(&R, rc, (110.0, 70.0), (z, z)))
+        );
+        assert_eq!(
+            pinch(true),
+            Some(math::zoom(&R, rc, (110.0, 70.0), (1.0, z)))
+        );
+    }
+
+    #[test]
+    fn pan_starts_only_beyond_six_points_and_skips_the_slack() {
+        let rc = rect(plot().frame.unwrap());
+        let mut s = plot();
+        down(&mut s, MouseButton::Left, 100.0, 70.0);
+        drag_to(&mut s, 106.0, 70.0);
+        assert_eq!(s.range, None, "ちょうど6ptはクリック");
+        drag_to(&mut s, 108.0, 70.0);
+        assert_eq!(s.range, Some(math::pan(&R, rc, (2.0, 0.0))));
+    }
+
     #[test]
     fn double_click_resets_only_inside_the_frame() {
         let dbl = |x: f32, y: f32| {
@@ -407,14 +503,16 @@ mod tests {
         assert!(up(&mut s, MouseButton::Left, 150.0, 100.0));
         assert_eq!(s.range, None);
 
+        // 始点は6ptを超えて動いた所（50,40から57,40）。
         let mut s = plot();
         down(&mut s, MouseButton::Right, 50.0, 40.0);
+        drag_to(&mut s, 57.0, 40.0);
         drag_to(&mut s, 150.0, 100.0);
         assert!(up(&mut s, MouseButton::Right, 150.0, 100.0));
         let rc = rect(s.frame.unwrap());
         assert_eq!(
             s.range,
-            math::zoom_to_box(&R, rc, (50.0, 40.0), (150.0, 100.0))
+            math::zoom_to_box(&R, rc, (57.0, 40.0), (150.0, 100.0))
         );
         assert!(s.range.is_some());
     }

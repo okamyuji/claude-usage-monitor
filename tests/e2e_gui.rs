@@ -345,7 +345,7 @@ mod memory_e2e {
         h.run();
         assert!(
             h.query_by_label("終了する").is_none(),
-            "検索欄にフォーカスがあるとEscで閉じない"
+            "検索欄にフォーカスがあるとEscで閉じなかった"
         );
     }
 

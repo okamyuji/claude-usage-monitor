@@ -203,12 +203,18 @@ fn legend_box(lines: &[Line], state: &Entity<PlotState>, p: &Palette, cx: &App) 
                 .children((!hidden).then(|| div().size(px(6.0)).rounded_full().bg(color(l.color)))),
         )
         .child(name.to_string())
-        // 凡例はグラフの上に載った別の部品なので、押してもグラフの移動やダブルクリックにしない。
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        // 凡例はクリックだけを受ける。ドラッグは下のグラフへ渡し、ダブルクリックは渡さない（eguiの`hit_test`）。
+        .on_mouse_down(MouseButton::Left, |ev, _, cx| {
+            if ev.click_count >= 2 {
+                cx.stop_propagation()
+            }
+        })
         .on_click(move |ev, _, cx| {
             let alt = ev.modifiers().alt;
             toggle_state.update(cx, |s, cx| {
+                if s.dragged {
+                    return;
+                }
                 if alt {
                     s.focus(&toggle_name, &names);
                 } else {
@@ -410,7 +416,8 @@ impl RenderOnce for Plot {
                 })
             })
             .on_scroll(move |ev, _, cx| {
-                let zoom = ev.modifiers.secondary(cx);
+                // eguiの`Modifiers::COMMAND`は、macOSでも⌘と⌃のどちらでも拡大にする。
+                let zoom = ev.modifiers.secondary(cx) || ev.modifiers.control;
                 s3.update(cx, |s, cx| {
                     s.scroll(ev, zoom);
                     cx.notify();
@@ -755,6 +762,11 @@ mod tests {
         let c = frame_center(&state, vcx);
         let end = c + point(px(40.0), px(30.0));
         mouse_down(vcx, c, MouseButton::Right, 1);
+        vcx.simulate_mouse_move(
+            c + point(px(7.0), px(0.0)),
+            Some(MouseButton::Right),
+            Modifiers::default(),
+        );
         vcx.simulate_mouse_move(end, Some(MouseButton::Right), Modifiers::default());
         vcx.simulate_mouse_up(end, MouseButton::Right, Modifiers::default());
         vcx.run_until_parked();
@@ -893,6 +905,26 @@ mod tests {
         assert!(
             state.read_with(vcx, |s, _| s.is_auto()),
             "2pxの手ぶれで自動の範囲から外れた"
+        );
+    }
+
+    #[test]
+    fn drag_from_the_legend_pans_the_plot_without_toggling() {
+        let mut cx = crate::test_support::gpui_cx();
+        let (state, vcx) = open(&mut cx);
+        let before = shown(&state, vcx);
+        let b = vcx.debug_bounds("checkbox:a").expect("legend");
+        let end = b.center() - point(px(80.0), px(0.0));
+        mouse_down(vcx, b.center(), MouseButton::Left, 1);
+        vcx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
+        vcx.run_until_parked();
+        assert_ne!(shown(&state, vcx), before, "凡例から動かすとグラフが動く");
+        vcx.simulate_mouse_move(b.center(), Some(MouseButton::Left), Modifiers::default());
+        vcx.simulate_mouse_up(b.center(), MouseButton::Left, Modifiers::default());
+        vcx.run_until_parked();
+        assert!(
+            !state.read_with(vcx, |s, _| s.is_hidden("a")),
+            "動かした後に同じ項目で離しても隠さない"
         );
     }
 
