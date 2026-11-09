@@ -1,7 +1,8 @@
 //! Claude Codeの認証情報を読む。
 //!
 //! 保存先はOSと設定ディレクトリで変わる。設定ディレクトリの`.credentials.json`を先に見て、
-//! なければmacOSのKeychainを読む。トークンの更新（書き込み）は行わない。Claude Code本体の認証を壊さないため。
+//! なければmacOSのKeychainを読む。両方あるときは、トークンの期限が後のほうを使う。
+//! トークンの更新（書き込み）は行わない。Claude Code本体の認証を壊さないため。
 use crate::models::domain::profile::Profile;
 use crate::models::ports::{Credential, CredentialError, CredentialStore};
 use chrono::{DateTime, Utc};
@@ -99,7 +100,7 @@ pub fn parse_credentials_json(s: &str) -> Result<Credential, CredentialError> {
     })
 }
 
-/// 設定ディレクトリのファイル、次にKeychainの順で読む保存先。
+/// 設定ディレクトリのファイルとKeychainを読む保存先。
 pub struct SystemCredentialStore {
     keychain: Arc<dyn KeychainReader>,
 }
@@ -114,16 +115,30 @@ impl SystemCredentialStore {
 impl CredentialStore for SystemCredentialStore {
     fn load(&self, profile: &Profile, config_dir: &Path) -> Result<Credential, CredentialError> {
         let file = config_dir.join(".credentials.json");
-        match std::fs::read_to_string(&file) {
-            Ok(s) => return parse_credentials_json(&s),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        let from_file = match std::fs::read_to_string(&file) {
+            Ok(s) => Some(parse_credentials_json(&s)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(CredentialError::Io(e.kind().to_string())),
-        }
+        };
         let service = keychain_service(profile.config_dir.as_deref());
-        match self.keychain.read(&service)? {
-            Some(s) => parse_credentials_json(&s),
-            None => Err(CredentialError::Missing),
-        }
+        let Some(file_cred) = from_file else {
+            return match self.keychain.read(&service)? {
+                Some(s) => parse_credentials_json(&s),
+                None => Err(CredentialError::Missing),
+            };
+        };
+        // macOSのClaude CodeはKeychainだけを更新するので、ファイルが期限切れのまま残ることがある。
+        // その場合に備えて、Keychainのトークンの期限がファイルより後ならKeychainを使う
+        let newer = self
+            .keychain
+            .read(&service)
+            .ok()
+            .flatten()
+            .and_then(|s| parse_credentials_json(&s).ok())
+            .filter(
+                |kc| matches!((kc.expires_at, file_cred.expires_at), (Some(k), Some(f)) if k > f),
+            );
+        Ok(newer.unwrap_or(file_cred))
     }
 }
 #[cfg(test)]
@@ -215,17 +230,65 @@ mod tests {
         ));
     }
 
+    fn cred_json(token: &str, expires_at_ms: i64) -> String {
+        format!(r#"{{"claudeAiOauth":{{"accessToken":"{token}","expiresAt":{expires_at_ms}}}}}"#)
+    }
+
+    // 2026-11-09に利用者の環境で、ファイルは2026-11-02 06:36:45Zに期限切れ、Keychainは2026-11-09 15:16:54Zまで有効だった。
+    const FILE_EXPIRY_MS: i64 = 1_762_065_405_000;
+    const KEYCHAIN_EXPIRY_MS: i64 = 1_762_701_414_000;
+
     #[test]
-    fn file_in_config_dir_takes_precedence() {
+    fn file_in_config_dir_is_used_when_keychain_has_none() {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join(".credentials.json"), JSON).unwrap();
-        let kc = Arc::new(FakeKeychain(Mutex::new(vec![]), None));
-        let store = SystemCredentialStore::new(kc.clone());
+        let store = SystemCredentialStore::new(Arc::new(FakeKeychain(Mutex::new(vec![]), None)));
         assert_eq!(
             store.load(&profile(None), d.path()).unwrap().access_token,
             "tok"
         );
-        assert!(kc.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn keychain_is_used_when_file_token_expires_earlier() {
+        let d = tempfile::tempdir().unwrap();
+        let file = cred_json("file-token-from-old-login", FILE_EXPIRY_MS);
+        std::fs::write(d.path().join(".credentials.json"), file).unwrap();
+        let kc = cred_json("keychain-token-refreshed", KEYCHAIN_EXPIRY_MS);
+        let store =
+            SystemCredentialStore::new(Arc::new(FakeKeychain(Mutex::new(vec![]), Some(kc))));
+        assert_eq!(
+            store.load(&profile(None), d.path()).unwrap().access_token,
+            "keychain-token-refreshed"
+        );
+    }
+
+    #[test]
+    fn file_is_used_when_keychain_token_expires_earlier() {
+        let d = tempfile::tempdir().unwrap();
+        let file = cred_json("file-token-refreshed", KEYCHAIN_EXPIRY_MS);
+        std::fs::write(d.path().join(".credentials.json"), file).unwrap();
+        let kc = cred_json("keychain-token-from-old-login", FILE_EXPIRY_MS);
+        let store =
+            SystemCredentialStore::new(Arc::new(FakeKeychain(Mutex::new(vec![]), Some(kc))));
+        assert_eq!(
+            store.load(&profile(None), d.path()).unwrap().access_token,
+            "file-token-refreshed"
+        );
+    }
+
+    #[test]
+    fn file_is_used_when_keychain_entry_is_malformed() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(".credentials.json"), JSON).unwrap();
+        let store = SystemCredentialStore::new(Arc::new(FakeKeychain(
+            Mutex::new(vec![]),
+            Some("not json".into()),
+        )));
+        assert_eq!(
+            store.load(&profile(None), d.path()).unwrap().access_token,
+            "tok"
+        );
     }
 
     #[test]
