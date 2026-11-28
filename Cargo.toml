@@ -19,12 +19,12 @@ chrono = { version = "0.4.45", features = ["serde"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rusqlite_migration = "2.6.0"
 ureq = { version = "3.4.2", features = ["json", "platform-verifier"] }
-notify = "8.2.0"
+notify = "9.0.0"
 directories = "6.0.0"
 sha2 = "0.11.0"
 sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
 notify-rust = "4.18.0"
-tray-icon = "0.26.1"
+tray-icon = "0.27.0"
 auto-launch = "0.6.0"
 winit = "0.30.13"
 # gpui-componentがgpui-preを=で固定するため、gpui-preとその起動部も同じ版に=で固定する。
